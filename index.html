@@ -14,6 +14,7 @@
 <script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.3.1/umd/react-dom.production.min.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.7.0/firebase-app-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.7.0/firebase-firestore-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.7.0/firebase-auth-compat.js"></script>
 <style>
   html, body { margin: 0; padding: 0; background: #F7F3EA; overscroll-behavior: none; overscroll-behavior-y: none; }
   html, body, #root { overscroll-behavior: none; overscroll-behavior-y: none; min-height: 100%; }
@@ -238,8 +239,24 @@ ul, ol { margin: 0; padding: 0; list-style: none; }
   })();
   window.addEventListener("error", function (e) {
     var el = document.getElementById("load-fallback");
-    if (el && !window.__farmAppMounted) el.innerHTML = "資源載入發生問題，請下拉重新整理再試一次。";
+    if (el && !window.__farmAppMounted) {
+      var msg = (e && e.message) ? e.message : "";
+      el.innerHTML = "系統載入發生問題。<br><span style=\"font-size:11px;opacity:.75\">" +
+        (msg ? String(msg).replace(/[<>&]/g, "") : "請重新整理後再試一次") +
+        "</span>";
+    }
   }, true);
+
+  window.addEventListener("unhandledrejection", function (e) {
+    var el = document.getElementById("load-fallback");
+    if (el && !window.__farmAppMounted) {
+      var reason = e && e.reason;
+      var msg = reason && reason.message ? reason.message : String(reason || "");
+      el.innerHTML = "Firebase／雲端資料連線失敗。<br><span style=\"font-size:11px;opacity:.75\">" +
+        (msg ? msg.replace(/[<>&]/g, "") : "請確認 Authentication 與 Firestore Rules") +
+        "</span>";
+    }
+  });
   setTimeout(function () {
     if (!window.__farmAppMounted) {
       var el = document.getElementById("load-fallback");
@@ -253,9 +270,16 @@ const { useState, useEffect, useRef } = React;
 
 
 // ============================================================
-// window.storage 相容層（雲端同步版）：改用 Firebase Firestore 取代 localStorage，
-// 讓所有使用者的異動即時寫入同一個雲端資料庫，介面(get/set/delete/list)與原本完全一致，
-// App.jsx 內部呼叫方式完全不用改
+// window.storage 相容層（正式 Firestore 版）
+//
+// 架構：
+// 1. Firebase App 初始化
+// 2. Firebase Authentication 自動匿名登入
+// 3. 驗證成功後才允許 Firestore 讀／寫
+// 4. 所有既有 App 程式仍使用 window.storage.get/set/delete/list，不需改其他功能
+//
+// 重要：Firebase Console 必須啟用 Authentication > Sign-in method > Anonymous。
+// Firestore Rules 建議只開放 request.auth != null 的 kv collection。
 // ============================================================
 (function () {
   const firebaseConfig = {
@@ -268,41 +292,109 @@ const { useState, useEffect, useRef } = React;
     measurementId: "G-T1ZZQ2K4Y8",
   };
 
-  firebase.initializeApp(firebaseConfig);
+  if (!firebase.apps.length) firebase.initializeApp(firebaseConfig);
+
   const db = firebase.firestore();
-  const COLLECTION = "kv"; // 所有key/value都存在同一個collection裡，doc id = 原本的key
+  const auth = firebase.auth();
+  const COLLECTION = "kv";
+
+  // 對外提供狀態，方便 TEDDY 或日後除錯
+  window.__firebaseDb = db;
+  window.__firebaseAuth = auth;
+  window.__firebaseAuthMode = "anonymous";
+
+  // 先完成 Firebase Auth，再進行任何 Firestore 存取
+  window.firebaseReady = new Promise((resolve, reject) => {
+    let settled = false;
+
+    const done = (user) => {
+      if (settled) return;
+      settled = true;
+      window.__firebaseUser = user || null;
+      resolve(user || null);
+    };
+
+    const fail = (err) => {
+      if (settled) return;
+      settled = true;
+      console.error("Firebase Authentication 初始化失敗", err);
+      window.__firebaseInitError = err;
+      reject(err);
+    };
+
+    const unsubscribe = auth.onAuthStateChanged(
+      async (user) => {
+        if (user) {
+          try { unsubscribe(); } catch (_) {}
+          done(user);
+          return;
+        }
+
+        try {
+          const cred = await auth.signInAnonymously();
+          try { unsubscribe(); } catch (_) {}
+          done(cred.user);
+        } catch (err) {
+          try { unsubscribe(); } catch (_) {}
+          fail(err);
+        }
+      },
+      fail
+    );
+  });
+
+  async function ensureReady() {
+    try {
+      return await window.firebaseReady;
+    } catch (err) {
+      // 保留原始錯誤，讓上層能真正知道是驗證問題，不再假裝「資料不存在」
+      throw err;
+    }
+  }
 
   window.storage = {
     async get(key, shared) {
+      await ensureReady();
       try {
         const doc = await db.collection(COLLECTION).doc(key).get();
         if (!doc.exists) return null;
-        const data = doc.data();
+        const data = doc.data() || {};
         return { key, value: data.value, shared: !!shared };
       } catch (e) {
-        console.error("storage.get error", e);
-        return null;
+        console.error("storage.get error", key, e);
+        throw e;
       }
     },
+
     async set(key, value, shared) {
+      await ensureReady();
       try {
-        await db.collection(COLLECTION).doc(key).set({ key, value, updatedAt: Date.now() });
+        await db.collection(COLLECTION).doc(key).set({
+          key,
+          value,
+          updatedAt: Date.now(),
+          updatedByUid: auth.currentUser ? auth.currentUser.uid : null,
+        }, { merge: true });
         return { key, value, shared: !!shared };
       } catch (e) {
-        console.error("storage.set error", e);
-        return null;
+        console.error("storage.set error", key, e);
+        throw e;
       }
     },
+
     async delete(key, shared) {
+      await ensureReady();
       try {
         await db.collection(COLLECTION).doc(key).delete();
         return { key, deleted: true, shared: !!shared };
       } catch (e) {
-        console.error("storage.delete error", e);
-        return null;
+        console.error("storage.delete error", key, e);
+        throw e;
       }
     },
+
     async list(prefix, shared) {
+      await ensureReady();
       try {
         const p = prefix || "";
         const end = p + "\uf8ff";
@@ -313,8 +405,8 @@ const { useState, useEffect, useRef } = React;
         const keys = snap.docs.map((d) => d.id);
         return { keys, prefix: prefix || undefined, shared: !!shared };
       } catch (e) {
-        console.error("storage.list error", e);
-        return null;
+        console.error("storage.list error", prefix, e);
+        throw e;
       }
     },
   };
@@ -424,7 +516,7 @@ const C = {
   tiffanyLight: "#B8ECE5",
   tiffanyText: "#2E8577",
 };
-const APP_VERSION = "正式版・3.0";
+const APP_VERSION = "正式版・5.1";
 const FONT_LINK = "https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,600;9..144,700&family=Inter:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap";
 
 const WORK_ITEMS = [
@@ -6955,7 +7047,7 @@ function mountEmbedChrome(layerId, closeFn) {
   var back = document.createElement("button");
   back.type = "button";
   back.className = "embed-back-float";
-  back.innerHTML = "<span style=\\"font-size:18px\\">←</span><span>回上一頁</span>";
+  back.innerHTML = '<span style="font-size:18px">←</span><span>回上一頁</span>';
   back.style.cssText = "position:fixed;right:16px;bottom:18px;z-index:100000;min-height:54px;padding:0 20px;border-radius:999px;border:2px solid #fff;background:#C94F67;color:#fff;font-family:Inter,sans-serif;font-weight:800;font-size:17px;display:flex;align-items:center;gap:8px;box-shadow:0 8px 22px rgba(80,20,40,.28);cursor:pointer;";
   back.onclick = function () {
     if (typeof closeFn === "function") closeFn();
