@@ -7588,7 +7588,7 @@ function App() {
 })();
 
 const rootEl = document.getElementById("root");
-const root = 
+
 // ===== 全域浮動鍵防重複：同一時間只保留一個「回上一頁」與一個「主畫面」 =====
 // 僅控制浮動鍵顯示，不修改任何頁面、資料或權限邏輯。
 (function installFloatingButtonDeduper() {
@@ -7631,7 +7631,7 @@ const root =
   schedule();
 })();
 
-ReactDOM.createRoot(rootEl);
+const root = ReactDOM.createRoot(rootEl);
 root.render(React.createElement(App, null ));
 
 window.__farmAppMounted = true;
