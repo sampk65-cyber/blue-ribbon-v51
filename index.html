@@ -209,7 +209,10 @@ ul, ol { margin: 0; padding: 0; list-style: none; }
   }
   .back-float.is-dragging, .embed-back-float.is-dragging { cursor: grabbing; }
   @media (max-width: 640px) {
-    .back-float { min-height: 54px !important; font-size: 17px !important; }
+    .back-float, .embed-back-float, .home-float, .embed-home-island {
+      min-height: 49px !important;
+      font-size: 15.3px !important;
+    }
   }
 </style>
 </head>
@@ -1068,13 +1071,13 @@ function NavBar({ backLabel, onBack, role, onCycleRole }) {
         style: {
           position: "fixed", right: 18, bottom: 22, zIndex: 90,
           background: "#C94F67", color: "white",
-          fontFamily: "Inter", fontWeight: 800, fontSize: 16,
-          minHeight: 52, padding: "0 20px",
+          fontFamily: "Inter", fontWeight: 800, fontSize: 14.4,
+          minHeight: 47, padding: "0 18px",
           border: "2px solid white",
           boxShadow: "0 8px 22px rgba(80,20,40,.28)",
         },
       }
-        , React.createElement(ArrowLeft, { size: 22 }), "回上一頁"
+        , React.createElement(ArrowLeft, { size: 20 }), "回上一頁"
       )
     )
   );
@@ -1101,8 +1104,8 @@ function HomeIsland({ onHome }) {
     if (Math.abs(dx) + Math.abs(dy) > 5) s.moved = true;
     if (s.moved) {
       const vw = window.innerWidth, vh = window.innerHeight;
-      const nx = Math.min(Math.max(0, s.originX + dx), vw - 130);
-      const ny = Math.min(Math.max(0, s.originY + dy), vh - 56);
+      const nx = Math.min(Math.max(0, s.originX + dx), vw - 118);
+      const ny = Math.min(Math.max(0, s.originY + dy), vh - 51);
       setPos({ x: nx, y: ny });
     }
   };
@@ -1123,21 +1126,21 @@ function HomeIsland({ onHome }) {
       onPointerDown: onPointerDown,
       onPointerMove: onPointerMove,
       onPointerUp: onPointerUp,
-      className: "fixed flex items-center justify-center gap-2 rounded-full shadow-xl",
+      className: "home-float fixed flex items-center justify-center gap-2 rounded-full shadow-xl",
       style: {
         zIndex: 100,
         ...positionStyle,
         background: TIFFANY,
         color: C.ink,
-        minHeight: 54,
-        padding: "0 20px",
-        fontFamily: "Inter", fontWeight: 800, fontSize: 17,
+        minHeight: 49,
+        padding: "0 18px",
+        fontFamily: "Inter", fontWeight: 800, fontSize: 15.3,
         border: "2px solid white",
         boxShadow: "0 8px 22px rgba(80,20,40,.28)",
         textAlign: "center",
         touchAction: "none", cursor: "grab", userSelect: "none",
       },}
-      , React.createElement(Home, { size: 22, color: C.ink })
+      , React.createElement(Home, { size: 20, color: C.ink })
       , "主畫面"
     )
   );
@@ -2732,7 +2735,7 @@ function AttendanceMenu({ onBack, role, loggedInId }) {
 
   return (
     React.createElement('div', { className: "min-h-screen flex flex-col", style: { background: C.cream } },
-      React.createElement(NavBar, { backLabel: "回功能表", onBack: onBack }),
+      React.createElement(NavBar, { backLabel: "回功能表", onBack: handleStepBack }),
       React.createElement('div', { className: "max-w-md mx-auto w-full px-4 py-4 flex flex-col gap-3 flex-1", style: { paddingBottom: 100 } },
         React.createElement('div', { style: { fontFamily: "Inter", fontWeight: 700, fontSize: 20, color: C.ink } }, "上下班打卡"),
         React.createElement('div', { className: "text-xs", style: { color: C.wine, fontFamily: "Inter", fontWeight: 800 } }, "功能11・主管模式修正版 2026-08-24"),
@@ -3129,19 +3132,6 @@ function AttendanceMenu({ onBack, role, loggedInId }) {
           )
         )
       ),
-      React.createElement('button', {
-        onClick: handleStepBack,
-        className: "back-float no-print flex items-center justify-center gap-2 rounded-full shadow-xl",
-        style: {
-          position: "fixed", right: 16, bottom: 18, zIndex: 90,
-          background: "#C94F67", color: "white",
-          fontFamily: "Inter", fontWeight: 800, fontSize: 17,
-          minHeight: 54, padding: "0 20px",
-          border: "2px solid white",
-          boxShadow: "0 8px 22px rgba(80,20,40,.28)",
-          textAlign: "center",
-        },
-      }, React.createElement(ArrowLeft, { size: 22 }), mode === "regular" ? "回功能表" : "回上一頁")
     )
   );
 }
@@ -7233,7 +7223,7 @@ function mountEmbedChrome(layerId, closeFn) {
   back.type = "button";
   back.className = "embed-back-float";
   back.innerHTML = '<span style="font-size:18px">←</span><span>回上一頁</span>';
-  back.style.cssText = "position:fixed;right:16px;bottom:18px;z-index:100000;min-height:54px;padding:0 20px;border-radius:999px;border:2px solid #fff;background:#C94F67;color:#fff;font-family:Inter,sans-serif;font-weight:800;font-size:17px;display:flex;align-items:center;gap:8px;box-shadow:0 8px 22px rgba(80,20,40,.28);cursor:pointer;";
+  back.style.cssText = "position:fixed;right:16px;bottom:18px;z-index:100000;min-height:49px;padding:0 18px;border-radius:999px;border:2px solid #fff;background:#C94F67;color:#fff;font-family:Inter,sans-serif;font-weight:800;font-size:15.3px;display:flex;align-items:center;gap:7px;box-shadow:0 8px 22px rgba(80,20,40,.28);cursor:pointer;";
   back.onclick = function () {
     if (typeof closeFn === "function") closeFn();
   };
@@ -7534,7 +7524,7 @@ function App() {
 (function installDraggableBackButtons() {
   let drag = null;
   let suppressClickUntil = 0;
-  const SELECTOR = ".back-float, .embed-back-float";
+  const SELECTOR = ".back-float, .embed-back-float, .embed-home-island";
   const clamp = (v, min, max) => Math.max(min, Math.min(max, v));
 
   document.addEventListener("pointerdown", (e) => {
@@ -7598,7 +7588,50 @@ function App() {
 })();
 
 const rootEl = document.getElementById("root");
-const root = ReactDOM.createRoot(rootEl);
+const root = 
+// ===== 全域浮動鍵防重複：同一時間只保留一個「回上一頁」與一個「主畫面」 =====
+// 僅控制浮動鍵顯示，不修改任何頁面、資料或權限邏輯。
+(function installFloatingButtonDeduper() {
+  let queued = false;
+  const BACK_SEL = ".back-float, .embed-back-float";
+  const HOME_SEL = ".home-float, .embed-home-island";
+
+  function keepLastVisible(selector) {
+    const nodes = Array.from(document.querySelectorAll(selector));
+    if (!nodes.length) return;
+    const keep = nodes[nodes.length - 1];
+    nodes.forEach((el) => {
+      if (el === keep) {
+        if (el.dataset.floatDedupeHidden === "1") {
+          el.style.removeProperty("display");
+          delete el.dataset.floatDedupeHidden;
+        }
+      } else {
+        el.style.setProperty("display", "none", "important");
+        el.dataset.floatDedupeHidden = "1";
+      }
+    });
+  }
+
+  function sync() {
+    queued = false;
+    keepLastVisible(BACK_SEL);
+    keepLastVisible(HOME_SEL);
+  }
+  function schedule() {
+    if (queued) return;
+    queued = true;
+    requestAnimationFrame(sync);
+  }
+
+  const observer = new MutationObserver(schedule);
+  observer.observe(document.body, { childList: true, subtree: true });
+  window.addEventListener("pageshow", schedule);
+  window.addEventListener("resize", schedule);
+  schedule();
+})();
+
+ReactDOM.createRoot(rootEl);
 root.render(React.createElement(App, null ));
 
 window.__farmAppMounted = true;
