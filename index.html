@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-<title>完全體 V5.1・藍帶無花果・正式版3.0</title>
+<title>完全體 V5.1・功能11主管模式・登入修正版</title>
 <meta name="apple-mobile-web-app-capable" content="yes" />
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
 <meta name="apple-mobile-web-app-title" content="藍帶無花果" />
@@ -2377,6 +2377,17 @@ function AttendanceMenu({ onBack, role, loggedInId }) {
   const _nowAtt = new Date();
   const [recYear, setRecYear] = useState(_nowAtt.getFullYear());
   const [recMonth, setRecMonth] = useState(_nowAtt.getMonth() + 1);
+  // 主管模式：只讓 A／B 身分進入，可逐人查詢並修改出勤紀錄
+  const _attId = String(loggedInId || "").trim().toUpperCase();
+  const canSupervisor = !!loggedInId && (
+    /^[AB]/.test(_attId) ||
+    role === "designer" || role === "manager" || role === "founder"
+  );
+  const [supervisorMode, setSupervisorMode] = useState(false);
+  const [selectedPersonId, setSelectedPersonId] = useState("");
+  const [selectedPersonList, setSelectedPersonList] = useState([]);
+  const [editingAttendance, setEditingAttendance] = useState(null);
+  const [editDraft, setEditDraft] = useState(null);
 
   const loadToday = async () => {
     if (!loggedInId) return;
@@ -2577,6 +2588,68 @@ function AttendanceMenu({ onBack, role, loggedInId }) {
     saveLeaveTypes(leaveTypes.filter((x) => x !== t));
   };
 
+  const loadPersonAttendance = async (personId) => {
+    if (!canSupervisor || !personId) { setSelectedPersonList([]); return; }
+    setBusy(true);
+    try {
+      const listRes = await window.storage.list(`attendance:${personId}:`);
+      const keys = (listRes && listRes.keys) || [];
+      const rows = await runWithLimit(keys, 6, async (k) => {
+        const full = k.startsWith("attendance:") ? k : `attendance:${k}`;
+        try {
+          const res = await window.storage.get(full);
+          if (!res) return null;
+          const raw = JSON.parse(res.value);
+          return normalizeAttendance(raw, personId, raw.date || full.split(":").pop());
+        } catch (e) { return null; }
+      });
+      setSelectedPersonList(rows.filter(Boolean).sort((a, b) => (a.date < b.date ? 1 : -1)));
+    } catch (e) {
+      setSelectedPersonList([]);
+      setMsg("讀取個人出勤紀錄失敗");
+    }
+    setBusy(false);
+  };
+
+  const openAttendanceEdit = (rec) => {
+    if (!canSupervisor || !rec) return;
+    const base = normalizeAttendance(rec, rec.personId, rec.date);
+    setEditingAttendance(base);
+    setEditDraft(JSON.parse(JSON.stringify(base)));
+  };
+
+  const updateDraftPunch = (kind, slot, value) => {
+    setEditDraft((d) => {
+      if (!d) return d;
+      const next = JSON.parse(JSON.stringify(d));
+      if (!next[kind]) next[kind] = emptyBlock();
+      if (!next[kind].punches) next[kind].punches = emptyBlock().punches;
+      next[kind].punches[slot] = value || null;
+      return next;
+    });
+  };
+
+  const saveAttendanceEdit = async () => {
+    if (!canSupervisor || !editDraft || !editDraft.personId || !editDraft.date) return;
+    setBusy(true);
+    try {
+      const person = people.find((p) => p.id === editDraft.personId);
+      const next = {
+        ...editDraft,
+        personName: (person && person.name) || editDraft.personName || editDraft.personId,
+        updatedAt: Date.now(),
+        supervisorEditedBy: loggedInId,
+        supervisorEditedAt: Date.now(),
+      };
+      await window.storage.set(`attendance:${next.personId}:${next.date}`, JSON.stringify(next));
+      setEditingAttendance(null);
+      setEditDraft(null);
+      await loadPersonAttendance(next.personId);
+      setMsg(`已更新 ${next.personId}・${next.date} 出勤紀錄`);
+    } catch (e) { setMsg("出勤紀錄修改失敗"); }
+    setBusy(false);
+  };
+
   const modeBtn = (id, label, colors) => React.createElement('button', {
     key: id,
     onClick: () => { setMsg(""); setMode(id); },
@@ -2674,6 +2747,7 @@ function AttendanceMenu({ onBack, role, loggedInId }) {
       React.createElement(NavBar, { backLabel: "回功能表", onBack: onBack }),
       React.createElement('div', { className: "max-w-md mx-auto w-full px-4 py-4 flex flex-col gap-3 flex-1", style: { paddingBottom: 100 } },
         React.createElement('div', { style: { fontFamily: "Inter", fontWeight: 700, fontSize: 20, color: C.ink } }, "上下班打卡"),
+        React.createElement('div', { className: "text-xs", style: { color: C.wine, fontFamily: "Inter", fontWeight: 800 } }, "功能11・主管模式修正版 2026-08-24"),
         React.createElement('div', { className: "text-xs", style: { color: C.inkSoft, fontFamily: "Inter" } },
           "正常班與加班分開記錄・請假可編輯假別・打卡附手機定位"
         ),
@@ -2686,7 +2760,25 @@ function AttendanceMenu({ onBack, role, loggedInId }) {
           modeBtn("overtime", "加班工時", { bg: ATTEND_COLORS.otBg, text: ATTEND_COLORS.otText, border: ATTEND_COLORS.otBorder }),
           modeBtn("leave", "請假", { bg: ATTEND_COLORS.leaveBg, text: ATTEND_COLORS.leaveText, border: ATTEND_COLORS.leaveBorder }),
           modeBtn("records", "出勤紀錄", { bg: "#E8F1FA", text: ATTEND_COLORS.panelBorder, border: ATTEND_COLORS.panelBorder + "40" }),
-          modeBtn("settings", "設定", { bg: C.cream, text: C.ink, border: C.line })
+          modeBtn("settings", "設定", { bg: C.cream, text: C.ink, border: C.line }),
+          React.createElement('button', {
+            onClick: () => {
+              setMode("records");
+              setEditingAttendance(null); setEditDraft(null);
+              if (canSupervisor) {
+                setSupervisorMode(true); setMsg("");
+              } else {
+                setSupervisorMode(false);
+                setMsg("主管模式僅限 A／B 身分使用，請確認目前登入帳號。");
+              }
+            },
+            className: "py-3 rounded-xl text-sm flex items-center justify-center",
+            style: {
+              background: C.wine, color: "white", border: `2px solid ${C.wineDeep}`,
+              fontFamily: "Inter", fontWeight: 900, textAlign: "center",
+              minHeight: 52, boxShadow: "0 4px 12px rgba(91,42,69,.18)"
+            },
+          }, "主管模式")
         ),
 
         msg && React.createElement('div', { className: "text-xs px-3 py-2 rounded-lg text-center", style: { background: `${C.tableColor}15`, color: C.tableColor, fontFamily: "Inter" } }, msg),
@@ -2745,6 +2837,111 @@ function AttendanceMenu({ onBack, role, loggedInId }) {
         ),
 
         mode === "records" && React.createElement('div', { className: "flex flex-col gap-3" },
+          React.createElement('button', {
+            onClick: () => {
+              setEditingAttendance(null); setEditDraft(null);
+              if (canSupervisor) {
+                setSupervisorMode((v) => !v); setMsg("");
+              } else {
+                setSupervisorMode(false);
+                setMsg("主管模式僅限 A／B 身分使用，請確認目前登入帳號。");
+              }
+            },
+            className: "w-full py-3 rounded-xl text-sm flex items-center justify-center",
+            style: {
+              background: supervisorMode ? C.wineDeep : C.wine, color: "white",
+              border: `2px solid ${C.wineDeep}`, fontFamily: "Inter", fontWeight: 900,
+              fontSize: 16, textAlign: "center", minHeight: 52,
+              boxShadow: "0 4px 12px rgba(91,42,69,.18)"
+            },
+          }, supervisorMode ? "✓ 主管模式已開啟・點此退出" : "主管模式・A／B 人員管理"),
+
+          supervisorMode && canSupervisor && React.createElement('div', { className: "rounded-2xl p-4 flex flex-col gap-3", style: { background: "#FFF9F1", border: `2px solid ${C.wine}` } },
+            React.createElement('div', { style: { fontFamily: "Inter", fontWeight: 800, fontSize: 16, color: C.wine } }, "主管模式・人員出勤查詢"),
+            React.createElement('div', { className: "text-xs", style: { color: C.inkSoft, fontFamily: "Inter" } }, "A／B 身分可查看人員個別出勤紀錄並進行修正。所有修改會記錄修改者與時間。"),
+            React.createElement('select', {
+              value: selectedPersonId,
+              onChange: (e) => { const id = e.target.value; setSelectedPersonId(id); setEditingAttendance(null); setEditDraft(null); loadPersonAttendance(id); },
+              className: "w-full px-3 py-3 rounded-xl text-sm",
+              style: { border: `1px solid ${C.line}`, fontFamily: "Inter", background: C.paper, color: C.ink },
+            },
+              React.createElement('option', { value: "" }, "選擇人員"),
+              people.map((p) => React.createElement('option', { key: p.id, value: p.id }, `${p.id}・${p.name || "未命名"}`))
+            ),
+            selectedPersonId && React.createElement('div', { className: "flex items-center gap-2 flex-wrap" },
+              React.createElement('select', {
+                value: recYear, onChange: (e) => setRecYear(Number(e.target.value)),
+                className: "px-3 py-2 rounded-lg text-sm",
+                style: { border: `1px solid ${C.line}`, fontFamily: "Inter", background: C.paper },
+              }, [recYear - 1, recYear, recYear + 1].filter((y, i, a) => a.indexOf(y) === i).map((y) => React.createElement('option', { key: y, value: y }, y, "年"))),
+              React.createElement('select', {
+                value: recMonth, onChange: (e) => setRecMonth(Number(e.target.value)),
+                className: "px-3 py-2 rounded-lg text-sm",
+                style: { border: `1px solid ${C.line}`, fontFamily: "Inter", background: C.paper },
+              }, Array.from({ length: 12 }, (_, i) => i + 1).map((m) => React.createElement('option', { key: m, value: m }, m, "月")))
+            ),
+            selectedPersonId && selectedPersonList.filter((rec) => rec.date && rec.date.startsWith(`${recYear}-${String(recMonth).padStart(2, "0")}-`)).length === 0 &&
+              React.createElement('div', { className: "text-sm text-center py-4", style: { color: C.inkSoft, fontFamily: "Inter" } }, "此月份尚無出勤紀錄"),
+            selectedPersonId && selectedPersonList.filter((rec) => rec.date && rec.date.startsWith(`${recYear}-${String(recMonth).padStart(2, "0")}-`)).map((rec) => {
+              const sum = summarizeRec(rec);
+              const rp = (rec.regular && rec.regular.punches) || {};
+              const op = (rec.overtime && rec.overtime.punches) || {};
+              return React.createElement('div', { key: rec.personId + rec.date, className: "rounded-xl p-3", style: { background: C.paper, border: `1px solid ${C.line}` } },
+                React.createElement('div', { className: "flex justify-between items-center gap-2" },
+                  React.createElement('div', null,
+                    React.createElement('div', { style: { fontFamily: "Inter", fontWeight: 800, color: C.ink } }, rec.date),
+                    React.createElement('div', { className: "text-xs mt-1", style: { color: ATTEND_COLORS.inText, fontFamily: "IBM Plex Mono" } }, `正 ${rp.amIn || "—"}→${rp.amOut || "—"} / ${rp.pmIn || "—"}→${rp.pmOut || "—"}`),
+                    React.createElement('div', { className: "text-xs mt-1", style: { color: ATTEND_COLORS.otText, fontFamily: "IBM Plex Mono" } }, `加 ${op.amIn || "—"}→${op.amOut || "—"} / ${op.pmIn || "—"}→${op.pmOut || "—"}`),
+                    React.createElement('div', { className: "text-xs mt-1", style: { color: C.inkSoft, fontFamily: "Inter" } }, `正 ${sum.rh.total}・加 ${sum.oh.total}${sum.leave ? `・${sum.leave}` : ""}`)
+                  ),
+                  React.createElement('button', {
+                    onClick: () => openAttendanceEdit(rec),
+                    className: "px-3 py-2 rounded-lg text-xs flex items-center justify-center",
+                    style: { background: C.wine, color: "white", fontFamily: "Inter", fontWeight: 700, textAlign: "center", flexShrink: 0 },
+                  }, "修改")
+                )
+              );
+            }),
+            editingAttendance && editDraft && React.createElement('div', { className: "rounded-xl p-3 flex flex-col gap-3", style: { background: ATTEND_COLORS.panelBg, border: `1px solid ${ATTEND_COLORS.panelBorder}` } },
+              React.createElement('div', { style: { fontFamily: "Inter", fontWeight: 800, color: ATTEND_COLORS.panelBorder } }, `修改 ${editDraft.personId}・${editDraft.date}`),
+              [
+                { kind: "regular", title: "正常班" },
+                { kind: "overtime", title: "加班" },
+              ].map((grp) => React.createElement('div', { key: grp.kind, className: "rounded-lg p-2", style: { background: C.paper, border: `1px solid ${C.line}` } },
+                React.createElement('div', { className: "text-xs mb-2", style: { fontFamily: "Inter", fontWeight: 700, color: grp.kind === "regular" ? ATTEND_COLORS.inText : ATTEND_COLORS.otText } }, grp.title),
+                React.createElement('div', { className: "grid grid-cols-2 gap-2" },
+                  ATTEND_SLOTS.map((slot) => React.createElement('label', { key: slot.key, className: "text-xs", style: { color: C.inkSoft, fontFamily: "Inter" } }, slot.label,
+                    React.createElement('input', {
+                      type: "time",
+                      value: (((editDraft[grp.kind] || {}).punches || {})[slot.key]) || "",
+                      onChange: (e) => updateDraftPunch(grp.kind, slot.key, e.target.value),
+                      className: "w-full mt-1 px-2 py-2 rounded-lg text-sm",
+                      style: { border: `1px solid ${C.line}`, background: C.cream, fontFamily: "IBM Plex Mono" },
+                    })
+                  ))
+                )
+              )),
+              React.createElement('label', { className: "text-xs", style: { color: C.inkSoft, fontFamily: "Inter" } }, "假別",
+                React.createElement('select', {
+                  value: editDraft.leave ? (editDraft.leave.type || "") : "",
+                  onChange: (e) => setEditDraft((d) => ({ ...d, leave: e.target.value ? { ...(d.leave || {}), type: e.target.value } : null })),
+                  className: "w-full mt-1 px-3 py-2.5 rounded-lg text-sm",
+                  style: { border: `1px solid ${C.line}`, background: C.paper },
+                }, React.createElement('option', { value: "" }, "無請假"), leaveTypes.map((t) => React.createElement('option', { key: t, value: t }, t)))
+              ),
+              editDraft.leave && React.createElement('input', {
+                value: editDraft.leave.note || "",
+                onChange: (e) => setEditDraft((d) => ({ ...d, leave: { ...(d.leave || {}), note: e.target.value } })),
+                placeholder: "請假備註", className: "w-full px-3 py-2.5 rounded-lg text-sm",
+                style: { border: `1px solid ${C.line}`, background: C.paper },
+              }),
+              React.createElement('div', { className: "flex gap-2" },
+                React.createElement('button', { onClick: saveAttendanceEdit, disabled: busy, className: "flex-1 py-3 rounded-xl text-sm flex items-center justify-center", style: { background: ATTEND_COLORS.panelBorder, color: "white", fontFamily: "Inter", fontWeight: 800, opacity: busy ? .6 : 1, textAlign: "center" } }, busy ? "儲存中…" : "儲存修改"),
+                React.createElement('button', { onClick: () => { setEditingAttendance(null); setEditDraft(null); }, disabled: busy, className: "px-4 py-3 rounded-xl text-sm flex items-center justify-center", style: { background: C.cream, color: C.ink, border: `1px solid ${C.line}`, fontFamily: "Inter", fontWeight: 700, textAlign: "center" } }, "取消")
+              )
+            )
+          ),
+
           React.createElement('div', { className: "flex items-center gap-2 flex-wrap" },
             React.createElement('select', {
               value: recYear,
@@ -7329,8 +7526,13 @@ function saveSession(session) {
 }
 
 function App() {
-  const [session, setSessionState] = useState(() => loadSavedSession()); // null=尚未登入; {role,id}=已登入
-  const setSession = (s) => { setSessionState(s); saveSession(s); };
+  // 登入安全修正：每次重新開啟／重新整理都必須回到登入畫面，
+  // 不再沿用舊版 localStorage 的登入 session，避免未驗證直接進入系統。
+  const [session, setSessionState] = useState(null);
+  useEffect(() => {
+    try { localStorage.removeItem(SESSION_KEY); } catch (e40) {}
+  }, []);
+  const setSession = (s) => { setSessionState(s); };
 
   if (!session) {
     return React.createElement(LoginSplash, { onLogin: (role, id) => setSession({ role, id }),} );
