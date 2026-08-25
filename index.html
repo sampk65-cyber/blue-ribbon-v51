@@ -516,7 +516,7 @@ const C = {
   tiffanyLight: "#B8ECE5",
   tiffanyText: "#2E8577",
 };
-const APP_VERSION = "正式版・5.1+・主管視窗適配";
+const APP_VERSION = "正式版・5.1+・主管表格最終適配";
 const FONT_LINK = "https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,600;9..144,700&family=Inter:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap";
 
 const WORK_ITEMS = [
@@ -2424,7 +2424,7 @@ function AttendanceMenu({ onBack, role, loggedInId }) {
   const [supervisorPersonId, setSupervisorPersonId] = useState("");
   const [supervisorList, setSupervisorList] = useState([]);
   const [supervisorLoading, setSupervisorLoading] = useState(false);
-  const [supervisorZoom, setSupervisorZoom] = useState(1);
+  const [supervisorZoom, setSupervisorZoom] = useState(0.7);
   const [editAttendance, setEditAttendance] = useState(null);
   const [editAttendanceDraft, setEditAttendanceDraft] = useState(null);
   const dateKey = taipeiDateKey();
@@ -2505,9 +2505,9 @@ function AttendanceMenu({ onBack, role, loggedInId }) {
     return merged.filter((p) => p && p.id).sort((a, b) => a.id.localeCompare(b.id));
   })();
 
-  const supervisorZoomOut = () => setSupervisorZoom((z) => Math.max(0.7, Math.round((z - 0.1) * 10) / 10));
-  const supervisorZoomIn = () => setSupervisorZoom((z) => Math.min(1.2, Math.round((z + 0.1) * 10) / 10));
-  const supervisorZoomReset = () => setSupervisorZoom(1);
+  const supervisorZoomOut = () => setSupervisorZoom((z) => Math.max(0.55, Math.round((z - 0.05) * 100) / 100));
+  const supervisorZoomIn = () => setSupervisorZoom((z) => Math.min(1.0, Math.round((z + 0.05) * 100) / 100));
+  const supervisorZoomReset = () => setSupervisorZoom(0.7);
   const printSupervisorAttendance = () => {
     setTimeout(() => window.print(), 80);
   };
@@ -2866,22 +2866,25 @@ function AttendanceMenu({ onBack, role, loggedInId }) {
             print-color-adjust: exact !important;
           }
           .attendance-print-title { text-align: center; margin: 0 0 1.5mm; }
-          .attendance-print-main { font-size: 13pt; font-weight: 800; line-height: 1; }
-          .attendance-print-sub { font-size: 7.5pt; margin-top: 0.6mm; line-height: 1; }
+          .attendance-print-main { font-size: 16pt; font-weight: 800; line-height: 1; }
+          .attendance-print-sub { font-size: 12pt; margin-top: 0.6mm; line-height: 1; }
           .attendance-print-table {
             width: 100% !important;
             max-width: 100% !important;
             border-collapse: collapse;
             table-layout: fixed;
-            font-size: 6.0pt;
-            line-height: 0.98;
+            font-size: 12pt;
+            line-height: 0.92;
+            transform: scale(0.70);
+            transform-origin: top left;
+            width: 142.857% !important;
             break-inside: avoid !important;
             page-break-inside: avoid !important;
           }
           .attendance-print-table th,
           .attendance-print-table td {
             border: 0.18mm solid #555;
-            padding: 0.72mm 0.4mm;
+            padding: 0.38mm 0.22mm;
             text-align: center;
             vertical-align: middle;
             word-break: normal;
@@ -3114,7 +3117,7 @@ function AttendanceMenu({ onBack, role, loggedInId }) {
             React.createElement('div', {
               className: "flex-shrink-0 rounded-xl px-3 py-2 text-center",
               style: {
-                fontFamily: "Inter", fontWeight: 900, color: "white",
+                fontFamily: "Inter", fontWeight: 900, fontSize: 8, color: "white",
                 background: C.wine, fontSize: 18, letterSpacing: 1,
                 boxShadow: "0 4px 12px rgba(111,41,76,.18)",
               },
@@ -3228,7 +3231,7 @@ function AttendanceMenu({ onBack, role, loggedInId }) {
                     style: {
                       borderCollapse: "collapse",
                       tableLayout: "fixed",
-                      width: "100%",
+                      width: `${100 / supervisorZoom}%`,
                       minWidth: 0,
                       fontFamily: "Inter",
                       zoom: supervisorZoom,
@@ -3236,16 +3239,16 @@ function AttendanceMenu({ onBack, role, loggedInId }) {
                     React.createElement('thead', { style: { position: "sticky", top: 0, zIndex: 2, background: "#F5F0E8" } },
                       React.createElement('tr', null,
                         [
-                          { t: "日", w: "8%" },
-                          { t: "正常班", w: "34%" },
-                          { t: "加班", w: "30%" },
-                          { t: "假別", w: "13%" },
-                          { t: "修改", w: "15%" },
+                          { t: "日", w: "7%" },
+                          { t: "正常班", w: "30%" },
+                          { t: "加班", w: "27%" },
+                          { t: "假別", w: "16%" },
+                          { t: "修改", w: "20%" },
                         ].map((h) =>
                           React.createElement('th', {
                             key: h.t,
                             className: "px-0.5 py-2 text-center",
-                            style: { width: h.w, border: `1px solid ${C.line}`, fontWeight: 800, color: C.ink, fontSize: 10 },
+                            style: { width: h.w, border: `1px solid ${C.line}`, fontWeight: 800, color: C.ink, fontSize: 8.5, padding: "4px 1px" },
                           }, h.t)
                         )
                       )
@@ -3255,18 +3258,18 @@ function AttendanceMenu({ onBack, role, loggedInId }) {
                         const rp = (r.rec && r.rec.regular && r.rec.regular.punches) || {};
                         const op = (r.rec && r.rec.overtime && r.rec.overtime.punches) || {};
                         return React.createElement('tr', { key: r.date, style: { background: r.rec ? C.paper : "#FBF8F2" } },
-                          React.createElement('td', { className: "px-0.5 py-1.5 text-center", style: { border: `1px solid ${C.line}`, fontWeight: 700, fontSize: 10 } }, r.d),
-                          React.createElement('td', { className: "px-1 py-2 text-center", style: { border: `1px solid ${C.line}`, color: ATTEND_COLORS.inText, fontFamily: "IBM Plex Mono", fontSize: 8.5, lineHeight: 1.25, wordBreak: "break-word" } },
+                          React.createElement('td', { className: "px-0.5 py-1.5 text-center", style: { border: `1px solid ${C.line}`, fontWeight: 700, fontSize: 8.5, padding: "3px 1px" } }, r.d),
+                          React.createElement('td', { className: "px-1 py-2 text-center", style: { border: `1px solid ${C.line}`, color: ATTEND_COLORS.inText, fontFamily: "IBM Plex Mono", fontSize: 7.2, lineHeight: 1.15, wordBreak: "break-all" } },
                             r.rec ? `${rp.amIn || "—"}-${rp.amOut || "—"} / ${rp.pmIn || "—"}-${rp.pmOut || "—"}` : "—"
                           ),
-                          React.createElement('td', { className: "px-1 py-2 text-center", style: { border: `1px solid ${C.line}`, color: ATTEND_COLORS.otText, fontFamily: "IBM Plex Mono", fontSize: 8.5, lineHeight: 1.25, wordBreak: "break-word" } },
+                          React.createElement('td', { className: "px-1 py-2 text-center", style: { border: `1px solid ${C.line}`, color: ATTEND_COLORS.otText, fontFamily: "IBM Plex Mono", fontSize: 7.2, lineHeight: 1.15, wordBreak: "break-all" } },
                             r.rec ? `${op.amIn || "—"}-${op.amOut || "—"} / ${op.pmIn || "—"}-${op.pmOut || "—"}` : "—"
                           ),
-                          React.createElement('td', { className: "px-1 py-2 text-center", style: { border: `1px solid ${C.line}`, color: r.leave ? "#B8860B" : C.inkSoft } }, r.leave || "—"),
+                          React.createElement('td', { className: "px-1 py-2 text-center", style: { border: `1px solid ${C.line}`, color: r.leave ? "#B8860B" : C.inkSoft, fontSize: 8, padding: "3px 1px" } }, r.leave || "—"),
                           React.createElement('td', { className: "px-1 py-1.5 text-center", style: { border: `1px solid ${C.line}` } },
                             React.createElement('button', {
                               onClick: () => openAttendanceEditor(supervisorPersonId, r.date, r.rec),
-                              className: "px-1.5 py-1 rounded-md text-xs",
+                              className: "px-1 py-0.5 rounded-md",
                               style: {
                                 background: r.rec ? `${C.wine}18` : "#FFF5F5",
                                 color: r.rec ? C.wine : "#D93025",
