@@ -516,7 +516,7 @@ const C = {
   tiffanyLight: "#B8ECE5",
   tiffanyText: "#2E8577",
 };
-const APP_VERSION = "正式版・5.1+";
+const APP_VERSION = "正式版・5.1+・留言板A4五欄月報";
 const FONT_LINK = "https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,600;9..144,700&family=Inter:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap";
 
 const WORK_ITEMS = [
@@ -4721,7 +4721,7 @@ const REPORT_SLOTS = [
   { no: "一", label: "耗材匯總表", key: "materials", ready: true },
   { no: "二", label: "年度計畫表", key: "annual", ready: true },
   { no: "三", label: "分區耗材統計", key: "zoneMaterials", ready: true },
-  { no: "四", label: "尚未設計", key: null, ready: false },
+  { no: "四", label: "留言版內容", key: "noticeBoard", ready: true },
   { no: "五", label: "尚未設計", key: null, ready: false },
   { no: "六", label: "尚未設計", key: null, ready: false },
   { no: "七", label: "尚未設計", key: null, ready: false },
@@ -4735,7 +4735,7 @@ function ReportsHub({ onBack }) {
   const now = new Date();
   const [yearSel, setYearSel] = useState(null);
   const [monthSel, setMonthSel] = useState(null);
-  const [openKey, setOpenKey] = useState(null); // "materials" | "annual" | null
+  const [openKey, setOpenKey] = useState(null); // "materials" | "annual" | "zoneMaterials" | "noticeBoard" | null
 
   if (openKey === "materials") {
     return React.createElement(MonthlyReport, { year: yearSel, month: monthSel, onBack: () => setOpenKey(null),} );
@@ -4745,6 +4745,9 @@ function ReportsHub({ onBack }) {
   }
   if (openKey === "zoneMaterials") {
     return React.createElement(ZoneMaterialsReport, { year: yearSel, month: monthSel, onBack: () => setOpenKey(null),} );
+  }
+  if (openKey === "noticeBoard") {
+    return React.createElement(NoticeBoardArchive, { year: yearSel, month: monthSel, onBack: () => setOpenKey(null),} );
   }
 
   return (
@@ -4963,6 +4966,161 @@ function MonthlyReport({ year, month, onBack }) {
 
 // 表三・分區耗材統計：與表一同一資料來源（zonework 6/7/8）
 // 以月曆呈現整月日期與當日確認內容；格子過擠時點選「顯示全部」展開
+
+
+// 功能表7・表四：留言版內容（月彙整）
+function NoticeBoardArchive({ year, month, onBack }) {
+  const [rows, setRows] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const ym = `${year}-${String(month).padStart(2, "0")}`;
+
+  useEffect(() => {
+    let alive = true;
+    (async () => {
+      setLoading(true);
+      try {
+        // 歷史留言直接讀 zonenotice:* 原始資料，不受首頁「48小時／最多3則」顯示規則影響。
+        // 因此已讀留言仍會永久保留在表四月報中，除非未來另行實作人工刪除。
+        const listRes = await window.storage.list("zonenotice:");
+        const keys = _optionalChain([listRes, 'optionalAccess', _nb1 => _nb1.keys]) || [];
+        const results = await runWithLimit(keys, 6, async (k) => {
+          try {
+            const res = await window.storage.get(k);
+            if (!res) return null;
+            const n = JSON.parse(res.value);
+            if (monthKeyOf(n.postedAt) !== ym) return null;
+            return { key: k, ...n };
+          } catch (_e) { return null; }
+        });
+        const list = results.filter(Boolean).sort((a, b) => (a.postedAt > b.postedAt ? 1 : -1));
+        if (alive) setRows(list);
+      } catch (_e) {
+        if (alive) setRows([]);
+      }
+      if (alive) setLoading(false);
+    })();
+    return () => { alive = false; };
+  }, [year, month]);
+
+  const recipientRows = (n) => {
+    const ids = n.recipientIds || [];
+    return ids.length ? ids.map((id) => {
+      const name = _optionalChain([n, 'access', _nb2 => _nb2.recipientNames, 'optionalAccess', _nb3 => _nb3[id]]) || id;
+      const read = (n.readBy || []).includes(id);
+      const at = _optionalChain([n, 'access', _nb4 => _nb4.readAt, 'optionalAccess', _nb5 => _nb5[id]]);
+      return {
+        recipient: name,
+        readAt: read ? (at || "已讀（舊資料未記錄日期）") : "未讀",
+      };
+    }) : [{ recipient: "—", readAt: "—" }];
+  };
+
+  const flatRows = rows.flatMap((n) =>
+    recipientRows(n).map((r, idx) => ({
+      key: `${n.key}:${idx}`,
+      postedAt: n.postedAt || "—",
+      sender: n.senderName || n.senderId || "—",
+      content: n.text || "—",
+      recipient: r.recipient,
+      readAt: r.readAt,
+    }))
+  );
+
+  const printReport = () => {
+    setTimeout(() => window.print(), 80);
+  };
+
+  return (
+    React.createElement('div', { className: "min-h-screen flex flex-col", style: { background: C.cream },}
+      , React.createElement(NavBar, { backLabel: "回表格", onBack: onBack,} )
+
+      , React.createElement('div', { className: "px-4 py-3 no-print",
+          style: { borderBottom: `1px solid ${C.line}`, background: C.paper },}
+        , React.createElement('div', { className: "flex items-center justify-between gap-2" }
+          , React.createElement('div', null
+            , React.createElement('div', { style: { fontFamily: "Inter", fontWeight: 700, fontSize: 18, color: C.ink },}, "表四・留言板內容")
+            , React.createElement('div', { className: "text-xs mt-1", style: { color: C.inkSoft, fontFamily: "IBM Plex Mono" },},
+                year, "年 ", month, "月　／　直式 A4 月報")
+          )
+          , React.createElement('button', {
+              onClick: printReport,
+              className: "px-3 py-2 rounded-lg text-xs flex items-center gap-1.5",
+              style: { background: C.wine, color: "white", fontFamily: "Inter", fontWeight: 700 },}
+            , React.createElement(Printer, { size: 15, color: "white" })
+            , "列印／存PDF"
+          )
+        )
+      )
+
+      , React.createElement('div', { className: "p-4 overflow-auto" }
+        , React.createElement('div', {
+            className: "print-area mx-auto",
+            style: {
+              width: "100%",
+              maxWidth: 794,
+              minHeight: 1123,
+              background: "#FFFFFF",
+              color: "#222",
+              padding: "28px 30px 24px",
+              boxShadow: "0 2px 10px rgba(0,0,0,.08)",
+              fontFamily: "Inter",
+            },}
+
+          , React.createElement('div', { style: { textAlign: "center", marginBottom: 12 },}
+            , React.createElement('div', { style: { fontWeight: 800, fontSize: 20, letterSpacing: 1 },}, "留言板內容表")
+            , React.createElement('div', { style: { fontSize: 12, marginTop: 5 },}, year, "年 ", month, "月")
+          )
+
+          , loading ? (
+            React.createElement('div', { style: { textAlign: "center", padding: "30px 0", fontSize: 12 },}, "載入中…")
+          ) : (
+            React.createElement('table', {
+              style: {
+                width: "100%",
+                borderCollapse: "collapse",
+                tableLayout: "fixed",
+                fontSize: 10,
+                lineHeight: 1.35,
+              },}
+              , React.createElement('thead', null
+                , React.createElement('tr', null
+                  , React.createElement('th', { style: { width: "20%", border: "1px solid #777", padding: "6px 4px", background: "#F2F2F2" },}, "發文日期")
+                  , React.createElement('th', { style: { width: "14%", border: "1px solid #777", padding: "6px 4px", background: "#F2F2F2" },}, "發文人")
+                  , React.createElement('th', { style: { width: "28%", border: "1px solid #777", padding: "6px 4px", background: "#F2F2F2" },}, "內容")
+                  , React.createElement('th', { style: { width: "16%", border: "1px solid #777", padding: "6px 4px", background: "#F2F2F2" },}, "受文人")
+                  , React.createElement('th', { style: { width: "22%", border: "1px solid #777", padding: "6px 4px", background: "#F2F2F2" },}, "已讀日期")
+                )
+              )
+              , React.createElement('tbody', null
+                , flatRows.length === 0 ? (
+                  React.createElement('tr', null
+                    , React.createElement('td', {
+                        colSpan: 5,
+                        style: { border: "1px solid #777", padding: "20px 6px", textAlign: "center", color: "#666" },},
+                      "本月尚無留言紀錄"
+                    )
+                  )
+                ) : flatRows.map((r) => (
+                  React.createElement('tr', { key: r.key, style: { breakInside: "avoid" },}
+                    , React.createElement('td', { style: { border: "1px solid #777", padding: "5px 4px", verticalAlign: "top", wordBreak: "break-word" },}, r.postedAt)
+                    , React.createElement('td', { style: { border: "1px solid #777", padding: "5px 4px", verticalAlign: "top", wordBreak: "break-word" },}, r.sender)
+                    , React.createElement('td', { style: { border: "1px solid #777", padding: "5px 4px", verticalAlign: "top", wordBreak: "break-word" },}, r.content)
+                    , React.createElement('td', { style: { border: "1px solid #777", padding: "5px 4px", verticalAlign: "top", wordBreak: "break-word" },}, r.recipient)
+                    , React.createElement('td', { style: { border: "1px solid #777", padding: "5px 4px", verticalAlign: "top", wordBreak: "break-word" },}, r.readAt)
+                  )
+                ))
+              )
+            )
+          )
+
+          , React.createElement('div', { style: { marginTop: 10, fontSize: 9, color: "#666", textAlign: "right" },},
+              "共 ", flatRows.length, " 筆收文紀錄")
+        )
+      )
+    )
+  );
+}
+
 function ZoneMaterialsReport({ year, month, onBack }) {
   const ym = `${year}-${String(month).padStart(2, "0")}`;
   const [zone, setZone] = useState(null);
@@ -5805,6 +5963,18 @@ function ZoneNoticeBoard({ role, loggedInId }) {
   const [marking, setMarking] = useState(false);
   const [selectedKey, setSelectedKey] = useState(null); // 目前開啟詳情的那一筆通知的storage key
 
+  const noticeStampMs = (stamp) => {
+    if (!stamp) return 0;
+    const m = String(stamp).match(/^(\d{4})\/(\d{2})\/(\d{2})\s+(\d{2}):(\d{2})/);
+    if (!m) return 0;
+    return Date.UTC(Number(m[1]), Number(m[2]) - 1, Number(m[3]), Number(m[4]) - 8, Number(m[5]));
+  };
+  const isFullyReadNotice = (n) => {
+    const ids = (n && n.recipientIds) || [];
+    const read = (n && n.readBy) || [];
+    return ids.length > 0 && ids.every((id) => read.includes(id));
+  };
+
   const load = async () => {
     setLoading(true);
     try {
@@ -5825,9 +5995,21 @@ function ZoneNoticeBoard({ role, loggedInId }) {
   useEffect(() => { load(); }, []);
 
   const selected = notices.find((n) => n.key === selectedKey) || null;
-  const isNoticeUnread = (n) => !!(n && _optionalChain([n, 'access', _216 => _216.recipientIds, 'optionalAccess', _217 => _217.length]) > 0 && (n.readBy || []).length < n.recipientIds.length);
-  const anyUnread = notices.some(isNoticeUnread);
-  const unreadTotal = notices.filter(isNoticeUnread).length;
+  const isNoticeUnread = (n) => !!(n && !isFullyReadNotice(n));
+  const unreadNotices = notices.filter(isNoticeUnread);
+  const unreadTotal = unreadNotices.length;
+  const anyUnread = unreadTotal > 0;
+  const latestReadWithin48h = notices
+    .filter((n) => isFullyReadNotice(n))
+    .filter((n) => {
+      const base = noticeStampMs(n.fullyReadAt || n.postedAt);
+      return base > 0 && (Date.now() - base) <= 48 * 60 * 60 * 1000;
+    })
+    .sort((a, b) => (a.postedAt < b.postedAt ? 1 : -1))[0] || null;
+  const visibleNotices = unreadNotices.slice(0, 3);
+  if (visibleNotices.length < 3 && latestReadWithin48h) visibleNotices.push(latestReadWithin48h);
+  visibleNotices.sort((a, b) => (a.postedAt < b.postedAt ? 1 : -1));
+  const stackedUnreadCount = Math.max(0, unreadNotices.length - 3);
 
   const openComposeFresh = async () => {
     setModal("compose");
@@ -5873,6 +6055,8 @@ function ZoneNoticeBoard({ role, loggedInId }) {
       recipientIds,
       recipientNames: Object.fromEntries(recipientIds.map((id) => [id, _optionalChain([people, 'access', _219 => _219.find, 'call', _220 => _220((p) => p.id === id), 'optionalAccess', _221 => _221.name]) || id])),
       readBy: [],
+      readAt: {},
+      fullyReadAt: null,
       postedAt: nowStamp(),
     };
     const key = `zonenotice:${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`;
@@ -5887,7 +6071,17 @@ function ZoneNoticeBoard({ role, loggedInId }) {
     if (!readerPick || !selected) return;
     if ((selected.readBy || []).includes(readerPick)) { setModal(null); return; }
     setMarking(true);
-    const updated = { ...selected, readBy: [...(selected.readBy || []), readerPick] };
+    const stamp = nowStamp();
+    const nextReadBy = [...(selected.readBy || []), readerPick];
+    const nextReadAt = { ...(selected.readAt || {}), [readerPick]: stamp };
+    const allRead = (selected.recipientIds || []).length > 0 &&
+      (selected.recipientIds || []).every((id) => nextReadBy.includes(id));
+    const updated = {
+      ...selected,
+      readBy: nextReadBy,
+      readAt: nextReadAt,
+      fullyReadAt: allRead ? (selected.fullyReadAt || stamp) : null,
+    };
     const { key, ...payload } = updated;
     try {
       const result = await window.storage.set(selected.key, JSON.stringify(payload));
@@ -5939,7 +6133,7 @@ function ZoneNoticeBoard({ role, loggedInId }) {
 
       , notices.length > 0 && (
         React.createElement('div', { className: "flex flex-col gap-2 mb-1"   ,}
-          , notices.map((n) => {
+          , visibleNotices.map((n) => {
             const unread = isNoticeUnread(n);
             return (
               React.createElement('button', {
@@ -5963,6 +6157,13 @@ function ZoneNoticeBoard({ role, loggedInId }) {
               )
             );
           })
+        )
+      )
+
+      , stackedUnreadCount > 0 && (
+        React.createElement('div', { className: "w-full rounded-xl px-3 py-2 mt-2 text-xs text-center",
+            style: { background: `${C.alert}10`, border: `1px dashed ${C.alert}`, color: C.alert, fontFamily: "Inter", fontWeight: 700 },}
+          , "另有 ", stackedUnreadCount, " 則未讀通知已疊收；完整內容請至 功能表7 → 表四・留言版內容"
         )
       )
 
