@@ -516,7 +516,7 @@ const C = {
   tiffanyLight: "#B8ECE5",
   tiffanyText: "#2E8577",
 };
-const APP_VERSION = "正式版・5.1+・留言板A4五欄月報";
+const APP_VERSION = "正式版・5.1+・動態島等尺寸";
 const FONT_LINK = "https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,600;9..144,700&family=Inter:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap";
 
 const WORK_ITEMS = [
@@ -1206,15 +1206,14 @@ function HomeIsland({ onHome }) {
         ...positionStyle,
         background: TIFFANY,
         color: C.ink,
-        minHeight: 54,
-        padding: "0 20px",
-        fontFamily: "Inter", fontWeight: 800, fontSize: 17,
+        padding: "10px 15px",
+        fontFamily: "Inter", fontWeight: 700, fontSize: 13,
         border: "2px solid white",
         boxShadow: "0 8px 22px rgba(80,20,40,.28)",
         textAlign: "center",
         touchAction: "none", cursor: "grab", userSelect: "none",
       },}
-      , React.createElement(Home, { size: 22, color: C.ink })
+      , React.createElement(Home, { size: 15, color: C.ink })
       , "主畫面"
     )
   );
