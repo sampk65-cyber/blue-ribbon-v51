@@ -516,7 +516,7 @@ const C = {
   tiffanyLight: "#B8ECE5",
   tiffanyText: "#2E8577",
 };
-const APP_VERSION = "正式版・5.1+・出勤主管模式";
+const APP_VERSION = "正式版・5.1+・主管出勤優化";
 const FONT_LINK = "https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,600;9..144,700&family=Inter:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap";
 
 const WORK_ITEMS = [
@@ -2424,6 +2424,7 @@ function AttendanceMenu({ onBack, role, loggedInId }) {
   const [supervisorPersonId, setSupervisorPersonId] = useState("");
   const [supervisorList, setSupervisorList] = useState([]);
   const [supervisorLoading, setSupervisorLoading] = useState(false);
+  const [supervisorZoom, setSupervisorZoom] = useState(1);
   const [editAttendance, setEditAttendance] = useState(null);
   const [editAttendanceDraft, setEditAttendanceDraft] = useState(null);
   const dateKey = taipeiDateKey();
@@ -2503,6 +2504,13 @@ function AttendanceMenu({ onBack, role, loggedInId }) {
     });
     return merged.filter((p) => p && p.id).sort((a, b) => a.id.localeCompare(b.id));
   })();
+
+  const supervisorZoomOut = () => setSupervisorZoom((z) => Math.max(0.7, Math.round((z - 0.1) * 10) / 10));
+  const supervisorZoomIn = () => setSupervisorZoom((z) => Math.min(1.2, Math.round((z + 0.1) * 10) / 10));
+  const supervisorZoomReset = () => setSupervisorZoom(1);
+  const printSupervisorAttendance = () => {
+    setTimeout(() => window.print(), 80);
+  };
 
   const loadSupervisorPerson = async (personId = supervisorPersonId) => {
     if (!canSupervisorEdit || !personId) { setSupervisorList([]); return; }
@@ -2822,7 +2830,50 @@ function AttendanceMenu({ onBack, role, loggedInId }) {
   };
 
   return (
-    React.createElement('div', { className: "min-h-screen flex flex-col", style: { background: C.cream } },
+    React.createElement(React.Fragment, null,
+      React.createElement('style', null, `
+        .attendance-supervisor-print { display: none; }
+        @media print {
+          @page { size: A4 portrait; margin: 7mm; }
+          body * { visibility: hidden !important; }
+          .attendance-supervisor-print,
+          .attendance-supervisor-print * { visibility: visible !important; }
+          .attendance-supervisor-print {
+            display: block !important;
+            position: absolute !important;
+            left: 0 !important;
+            top: 0 !important;
+            width: 196mm !important;
+            min-height: 283mm !important;
+            padding: 0 !important;
+            margin: 0 !important;
+            background: white !important;
+            color: #111 !important;
+            font-family: Inter, sans-serif !important;
+          }
+          .attendance-print-title { text-align: center; margin: 0 0 3mm; }
+          .attendance-print-main { font-size: 15pt; font-weight: 800; }
+          .attendance-print-sub { font-size: 8.5pt; margin-top: 1mm; }
+          .attendance-print-table {
+            width: 100%;
+            border-collapse: collapse;
+            table-layout: fixed;
+            font-size: 7.2pt;
+            line-height: 1.05;
+          }
+          .attendance-print-table th,
+          .attendance-print-table td {
+            border: 0.2mm solid #555;
+            padding: 1.25mm 0.8mm;
+            text-align: center;
+            vertical-align: middle;
+            word-break: break-word;
+          }
+          .attendance-print-table th { background: #f2f2f2 !important; font-weight: 800; }
+          .attendance-print-total td { font-weight: 800; background: #f7f7f7 !important; }
+        }
+      `),
+      React.createElement('div', { className: "min-h-screen flex flex-col", style: { background: C.cream } },
       React.createElement(NavBar, { backLabel: "回功能表", onBack: handleStepBack }),
       React.createElement('div', { className: "max-w-md mx-auto w-full px-4 py-4 flex flex-col gap-3 flex-1",
         style: { paddingBottom: 130, touchAction: "pan-y", WebkitOverflowScrolling: "touch", overscrollBehaviorY: "contain" } },
@@ -3076,25 +3127,53 @@ function AttendanceMenu({ onBack, role, loggedInId }) {
                 rows.push({ d, date, rec, rh, oh, leave });
               }
               return React.createElement('div', { className: "rounded-2xl overflow-hidden", style: { border: `1px solid ${C.line}`, background: C.paper } },
-                React.createElement('div', { className: "px-3 py-2", style: { background: C.cream, borderBottom: `1px solid ${C.line}` } },
-                  React.createElement('div', { style: { fontFamily: "Inter", fontWeight: 800, color: C.ink } },
-                    (selectedPerson && selectedPerson.name) || supervisorPersonId, "（", supervisorPersonId, "）"
-                  ),
-                  React.createElement('div', { className: "text-xs mt-0.5", style: { color: C.inkSoft, fontFamily: "IBM Plex Mono" } },
-                    recYear, "年", recMonth, "月"
+                React.createElement('div', { className: "px-3 py-2 no-print", style: { background: C.cream, borderBottom: `1px solid ${C.line}` } },
+                  React.createElement('div', { className: "flex items-start justify-between gap-2 flex-wrap" },
+                    React.createElement('div', null,
+                      React.createElement('div', { style: { fontFamily: "Inter", fontWeight: 800, color: C.ink } },
+                        (selectedPerson && selectedPerson.name) || supervisorPersonId, "（", supervisorPersonId, "）"
+                      ),
+                      React.createElement('div', { className: "text-xs mt-0.5", style: { color: C.inkSoft, fontFamily: "IBM Plex Mono" } },
+                        recYear, "年", recMonth, "月"
+                      )
+                    ),
+                    React.createElement('div', { className: "flex items-center gap-1 flex-wrap justify-end" },
+                      React.createElement('button', {
+                        onClick: supervisorZoomOut,
+                        className: "px-2.5 py-1.5 rounded-lg text-xs",
+                        style: { background: C.paper, border: `1px solid ${C.line}`, color: C.ink, fontWeight: 800 },
+                      }, "－"),
+                      React.createElement('span', { className: "text-xs px-1", style: { color: C.inkSoft, fontFamily: "IBM Plex Mono", minWidth: 38, textAlign: "center" } },
+                        Math.round(supervisorZoom * 100), "%"
+                      ),
+                      React.createElement('button', {
+                        onClick: supervisorZoomIn,
+                        className: "px-2.5 py-1.5 rounded-lg text-xs",
+                        style: { background: C.paper, border: `1px solid ${C.line}`, color: C.ink, fontWeight: 800 },
+                      }, "＋"),
+                      React.createElement('button', {
+                        onClick: supervisorZoomReset,
+                        className: "px-2 py-1.5 rounded-lg text-xs",
+                        style: { background: C.paper, border: `1px solid ${C.line}`, color: C.inkSoft, fontWeight: 700 },
+                      }, "重設"),
+                      React.createElement('button', {
+                        onClick: printSupervisorAttendance,
+                        className: "px-2.5 py-1.5 rounded-lg text-xs",
+                        style: { background: C.wine, color: "white", fontWeight: 800 },
+                      }, "列印／存PDF")
+                    )
                   )
                 ),
                 React.createElement('div', {
                   style: {
-                    maxHeight: "62vh",
-                    overflowY: "auto",
                     overflowX: "auto",
+                    overflowY: "visible",
                     WebkitOverflowScrolling: "touch",
-                    overscrollBehavior: "contain",
-                    touchAction: "pan-x pan-y",
+                    touchAction: "pan-x",
                   },
                 },
-                  React.createElement('table', { className: "w-full text-xs", style: { borderCollapse: "collapse", minWidth: 390, fontFamily: "Inter" } },
+                  React.createElement('table', { className: "w-full text-xs no-print",
+                    style: { borderCollapse: "collapse", minWidth: 390, fontFamily: "Inter", zoom: supervisorZoom } },
                     React.createElement('thead', { style: { position: "sticky", top: 0, zIndex: 2, background: "#F5F0E8" } },
                       React.createElement('tr', null,
                         ["日", "正常班", "加班", "假別", "修改"].map((h) =>
@@ -3130,6 +3209,47 @@ function AttendanceMenu({ onBack, role, loggedInId }) {
                         React.createElement('td', { className: "px-1 py-2 text-center", style: { border: `1px solid ${C.line}`, color: ATTEND_COLORS.otText, fontWeight: 800 } }, sumOt ? sumOt.toFixed(2) + "h" : "—"),
                         React.createElement('td', { className: "px-1 py-2 text-center", style: { border: `1px solid ${C.line}`, color: "#B8860B", fontWeight: 800 } }, leaveDays ? leaveDays + "天" : "—"),
                         React.createElement('td', { style: { border: `1px solid ${C.line}` } })
+                      )
+                    )
+                  )
+                ),
+
+                React.createElement('div', { className: "attendance-supervisor-print" },
+                  React.createElement('div', { className: "attendance-print-title" },
+                    React.createElement('div', { className: "attendance-print-main" }, "出勤紀錄表"),
+                    React.createElement('div', { className: "attendance-print-sub" },
+                      ((selectedPerson && selectedPerson.name) || supervisorPersonId), "（", supervisorPersonId, "）　",
+                      recYear, "年", recMonth, "月"
+                    )
+                  ),
+                  React.createElement('table', { className: "attendance-print-table" },
+                    React.createElement('thead', null,
+                      React.createElement('tr', null,
+                        ["日", "正常班", "加班", "假別", "正常工時", "加班工時"].map((h) =>
+                          React.createElement('th', { key: h }, h)
+                        )
+                      )
+                    ),
+                    React.createElement('tbody', null,
+                      rows.map((r) => {
+                        const rp = (r.rec && r.rec.regular && r.rec.regular.punches) || {};
+                        const op = (r.rec && r.rec.overtime && r.rec.overtime.punches) || {};
+                        return React.createElement('tr', { key: "print-" + r.date },
+                          React.createElement('td', null, r.d),
+                          React.createElement('td', null, r.rec ? `${rp.amIn || "—"}-${rp.amOut || "—"} / ${rp.pmIn || "—"}-${rp.pmOut || "—"}` : "—"),
+                          React.createElement('td', null, r.rec ? `${op.amIn || "—"}-${op.amOut || "—"} / ${op.pmIn || "—"}-${op.pmOut || "—"}` : "—"),
+                          React.createElement('td', null, r.leave || "—"),
+                          React.createElement('td', null, r.rh.total || "—"),
+                          React.createElement('td', null, r.oh.total || "—")
+                        );
+                      }),
+                      React.createElement('tr', { className: "attendance-print-total" },
+                        React.createElement('td', null, "合計"),
+                        React.createElement('td', null, "—"),
+                        React.createElement('td', null, "—"),
+                        React.createElement('td', null, leaveDays ? leaveDays + "天" : "—"),
+                        React.createElement('td', null, sumReg ? sumReg.toFixed(2) + "h" : "—"),
+                        React.createElement('td', null, sumOt ? sumOt.toFixed(2) + "h" : "—")
                       )
                     )
                   )
@@ -3305,6 +3425,7 @@ function AttendanceMenu({ onBack, role, loggedInId }) {
           )
         )
       )
+    )
     )
   );
 }
