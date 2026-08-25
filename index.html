@@ -516,7 +516,7 @@ const C = {
   tiffanyLight: "#B8ECE5",
   tiffanyText: "#2E8577",
 };
-const APP_VERSION = "正式版・5.1+・主管表格最終適配";
+const APP_VERSION = "正式版・5.1+・主管縮放邏輯修正";
 const FONT_LINK = "https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,600;9..144,700&family=Inter:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap";
 
 const WORK_ITEMS = [
@@ -2424,7 +2424,7 @@ function AttendanceMenu({ onBack, role, loggedInId }) {
   const [supervisorPersonId, setSupervisorPersonId] = useState("");
   const [supervisorList, setSupervisorList] = useState([]);
   const [supervisorLoading, setSupervisorLoading] = useState(false);
-  const [supervisorZoom, setSupervisorZoom] = useState(0.7);
+  const [supervisorZoom, setSupervisorZoom] = useState(1);
   const [editAttendance, setEditAttendance] = useState(null);
   const [editAttendanceDraft, setEditAttendanceDraft] = useState(null);
   const dateKey = taipeiDateKey();
@@ -2505,9 +2505,9 @@ function AttendanceMenu({ onBack, role, loggedInId }) {
     return merged.filter((p) => p && p.id).sort((a, b) => a.id.localeCompare(b.id));
   })();
 
-  const supervisorZoomOut = () => setSupervisorZoom((z) => Math.max(0.55, Math.round((z - 0.05) * 100) / 100));
-  const supervisorZoomIn = () => setSupervisorZoom((z) => Math.min(1.0, Math.round((z + 0.05) * 100) / 100));
-  const supervisorZoomReset = () => setSupervisorZoom(0.7);
+  const supervisorZoomOut = () => setSupervisorZoom((z) => Math.max(0.5, Math.round((z - 0.1) * 10) / 10));
+  const supervisorZoomIn = () => setSupervisorZoom((z) => Math.min(1.5, Math.round((z + 0.1) * 10) / 10));
+  const supervisorZoomReset = () => setSupervisorZoom(1);
   const printSupervisorAttendance = () => {
     setTimeout(() => window.print(), 80);
   };
@@ -3220,10 +3220,10 @@ function AttendanceMenu({ onBack, role, loggedInId }) {
                   style: {
                     maxHeight: "calc(100dvh - 275px)",
                     overflowY: "auto",
-                    overflowX: "hidden",
+                    overflowX: supervisorZoom > 1 ? "auto" : "hidden",
                     WebkitOverflowScrolling: "touch",
                     overscrollBehavior: "auto",
-                    touchAction: "pan-y",
+                    touchAction: supervisorZoom > 1 ? "pan-x pan-y" : "pan-y",
                     scrollBehavior: "smooth",
                   },
                 },
@@ -3231,10 +3231,11 @@ function AttendanceMenu({ onBack, role, loggedInId }) {
                     style: {
                       borderCollapse: "collapse",
                       tableLayout: "fixed",
-                      width: `${100 / supervisorZoom}%`,
+                      width: "100%",
                       minWidth: 0,
                       fontFamily: "Inter",
                       zoom: supervisorZoom,
+                      transformOrigin: "top left",
                     } },
                     React.createElement('thead', { style: { position: "sticky", top: 0, zIndex: 2, background: "#F5F0E8" } },
                       React.createElement('tr', null,
