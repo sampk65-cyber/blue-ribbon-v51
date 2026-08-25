@@ -516,7 +516,7 @@ const C = {
   tiffanyLight: "#B8ECE5",
   tiffanyText: "#2E8577",
 };
-const APP_VERSION = "正式版・5.1+・主管出勤優化";
+const APP_VERSION = "正式版・5.1+・主管介面精簡";
 const FONT_LINK = "https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,600;9..144,700&family=Inter:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap";
 
 const WORK_ITEMS = [
@@ -2821,6 +2821,12 @@ function AttendanceMenu({ onBack, role, loggedInId }) {
 
   // 回上一頁：在打卡模組內先退回「正常上班」；已在主分頁才離開模組
   const handleStepBack = () => {
+    if (supervisorMode) {
+      setSupervisorMode(false);
+      setMsg("");
+      setMode("records");
+      return;
+    }
     if (mode !== "regular") {
       setMsg("");
       setMode("regular");
@@ -2876,24 +2882,44 @@ function AttendanceMenu({ onBack, role, loggedInId }) {
       React.createElement('div', { className: "min-h-screen flex flex-col", style: { background: C.cream } },
       React.createElement(NavBar, { backLabel: "回功能表", onBack: handleStepBack }),
       React.createElement('div', { className: "max-w-md mx-auto w-full px-4 py-4 flex flex-col gap-3 flex-1",
-        style: { paddingBottom: 130, touchAction: "pan-y", WebkitOverflowScrolling: "touch", overscrollBehaviorY: "contain" } },
-        React.createElement('div', { style: { fontFamily: "Inter", fontWeight: 700, fontSize: 20, color: C.ink } }, "上下班打卡"),
-        React.createElement('div', { className: "text-xs", style: { color: C.inkSoft, fontFamily: "Inter" } },
+        style: supervisorMode
+          ? { paddingBottom: 88, height: "calc(100dvh - 52px)", minHeight: 0, overflow: "hidden" }
+          : { paddingBottom: 130, touchAction: "pan-y", WebkitOverflowScrolling: "touch", overscrollBehaviorY: "auto" } },
+        !supervisorMode && React.createElement('div', { style: { fontFamily: "Inter", fontWeight: 700, fontSize: 20, color: C.ink } }, "上下班打卡"),
+        !supervisorMode && React.createElement('div', { className: "text-xs", style: { color: C.inkSoft, fontFamily: "Inter" } },
           "正常班與加班分開記錄・請假可編輯假別・打卡附手機定位"
         ),
-        !loggedInId && React.createElement('div', { className: "text-sm px-3 py-2 rounded-lg text-center", style: { background: `${C.alert}15`, color: C.alert, fontFamily: "Inter" } },
+        !supervisorMode && !loggedInId && React.createElement('div', { className: "text-sm px-3 py-2 rounded-lg text-center", style: { background: `${C.alert}15`, color: C.alert, fontFamily: "Inter" } },
           "請先登入後再打卡"
         ),
 
-        React.createElement('div', { className: "grid grid-cols-2 gap-2" },
+        !supervisorMode && React.createElement('div', { className: "grid grid-cols-2 gap-2" },
           modeBtn("regular", "正常上班", { bg: ATTEND_COLORS.inBg, text: ATTEND_COLORS.inText, border: ATTEND_COLORS.inBorder }),
           modeBtn("overtime", "加班工時", { bg: ATTEND_COLORS.otBg, text: ATTEND_COLORS.otText, border: ATTEND_COLORS.otBorder }),
           modeBtn("leave", "請假", { bg: ATTEND_COLORS.leaveBg, text: ATTEND_COLORS.leaveText, border: ATTEND_COLORS.leaveBorder }),
           modeBtn("records", "出勤紀錄", { bg: "#E8F1FA", text: ATTEND_COLORS.panelBorder, border: ATTEND_COLORS.panelBorder + "40" }),
-          modeBtn("settings", "設定", { bg: C.cream, text: C.ink, border: C.line })
+          modeBtn("settings", "設定", { bg: C.cream, text: C.ink, border: C.line }),
+          canSupervisorEdit && React.createElement('button', {
+            onClick: () => {
+              setSupervisorMode(true);
+              setMode("records");
+              setMsg("");
+              if (!supervisorPersonId) {
+                const first = attendancePeople[0];
+                if (first) setSupervisorPersonId(first.id);
+              }
+            },
+            className: "py-2.5 rounded-xl text-xs flex items-center justify-center",
+            style: {
+              background: `${C.wine}12`,
+              color: C.wine,
+              border: `1px solid ${C.wine}`,
+              fontFamily: "Inter", fontWeight: 800, textAlign: "center",
+            },
+          }, "主管模式")
         ),
 
-        msg && React.createElement('div', { className: "text-xs px-3 py-2 rounded-lg text-center", style: { background: `${C.tableColor}15`, color: C.tableColor, fontFamily: "Inter" } }, msg),
+        !supervisorMode && msg && React.createElement('div', { className: "text-xs px-3 py-2 rounded-lg text-center", style: { background: `${C.tableColor}15`, color: C.tableColor, fontFamily: "Inter" } }, msg),
 
         mode === "regular" && loggedInId && renderPunchPanel("regular"),
         mode === "overtime" && loggedInId && renderPunchPanel("overtime"),
@@ -2956,43 +2982,23 @@ function AttendanceMenu({ onBack, role, loggedInId }) {
             overscrollBehaviorY: "contain",
           },
         },
-          React.createElement('div', { className: "flex items-center justify-between gap-2 flex-wrap" },
-            React.createElement('div', { className: "flex items-center gap-2 flex-wrap" },
-              React.createElement('select', {
-                value: recYear,
-                onChange: (e) => setRecYear(Number(e.target.value)),
-                className: "px-3 py-2 rounded-lg text-sm",
-                style: { border: `1px solid ${C.line}`, fontFamily: "Inter", background: C.paper, color: C.ink },
-              }, [recYear - 1, recYear, recYear + 1].filter((y, i, a) => a.indexOf(y) === i).map((y) =>
-                React.createElement('option', { key: y, value: y }, y, "年")
-              )),
-              React.createElement('select', {
-                value: recMonth,
-                onChange: (e) => setRecMonth(Number(e.target.value)),
-                className: "px-3 py-2 rounded-lg text-sm",
-                style: { border: `1px solid ${C.line}`, fontFamily: "Inter", background: C.paper, color: C.ink },
-              }, Array.from({ length: 12 }, (_, i) => i + 1).map((m) =>
-                React.createElement('option', { key: m, value: m }, m, "月")
-              ))
-            ),
-            canSupervisorEdit && React.createElement('button', {
-              onClick: () => {
-                const next = !supervisorMode;
-                setSupervisorMode(next);
-                setMsg("");
-                if (next && !supervisorPersonId) {
-                  const first = attendancePeople[0];
-                  if (first) setSupervisorPersonId(first.id);
-                }
-              },
-              className: "px-3 py-2 rounded-lg text-xs",
-              style: {
-                background: supervisorMode ? C.wine : C.cream,
-                color: supervisorMode ? "white" : C.wine,
-                border: `1px solid ${C.wine}`,
-                fontFamily: "Inter", fontWeight: 800,
-              },
-            }, supervisorMode ? "返回我的紀錄" : "主管模式")
+          !supervisorMode && React.createElement('div', { className: "flex items-center gap-2 flex-wrap" },
+            React.createElement('select', {
+              value: recYear,
+              onChange: (e) => setRecYear(Number(e.target.value)),
+              className: "px-3 py-2 rounded-lg text-sm",
+              style: { border: `1px solid ${C.line}`, fontFamily: "Inter", background: C.paper, color: C.ink },
+            }, [recYear - 1, recYear, recYear + 1].filter((y, i, a) => a.indexOf(y) === i).map((y) =>
+              React.createElement('option', { key: y, value: y }, y, "年")
+            )),
+            React.createElement('select', {
+              value: recMonth,
+              onChange: (e) => setRecMonth(Number(e.target.value)),
+              className: "px-3 py-2 rounded-lg text-sm",
+              style: { border: `1px solid ${C.line}`, fontFamily: "Inter", background: C.paper, color: C.ink },
+            }, Array.from({ length: 12 }, (_, i) => i + 1).map((m) =>
+              React.createElement('option', { key: m, value: m }, m, "月")
+            ))
           ),
 
           !supervisorMode && React.createElement(React.Fragment, null,
@@ -3087,20 +3093,31 @@ function AttendanceMenu({ onBack, role, loggedInId }) {
 
           supervisorMode && canSupervisorEdit && React.createElement(React.Fragment, null,
             React.createElement('div', {
-              className: "rounded-xl p-3 flex flex-col gap-2",
-              style: { background: `${C.wine}0D`, border: `1px solid ${C.wine}` },
+              className: "grid grid-cols-3 gap-2 flex-shrink-0",
             },
-              React.createElement('div', { style: { fontFamily: "Inter", fontWeight: 800, color: C.wine, fontSize: 14 } }, "主管模式"),
-              React.createElement('div', { className: "text-xs", style: { color: C.inkSoft, fontFamily: "Inter" } },
-                "A／B／C 身分可依人員查看月出勤，並修改既有或補登缺漏紀錄。"
-              ),
+              React.createElement('select', {
+                value: recYear,
+                onChange: (e) => setRecYear(Number(e.target.value)),
+                className: "px-2 py-2.5 rounded-lg text-sm",
+                style: { border: `1px solid ${C.line}`, fontFamily: "Inter", background: C.paper, color: C.ink, minWidth: 0 },
+              }, [recYear - 1, recYear, recYear + 1].filter((y, i, a) => a.indexOf(y) === i).map((y) =>
+                React.createElement('option', { key: y, value: y }, y, "年")
+              )),
+              React.createElement('select', {
+                value: recMonth,
+                onChange: (e) => setRecMonth(Number(e.target.value)),
+                className: "px-2 py-2.5 rounded-lg text-sm",
+                style: { border: `1px solid ${C.line}`, fontFamily: "Inter", background: C.paper, color: C.ink, minWidth: 0 },
+              }, Array.from({ length: 12 }, (_, i) => i + 1).map((m) =>
+                React.createElement('option', { key: m, value: m }, m, "月")
+              )),
               React.createElement('select', {
                 value: supervisorPersonId,
                 onChange: (e) => setSupervisorPersonId(e.target.value),
-                className: "w-full px-3 py-2.5 rounded-lg text-sm",
-                style: { border: `1px solid ${C.line}`, background: C.paper, color: C.ink, fontFamily: "Inter" },
+                className: "px-2 py-2.5 rounded-lg text-sm",
+                style: { border: `1px solid ${C.line}`, background: C.paper, color: C.ink, fontFamily: "Inter", minWidth: 0 },
               },
-                React.createElement('option', { value: "" }, "請選擇人員"),
+                React.createElement('option', { value: "" }, "人員"),
                 attendancePeople.map((p) => React.createElement('option', { key: p.id, value: p.id }, p.id, "・", p.name || p.id))
               )
             ),
@@ -3166,14 +3183,23 @@ function AttendanceMenu({ onBack, role, loggedInId }) {
                 ),
                 React.createElement('div', {
                   style: {
+                    maxHeight: "calc(100dvh - 285px)",
+                    overflowY: "auto",
                     overflowX: "auto",
-                    overflowY: "visible",
                     WebkitOverflowScrolling: "touch",
-                    touchAction: "pan-x",
+                    overscrollBehavior: "auto",
+                    touchAction: "pan-x pan-y",
+                    scrollBehavior: "smooth",
                   },
                 },
                   React.createElement('table', { className: "w-full text-xs no-print",
-                    style: { borderCollapse: "collapse", minWidth: 390, fontFamily: "Inter", zoom: supervisorZoom } },
+                    style: {
+                      borderCollapse: "collapse",
+                      width: `${100 / supervisorZoom}%`,
+                      minWidth: 390,
+                      fontFamily: "Inter",
+                      zoom: supervisorZoom,
+                    } },
                     React.createElement('thead', { style: { position: "sticky", top: 0, zIndex: 2, background: "#F5F0E8" } },
                       React.createElement('tr', null,
                         ["日", "正常班", "加班", "假別", "修改"].map((h) =>
