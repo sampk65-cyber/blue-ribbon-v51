@@ -516,7 +516,7 @@ const C = {
   tiffanyLight: "#B8ECE5",
   tiffanyText: "#2E8577",
 };
-const APP_VERSION = "正式版・5.1+・動態島等尺寸";
+const APP_VERSION = "正式版・5.1+・動態島統一";
 const FONT_LINK = "https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,600;9..144,700&family=Inter:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap";
 
 const WORK_ITEMS = [
@@ -1059,11 +1059,8 @@ function MapLogin({ onEnter, onOpenReport, onOpenCalendar, onOpenFolders, onOpen
 }
 
 function BackIsland({ onBack }) {
-  const [pos, setPos] = useState(null); // null = 預設右下角；拖曳後為固定座標
-  const dragState = useRef({
-    dragging: false, moved: false,
-    startX: 0, startY: 0, originX: 0, originY: 0,
-  });
+  const [pos, setPos] = useState(null);
+  const dragState = useRef({ dragging: false, moved: false, startX: 0, startY: 0, originX: 0, originY: 0 });
 
   const onPointerDown = (e) => {
     if (!onBack) return;
@@ -1075,7 +1072,6 @@ function BackIsland({ onBack }) {
     };
     try { e.currentTarget.setPointerCapture(e.pointerId); } catch (_) {}
   };
-
   const onPointerMove = (e) => {
     const s = dragState.current;
     if (!s.dragging) return;
@@ -1083,16 +1079,12 @@ function BackIsland({ onBack }) {
     const dy = e.clientY - s.startY;
     if (Math.abs(dx) + Math.abs(dy) > 6) s.moved = true;
     if (!s.moved) return;
-
     const rect = e.currentTarget.getBoundingClientRect();
-    const w = rect.width || 118;
-    const h = rect.height || 42;
-    const margin = 8;
+    const w = rect.width || 118, h = rect.height || 38, margin = 8;
     const nx = Math.min(Math.max(margin, s.originX + dx), Math.max(margin, window.innerWidth - w - margin));
     const ny = Math.min(Math.max(margin, s.originY + dy), Math.max(margin, window.innerHeight - h - margin));
     setPos({ x: nx, y: ny });
   };
-
   const onPointerUp = (e) => {
     const s = dragState.current;
     s.dragging = false;
@@ -1101,31 +1093,21 @@ function BackIsland({ onBack }) {
   };
 
   if (!onBack) return null;
-
-  const positionStyle = pos
-    ? { left: pos.x, top: pos.y }
-    : { right: 16, bottom: 18 };
+  const positionStyle = pos ? { left: pos.x, top: pos.y } : { right: 16, bottom: 18 };
 
   return (
     React.createElement('div', {
-      onPointerDown: onPointerDown,
-      onPointerMove: onPointerMove,
-      onPointerUp: onPointerUp,
+      onPointerDown, onPointerMove, onPointerUp,
       className: "fixed flex items-center gap-2 rounded-full shadow-xl",
       title: "可拖曳；點一下回上一頁",
       style: {
-        zIndex: 9998,
-        ...positionStyle,
-        background: "#E94B5F",
-        color: "#FFFFFF",
+        zIndex: 9998, ...positionStyle,
+        background: "#E94B5F", color: "#FFFFFF",
         padding: "10px 15px",
-        fontFamily: "Inter",
-        fontWeight: 700,
-        fontSize: 13,
-        userSelect: "none",
-        WebkitUserSelect: "none",
-        touchAction: "none",
-        cursor: "grab",
+        fontFamily: "Inter", fontWeight: 700, fontSize: 13,
+        border: "2px solid white",
+        userSelect: "none", WebkitUserSelect: "none",
+        touchAction: "none", cursor: "grab",
         boxShadow: "0 8px 24px rgba(0,0,0,.24)",
       },
     }
@@ -1158,7 +1140,7 @@ function NavBar({ backLabel, onBack, role, onCycleRole }) {
 }
 function HomeIsland({ onHome }) {
   const TIFFANY = "#81D8D0";
-  const [pos, setPos] = useState(null); // null = 預設左下；拖曳後改為 {x,y}
+  const [pos, setPos] = useState(null);
   const dragState = useRef({ dragging: false, moved: false, startX: 0, startY: 0, originX: 0, originY: 0 });
 
   const onPointerDown = (e) => {
@@ -1168,56 +1150,54 @@ function HomeIsland({ onHome }) {
       startX: e.clientX, startY: e.clientY,
       originX: rect.left, originY: rect.top,
     };
-    e.currentTarget.setPointerCapture(e.pointerId);
+    try { e.currentTarget.setPointerCapture(e.pointerId); } catch (_) {}
   };
   const onPointerMove = (e) => {
     const s = dragState.current;
     if (!s.dragging) return;
     const dx = e.clientX - s.startX;
     const dy = e.clientY - s.startY;
-    if (Math.abs(dx) + Math.abs(dy) > 5) s.moved = true;
-    if (s.moved) {
-      const vw = window.innerWidth, vh = window.innerHeight;
-      const nx = Math.min(Math.max(0, s.originX + dx), vw - 130);
-      const ny = Math.min(Math.max(0, s.originY + dy), vh - 56);
-      setPos({ x: nx, y: ny });
-    }
+    if (Math.abs(dx) + Math.abs(dy) > 6) s.moved = true;
+    if (!s.moved) return;
+    const rect = e.currentTarget.getBoundingClientRect();
+    const w = rect.width || 118, h = rect.height || 38, margin = 8;
+    const nx = Math.min(Math.max(margin, s.originX + dx), Math.max(margin, window.innerWidth - w - margin));
+    const ny = Math.min(Math.max(margin, s.originY + dy), Math.max(margin, window.innerHeight - h - margin));
+    setPos({ x: nx, y: ny });
   };
   const onPointerUp = (e) => {
     const s = dragState.current;
     s.dragging = false;
-    try { e.currentTarget.releasePointerCapture(e.pointerId); } catch (e6) {}
-    if (!s.moved) onHome();
+    try { e.currentTarget.releasePointerCapture(e.pointerId); } catch (_) {}
+    if (!s.moved && onHome) onHome();
   };
 
-  // 預設左下；「回上一頁」在右下
-  const positionStyle = pos
-    ? { top: pos.y, left: pos.x, transform: "none" }
-    : { bottom: 18, left: 16, transform: "none" };
+  if (!onHome) return null;
+  const positionStyle = pos ? { left: pos.x, top: pos.y } : { left: 16, bottom: 18 };
 
   return (
     React.createElement('div', {
-      onPointerDown: onPointerDown,
-      onPointerMove: onPointerMove,
-      onPointerUp: onPointerUp,
-      className: "fixed flex items-center justify-center gap-2 rounded-full shadow-xl",
+      onPointerDown, onPointerMove, onPointerUp,
+      className: "fixed flex items-center gap-2 rounded-full shadow-xl",
+      title: "可拖曳；點一下回主畫面",
       style: {
-        zIndex: 100,
-        ...positionStyle,
-        background: TIFFANY,
-        color: C.ink,
+        zIndex: 9997, ...positionStyle,
+        background: TIFFANY, color: C.ink,
         padding: "10px 15px",
         fontFamily: "Inter", fontWeight: 700, fontSize: 13,
         border: "2px solid white",
-        boxShadow: "0 8px 22px rgba(80,20,40,.28)",
-        textAlign: "center",
-        touchAction: "none", cursor: "grab", userSelect: "none",
-      },}
+        userSelect: "none", WebkitUserSelect: "none",
+        touchAction: "none", cursor: "grab",
+        boxShadow: "0 8px 24px rgba(0,0,0,.24)",
+      },
+    }
       , React.createElement(Home, { size: 15, color: C.ink })
-      , "主畫面"
+      , React.createElement('span', null, "主畫面")
     )
   );
 }
+
+
 function ZoneMenu({ zone, onBack, onPick }) {
   // 掃描該分區本月是否有待確認的異動（設計者/管理者存檔後產生），顯示在「該區平面圖」入口上
   const [pendingCells, setPendingCells] = useState(0);
@@ -1574,21 +1554,21 @@ function DaySprayPicker({ day, year, month, drugList, fertilizerList, editable, 
   };
 
   return (
-    React.createElement('div', { className: "fixed inset-0 z-40 flex items-end"    , style: { background: "rgba(43,33,25,0.5)" }, onClick: onClose,}
+    React.createElement('div', { className: "fixed inset-0 z-40 flex items-end"    , style: { background: "rgba(43,33,25,0.5)", zIndex: 10000 }, onClick: onClose,}
       , React.createElement('div', { className: "w-full rounded-t-2xl p-5"  , style: { background: C.paper, maxHeight: "80vh", overflowY: "auto", overscrollBehaviorY: "contain", WebkitOverflowScrolling: "touch" }, onClick: (e) => e.stopPropagation(),}
         , React.createElement('div', { className: "flex items-center justify-between mb-4"   ,}
           , React.createElement('button', {
             onClick: onClose,
             className: "back-float flex items-center gap-2 rounded-full shadow-xl",
             style: {
-              position: "fixed", right: 18, bottom: 22, zIndex: 95,
-              background: "#C94F67", color: "white",
-              fontFamily: "Inter", fontWeight: 800, fontSize: 16,
-              minHeight: 52, padding: "0 20px",
+              position: "fixed", right: 16, bottom: 18, zIndex: 10001,
+              background: "#E94B5F", color: "white",
+              fontFamily: "Inter", fontWeight: 700, fontSize: 13,
+              padding: "10px 15px",
               border: "2px solid white",
-              boxShadow: "0 8px 22px rgba(80,20,40,.28)",
+              boxShadow: "0 8px 24px rgba(0,0,0,.24)",
             },
-          }, React.createElement(ArrowLeft, { size: 22 }), "回上一頁")
+          }, React.createElement(ArrowLeft, { size: 15, color: "white" }), "回上一頁")
           , React.createElement('button', { onClick: onClose,}, React.createElement(X, { size: 18, color: C.inkSoft,} ))
         )
         , React.createElement('div', { className: "mb-4", style: { fontFamily: "Inter", fontWeight: 700, fontSize: 16, color: C.ink },}, year, "/", month, "/", day, " 施肥消毒紀錄" )
@@ -2005,21 +1985,21 @@ function DayWorkPicker({ day, year, month, workItems, editable, initialEntry, on
   const handleClear = () => onSave({ items: [], note: "" }); // 取消：清空這天的紀錄，並同步讓月曆格子外面淨空
 
   return (
-    React.createElement('div', { className: "fixed inset-0 z-40 flex items-end"    , style: { background: "rgba(43,33,25,0.5)" }, onClick: onClose,}
+    React.createElement('div', { className: "fixed inset-0 z-40 flex items-end"    , style: { background: "rgba(43,33,25,0.5)", zIndex: 10000 }, onClick: onClose,}
       , React.createElement('div', { className: "w-full rounded-t-2xl p-5"  , style: { background: C.paper, maxHeight: "85vh", overflowY: "auto" }, onClick: (e) => e.stopPropagation(),}
         , React.createElement('div', { className: "flex items-center justify-between mb-4"   ,}
           , React.createElement('button', {
             onClick: onClose,
             className: "back-float flex items-center gap-2 rounded-full shadow-xl",
             style: {
-              position: "fixed", right: 18, bottom: 22, zIndex: 95,
-              background: "#C94F67", color: "white",
-              fontFamily: "Inter", fontWeight: 800, fontSize: 16,
-              minHeight: 52, padding: "0 20px",
+              position: "fixed", right: 16, bottom: 18, zIndex: 10001,
+              background: "#E94B5F", color: "white",
+              fontFamily: "Inter", fontWeight: 700, fontSize: 13,
+              padding: "10px 15px",
               border: "2px solid white",
-              boxShadow: "0 8px 22px rgba(80,20,40,.28)",
+              boxShadow: "0 8px 24px rgba(0,0,0,.24)",
             },
-          }, React.createElement(ArrowLeft, { size: 22 }), "回上一頁")
+          }, React.createElement(ArrowLeft, { size: 15, color: "white" }), "回上一頁")
           , React.createElement('button', { onClick: onClose,}, React.createElement(X, { size: 18, color: C.inkSoft,} ))
         )
         , React.createElement('div', { className: "mb-4", style: { fontFamily: "Inter", fontWeight: 700, fontSize: 16, color: C.ink },}, year, "/", month, "/", day, " 工作項目" )
@@ -2735,7 +2715,7 @@ function AttendanceMenu({ onBack, role, loggedInId }) {
 
   return (
     React.createElement('div', { className: "min-h-screen flex flex-col", style: { background: C.cream } },
-      React.createElement(NavBar, { backLabel: "回功能表", onBack: onBack }),
+      React.createElement(NavBar, { backLabel: "回功能表", onBack: handleStepBack }),
       React.createElement('div', { className: "max-w-md mx-auto w-full px-4 py-4 flex flex-col gap-3 flex-1", style: { paddingBottom: 100 } },
         React.createElement('div', { style: { fontFamily: "Inter", fontWeight: 700, fontSize: 20, color: C.ink } }, "上下班打卡"),
         React.createElement('div', { className: "text-xs", style: { color: C.inkSoft, fontFamily: "Inter" } },
@@ -3007,20 +2987,7 @@ function AttendanceMenu({ onBack, role, loggedInId }) {
             )
           )
         )
-      ),
-      React.createElement('button', {
-        onClick: handleStepBack,
-        className: "back-float no-print flex items-center justify-center gap-2 rounded-full shadow-xl",
-        style: {
-          position: "fixed", right: 16, bottom: 18, zIndex: 90,
-          background: "#C94F67", color: "white",
-          fontFamily: "Inter", fontWeight: 800, fontSize: 17,
-          minHeight: 54, padding: "0 20px",
-          border: "2px solid white",
-          boxShadow: "0 8px 22px rgba(80,20,40,.28)",
-          textAlign: "center",
-        },
-      }, React.createElement(ArrowLeft, { size: 22 }), mode === "regular" ? "回功能表" : "回上一頁")
+      )
     )
   );
 }
@@ -5216,19 +5183,6 @@ function ZoneMaterialsReport({ year, month, onBack }) {
     return r ? r.unit : "";
   };
 
-  const backBtn = (onClick) => React.createElement('button', {
-    onClick,
-    className: "back-float no-print flex items-center justify-center gap-2 rounded-full shadow-xl",
-    style: {
-      position: "fixed", right: 16, bottom: 18, zIndex: 90,
-      background: "#C94F67", color: "white",
-      fontFamily: "Inter", fontWeight: 800, fontSize: 17,
-      minHeight: 54, padding: "0 20px",
-      border: "2px solid white",
-      boxShadow: "0 8px 22px rgba(80,20,40,.28)",
-      textAlign: "center",
-    },
-  }, React.createElement(ArrowLeft, { size: 22 }), "回上一頁");
 
   // —— 選溫室 ——
   if (!zone) {
@@ -5254,8 +5208,7 @@ function ZoneMaterialsReport({ year, month, onBack }) {
               React.createElement('span', { className: "text-xs", style: { color: C.inkSoft, fontFamily: "Inter" } }, "月曆檢視耗材")
             ))
           )
-        ),
-        backBtn(onBack)
+        )
       )
     );
   }
@@ -5411,8 +5364,7 @@ function ZoneMaterialsReport({ year, month, onBack }) {
         )
       ),
 
-      React.createElement(PrintLog, { refreshKey: printVersion }),
-      backBtn(() => { setZone(null); setTotals(null); setDayMap({}); setActiveDay(null); })
+      React.createElement(PrintLog, { refreshKey: printVersion })
     )
   );
 }
