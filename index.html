@@ -2515,49 +2515,64 @@ function AttendanceMenu({ onBack, role, loggedInId }) {
     setTimeout(() => window.print(), 80);
   };
 
-  const exportAttendanceExcel = ({ personId, personName, rows, sumReg, sumOver7, sumOt }) => {
-    const esc = (v) => String(v == null ? "" : v)
-      .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
-    const timeText = (p) => `${(p && p.amIn) || "—"}-${(p && p.amOut) || "—"} / ${(p && p.pmIn) || "—"}-${(p && p.pmOut) || "—"}`;
-    const trs = rows.map((r) => {
-      const rp = r.rp || (r.rec && r.rec.regular && r.rec.regular.punches) || {};
-      const op = r.op || (r.rec && r.rec.overtime && r.rec.overtime.punches) || {};
-      const hasAny = r.has !== undefined ? r.has : !!r.rec;
-      const normal = hasAny ? timeText(rp) : "—";
-      const overtime = (op.amIn || op.amOut || op.pmIn || op.pmOut) ? timeText(op) : "—";
-      const regHours = r.rh && r.rh.totalNum != null ? Number(r.rh.totalNum).toFixed(2) : "—";
-      const over7 = Number(r.over7 || 0).toFixed(2);
-      const otHours = r.oh && r.oh.totalNum != null ? Number(r.oh.totalNum).toFixed(2) : "—";
-      return `<tr><td>${esc(r.d)}</td><td>${esc(normal)}</td><td>${esc(overtime)}</td><td>${esc(regHours)}</td><td>${esc(over7)}</td><td>${esc(otHours)}</td></tr>`;
-    }).join("");
-    const workbook = `<!DOCTYPE html><html><head><meta charset="UTF-8"><style>
-      table{border-collapse:collapse;font-family:Arial,"Microsoft JhengHei",sans-serif;font-size:11pt}
-      th,td{border:1px solid #888;padding:5px;text-align:center}
-      th{background:#f2eee7;font-weight:700}.total{font-weight:700;background:#faf7f2}
-    </style></head><body>
-      <h3>${esc(personName || personId)}（${esc(personId || "")}） ${recYear}年${recMonth}月 出勤紀錄表</h3>
-      <table>
-        <tr>
-          <th>日</th>
-          <th>正常上班時間<br>（第1輪＋第2輪）</th>
-          <th>加班時間</th>
-          <th>正常上班工時<br>（第1輪＋第2輪）</th>
-          <th>（1＋2）超過7小時</th>
-          <th>加班工時</th>
-        </tr>
-        ${trs}
-        <tr class="total"><td>合計</td><td>—</td><td>—</td><td>${Number(sumReg || 0).toFixed(2)}</td><td>${Number(sumOver7 || 0).toFixed(2)}</td><td>${Number(sumOt || 0).toFixed(2)}</td></tr>
-      </table>
-    </body></html>`;
-    const blob = new Blob(["\ufeff", workbook], { type: "application/vnd.ms-excel;charset=utf-8" });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = `出勤紀錄_${personName || personId}_${recYear}-${String(recMonth).padStart(2, "0")}.xls`;
-    document.body.appendChild(a);
-    a.click();
-    a.remove();
-    setTimeout(() => URL.revokeObjectURL(url), 1200);
+
+  const ensureXlsxLibrary = async () => {
+    if (window.XLSX) return window.XLSX;
+    if (window.__blueRibbonXlsxPromise) return window.__blueRibbonXlsxPromise;
+    window.__blueRibbonXlsxPromise = new Promise((resolve, reject) => {
+      const script = document.createElement("script");
+      script.src = "https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js";
+      script.async = true;
+      script.onload = () => window.XLSX ? resolve(window.XLSX) : reject(new Error("XLSX library unavailable"));
+      script.onerror = () => reject(new Error("無法載入 Excel 元件，請確認網路連線"));
+      document.head.appendChild(script);
+    });
+    return window.__blueRibbonXlsxPromise;
+  };
+
+  const exportAttendanceExcel = async ({ personId, personName, rows, sumReg, sumOver7, sumOt }) => {
+    try {
+      const XLSX = await ensureXlsxLibrary();
+      const timeText = (p) => `${(p && p.amIn) || "—"}-${(p && p.amOut) || "—"} / ${(p && p.pmIn) || "—"}-${(p && p.pmOut) || "—"}`;
+
+      const data = [
+        ["出勤紀錄表"],
+        [`人員：${personName || personId || ""}`, `代號：${personId || ""}`, `${recYear}年${recMonth}月`],
+        [],
+        ["日", "正常上班時間（第1輪＋第2輪）", "加班時間", "正常上班工時（第1輪＋第2輪）", "（1＋2）超過7小時", "加班工時"],
+      ];
+
+      rows.forEach((r) => {
+        const rp = r.rp || (r.rec && r.rec.regular && r.rec.regular.punches) || {};
+        const op = r.op || (r.rec && r.rec.overtime && r.rec.overtime.punches) || {};
+        const hasAny = r.has !== undefined ? r.has : !!r.rec;
+        const normal = hasAny ? timeText(rp) : "—";
+        const overtime = (op.amIn || op.amOut || op.pmIn || op.pmOut) ? timeText(op) : "—";
+        const regHours = r.rh && r.rh.totalNum != null ? Number(r.rh.totalNum) : "";
+        const over7 = Number(r.over7 || 0);
+        const otHours = r.oh && r.oh.totalNum != null ? Number(r.oh.totalNum) : "";
+        data.push([r.d, normal, overtime, regHours, over7, otHours]);
+      });
+
+      data.push(["合計", "", "", Number(sumReg || 0), Number(sumOver7 || 0), Number(sumOt || 0)]);
+
+      const ws = XLSX.utils.aoa_to_sheet(data);
+      ws["!cols"] = [
+        { wch: 6 }, { wch: 32 }, { wch: 28 }, { wch: 20 }, { wch: 18 }, { wch: 14 }
+      ];
+      ws["!merges"] = [XLSX.utils.decode_range("A1:F1")];
+
+      const wb = XLSX.utils.book_new();
+      XLSX.utils.book_append_sheet(wb, ws, "出勤紀錄");
+      XLSX.writeFile(
+        wb,
+        `出勤紀錄_${personName || personId || "人員"}_${recYear}-${String(recMonth).padStart(2, "0")}.xlsx`,
+        { compression: true }
+      );
+    } catch (e) {
+      console.error("xlsx export failed", e);
+      alert(e && e.message ? e.message : "Excel 匯出失敗，請稍後再試");
+    }
   };
 
   const loadSupervisorPerson = async (personId = supervisorPersonId) => {
@@ -5512,6 +5527,58 @@ function MonthlyReport({ year, month, onBack }) {
   const zoneTotal = (zid) => REPORT_ROWS.reduce((s, r) => s + (_optionalChain([rows, 'optionalAccess', _189 => _189[r.key], 'optionalAccess', _190 => _190[zid]]) || 0), 0);
   const rowTotal = (rowKey) => ZONES.reduce((s, z) => s + (_optionalChain([rows, 'optionalAccess', _191 => _191[rowKey], 'optionalAccess', _192 => _192[z.id]]) || 0), 0);
 
+  const ensureXlsxLibrary = async () => {
+    if (window.XLSX) return window.XLSX;
+    if (window.__blueRibbonXlsxPromise) return window.__blueRibbonXlsxPromise;
+    window.__blueRibbonXlsxPromise = new Promise((resolve, reject) => {
+      const script = document.createElement("script");
+      script.src = "https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js";
+      script.async = true;
+      script.onload = () => window.XLSX ? resolve(window.XLSX) : reject(new Error("XLSX library unavailable"));
+      script.onerror = () => reject(new Error("無法載入 Excel 元件，請確認網路連線"));
+      document.head.appendChild(script);
+    });
+    return window.__blueRibbonXlsxPromise;
+  };
+
+  const exportMonthlyReportXlsx = async () => {
+    if (!rows) return;
+    try {
+      const XLSX = await ensureXlsxLibrary();
+      const header = ["品項", ...ZONES.map((z) => z.short), "合計"];
+      const data = [
+        ["表一・耗材匯總表", computedYm || `${year}-${String(month).padStart(2, "0")}`],
+        [],
+        header,
+      ];
+      REPORT_ROWS.forEach((r) => {
+        data.push([
+          `${r.label} (${r.unit})`,
+          ...ZONES.map((z) => Number((rows[r.key] && rows[r.key][z.id]) || 0)),
+          Number(rowTotal(r.key) || 0),
+        ]);
+      });
+      data.push([
+        "各區合計",
+        ...ZONES.map((z) => Number(zoneTotal(z.id) || 0)),
+        "",
+      ]);
+
+      const ws = XLSX.utils.aoa_to_sheet(data);
+      ws["!cols"] = [{ wch: 22 }, ...ZONES.map(() => ({ wch: 12 })), { wch: 14 }];
+      const wb = XLSX.utils.book_new();
+      XLSX.utils.book_append_sheet(wb, ws, "表一耗材匯總");
+      XLSX.writeFile(
+        wb,
+        `表一_耗材匯總表_${computedYm || `${year}-${String(month).padStart(2, "0")}`}.xlsx`,
+        { compression: true }
+      );
+    } catch (e) {
+      console.error("表一 xlsx export failed", e);
+      alert(e && e.message ? e.message : "Excel 匯出失敗，請稍後再試");
+    }
+  };
+
   return (
     React.createElement('div', { className: "min-h-screen flex flex-col"  , style: { background: C.cream },}
       , React.createElement(NavBar, { backLabel: "回耗材與報表", onBack: onBack,} )
@@ -5531,7 +5598,14 @@ function MonthlyReport({ year, month, onBack }) {
               , updating ? "更新中…" : "🔄 更新"
             )
             , rows && (
-              React.createElement(PrintShareBar, { title: `表一・耗材匯總表 ${computedYm}`, summary: `藍帶無花果 表一・耗材匯總表 ${computedYm}，各分區合計：${ZONES.map((z) => `${z.short} ${zoneTotal(z.id) || 0}`).join("、")}`, onPrinted: bumpPrint,} )
+              React.createElement(React.Fragment, null
+                , React.createElement(PrintShareBar, { title: `表一・耗材匯總表 ${computedYm}`, summary: `藍帶無花果 表一・耗材匯總表 ${computedYm}，各分區合計：${ZONES.map((z) => `${z.short} ${zoneTotal(z.id) || 0}`).join("、")}`, onPrinted: bumpPrint,} )
+                , React.createElement('button', {
+                    onClick: exportMonthlyReportXlsx,
+                    className: "no-print px-3 py-1.5 rounded-lg text-xs",
+                    style: { background: "#217346", color: "white", fontFamily: "Inter", fontWeight: 800 }
+                  }, "Excel .xlsx")
+              )
             )
           )
         )
@@ -5857,6 +5931,76 @@ function ZoneMaterialsReport({ year, month, onBack }) {
     return r ? r.unit : "";
   };
 
+  const ensureXlsxLibrary = async () => {
+    if (window.XLSX) return window.XLSX;
+    if (window.__blueRibbonXlsxPromise) return window.__blueRibbonXlsxPromise;
+    window.__blueRibbonXlsxPromise = new Promise((resolve, reject) => {
+      const script = document.createElement("script");
+      script.src = "https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js";
+      script.async = true;
+      script.onload = () => window.XLSX ? resolve(window.XLSX) : reject(new Error("XLSX library unavailable"));
+      script.onerror = () => reject(new Error("無法載入 Excel 元件，請確認網路連線"));
+      document.head.appendChild(script);
+    });
+    return window.__blueRibbonXlsxPromise;
+  };
+
+  const exportZoneMaterialsXlsx = async () => {
+    if (!zone || !totals) return;
+    try {
+      const XLSX = await ensureXlsxLibrary();
+
+      const detail = [
+        ["表三・分區耗材統計"],
+        ["溫室", zone.name, "年月", ym],
+        [],
+        ["日期", "品項", "數量", "單位", "回報人", "回報時間"],
+      ];
+      Object.keys(dayMap)
+        .map(Number)
+        .sort((a, b) => a - b)
+        .forEach((day) => {
+          (dayMap[day] || []).forEach((entry) => {
+            detail.push([
+              `${ym}-${String(day).padStart(2, "0")}`,
+              entry.rowKey || entry.itemName || "",
+              Number(entry.qty || 0),
+              unitOf(entry.rowKey),
+              entry.personName || "",
+              entry.at || "",
+            ]);
+          });
+        });
+
+      const summary = [
+        ["表三・月彙總"],
+        ["溫室", zone.name, "年月", ym],
+        [],
+        ["品項", "數量", "單位"],
+        ...REPORT_ROWS.map((r) => [r.label, Number((totals && totals[r.key]) || 0), r.unit]),
+      ];
+
+      const wsDetail = XLSX.utils.aoa_to_sheet(detail);
+      wsDetail["!cols"] = [
+        { wch: 14 }, { wch: 18 }, { wch: 12 }, { wch: 10 }, { wch: 16 }, { wch: 22 }
+      ];
+      const wsSummary = XLSX.utils.aoa_to_sheet(summary);
+      wsSummary["!cols"] = [{ wch: 20 }, { wch: 14 }, { wch: 10 }];
+
+      const wb = XLSX.utils.book_new();
+      XLSX.utils.book_append_sheet(wb, wsDetail, "每日明細");
+      XLSX.utils.book_append_sheet(wb, wsSummary, "月彙總");
+      XLSX.writeFile(
+        wb,
+        `表三_${zone.name}_耗材統計_${ym}.xlsx`,
+        { compression: true }
+      );
+    } catch (e) {
+      console.error("表三 xlsx export failed", e);
+      alert(e && e.message ? e.message : "Excel 匯出失敗，請稍後再試");
+    }
+  };
+
 
   // —— 選溫室 ——
   if (!zone) {
@@ -5917,7 +6061,12 @@ function ZoneMaterialsReport({ year, month, onBack }) {
               title: `表三・${zone.name}耗材月曆 ${ym}`,
               summary: `藍帶無花果 表三・${zone.name} ${ym} 耗材月曆`,
               onPrinted: () => setPrintVersion((v) => v + 1),
-            })
+            }),
+            totals && React.createElement('button', {
+              onClick: exportZoneMaterialsXlsx,
+              className: "no-print px-3 py-1.5 rounded-lg text-xs",
+              style: { background: "#217346", color: "white", fontFamily: "Inter", fontWeight: 800 }
+            }, "Excel .xlsx")
           )
         ),
         lastUpdated && React.createElement('div', { className: "text-xs mt-1", style: { color: C.inkSoft, fontFamily: "Inter" } }, "上次更新：", lastUpdated)
