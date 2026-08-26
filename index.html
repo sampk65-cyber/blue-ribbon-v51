@@ -2280,10 +2280,10 @@ async function loadAllPeople() {
 //   attendancePref:{personId} → { restStart, restEnd }
 //   attendanceLeaveTypes → ["病假","事假",...] 全場共用假別清單（可編輯）
 const ATTEND_SLOTS = [
-  { key: "amIn", label: "上午上班" },
-  { key: "amOut", label: "休息開始" },
-  { key: "pmIn", label: "休息結束" },
-  { key: "pmOut", label: "下午下班" },
+  { key: "amIn", label: "第一輪上班" },
+  { key: "amOut", label: "第一輪下班" },
+  { key: "pmIn", label: "第二輪上班" },
+  { key: "pmOut", label: "第二輪下班" },
 ];
 const DEFAULT_LEAVE_TYPES = ["病假", "事假", "特休", "彈性工時", "其他"];
 const ATTEND_COLORS = {
@@ -2515,6 +2515,51 @@ function AttendanceMenu({ onBack, role, loggedInId }) {
     setTimeout(() => window.print(), 80);
   };
 
+  const exportAttendanceExcel = ({ personId, personName, rows, sumReg, sumOver7, sumOt }) => {
+    const esc = (v) => String(v == null ? "" : v)
+      .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+    const timeText = (p) => `${(p && p.amIn) || "—"}-${(p && p.amOut) || "—"} / ${(p && p.pmIn) || "—"}-${(p && p.pmOut) || "—"}`;
+    const trs = rows.map((r) => {
+      const rp = r.rp || (r.rec && r.rec.regular && r.rec.regular.punches) || {};
+      const op = r.op || (r.rec && r.rec.overtime && r.rec.overtime.punches) || {};
+      const hasAny = r.has !== undefined ? r.has : !!r.rec;
+      const normal = hasAny ? timeText(rp) : "—";
+      const overtime = (op.amIn || op.amOut || op.pmIn || op.pmOut) ? timeText(op) : "—";
+      const regHours = r.rh && r.rh.totalNum != null ? Number(r.rh.totalNum).toFixed(2) : "—";
+      const over7 = Number(r.over7 || 0).toFixed(2);
+      const otHours = r.oh && r.oh.totalNum != null ? Number(r.oh.totalNum).toFixed(2) : "—";
+      return `<tr><td>${esc(r.d)}</td><td>${esc(normal)}</td><td>${esc(overtime)}</td><td>${esc(regHours)}</td><td>${esc(over7)}</td><td>${esc(otHours)}</td></tr>`;
+    }).join("");
+    const workbook = `<!DOCTYPE html><html><head><meta charset="UTF-8"><style>
+      table{border-collapse:collapse;font-family:Arial,"Microsoft JhengHei",sans-serif;font-size:11pt}
+      th,td{border:1px solid #888;padding:5px;text-align:center}
+      th{background:#f2eee7;font-weight:700}.total{font-weight:700;background:#faf7f2}
+    </style></head><body>
+      <h3>${esc(personName || personId)}（${esc(personId || "")}） ${recYear}年${recMonth}月 出勤紀錄表</h3>
+      <table>
+        <tr>
+          <th>日</th>
+          <th>正常上班時間<br>（第1輪＋第2輪）</th>
+          <th>加班時間</th>
+          <th>正常上班工時<br>（第1輪＋第2輪）</th>
+          <th>（1＋2）超過7小時</th>
+          <th>加班工時</th>
+        </tr>
+        ${trs}
+        <tr class="total"><td>合計</td><td>—</td><td>—</td><td>${Number(sumReg || 0).toFixed(2)}</td><td>${Number(sumOver7 || 0).toFixed(2)}</td><td>${Number(sumOt || 0).toFixed(2)}</td></tr>
+      </table>
+    </body></html>`;
+    const blob = new Blob(["\ufeff", workbook], { type: "application/vnd.ms-excel;charset=utf-8" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `出勤紀錄_${personName || personId}_${recYear}-${String(recMonth).padStart(2, "0")}.xls`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 1200);
+  };
+
   const loadSupervisorPerson = async (personId = supervisorPersonId) => {
     if (!canSupervisorEdit || !personId) { setSupervisorList([]); return; }
     setSupervisorLoading(true);
@@ -2638,12 +2683,23 @@ function AttendanceMenu({ onBack, role, loggedInId }) {
       if (!punches[s.key]) { slot = s; break; }
     }
     if (!slot) { setMsg(kind === "overtime" ? "今日加班四段已打滿" : "今日正常班四段已打滿"); return; }
+    const candidateTime = taipeiTimeHHMM();
+    if (kind === "regular" && slot.key === "pmIn" && punches.amOut) {
+      const firstOut = minutesOf(punches.amOut);
+      const secondIn = minutesOf(candidateTime);
+      const gap = (firstOut != null && secondIn != null) ? (secondIn - firstOut) : null;
+      if (gap == null || gap < 30) {
+        const remain = gap == null ? 30 : Math.max(1, 30 - gap);
+        setMsg(`第二輪上班須距第一輪下班至少30分鐘，目前尚需約${remain}分鐘`);
+        return;
+      }
+    }
     setBusy(true);
     setMsg("正在取得定位…");
     try {
       const geo = await getPhoneGeo();
       const geoOk = geo && geo.lat != null && !geo.error;
-      const time = taipeiTimeHHMM();
+      const time = candidateTime;
       const name = (people.find((p) => p.id === loggedInId) || {}).name || loggedInId;
       const base = normalizeAttendance(todayRec, loggedInId, dateKey);
       const prevBlock = kind === "overtime" ? base.overtime : base.regular;
@@ -2773,8 +2829,8 @@ function AttendanceMenu({ onBack, role, loggedInId }) {
       ),
       React.createElement('div', { className: "text-xs", style: { color: C.inkSoft, fontFamily: "Inter" } },
         kind === "overtime"
-          ? "與正常班相同為四段打卡，但資料獨立計算，不併入正常工時。"
-          : ("預設休息 " + (pref.restStart || "12:00") + "–" + (pref.restEnd || "13:00") + "（僅提示，工時依實際打卡）")
+          ? "加班獨立記錄；可使用第一輪、第二輪上下班，不併入正常班工時。"
+          : "正常班分第一輪與第二輪；兩輪不限制上下午與時長，第一輪下班至第二輪上班至少30分鐘。"
       ),
       ATTEND_SLOTS.map((s) => {
         const t = p[s.key];
@@ -2799,8 +2855,8 @@ function AttendanceMenu({ onBack, role, loggedInId }) {
         );
       }),
       React.createElement('div', { className: "flex justify-between text-xs px-1", style: { color: C.inkSoft, fontFamily: "Inter" } },
-        React.createElement('span', null, "上午 ", h.am),
-        React.createElement('span', null, "下午 ", h.pm),
+        React.createElement('span', null, "第一輪 ", h.am),
+        React.createElement('span', null, "第二輪 ", h.pm),
         React.createElement('span', { style: { fontWeight: 700, color: accent.text } }, "合計 ", h.total)
       ),
       React.createElement('button', {
@@ -2894,10 +2950,10 @@ function AttendanceMenu({ onBack, role, loggedInId }) {
             overflow-wrap: normal;
           }
           .attendance-print-table th { background: #f2f2f2 !important; font-weight: 800; }
-          .attendance-print-table th:nth-child(1), .attendance-print-table td:nth-child(1) { width: 6%; }
-          .attendance-print-table th:nth-child(2), .attendance-print-table td:nth-child(2) { width: 30%; white-space: nowrap; }
-          .attendance-print-table th:nth-child(3), .attendance-print-table td:nth-child(3) { width: 30%; white-space: nowrap; }
-          .attendance-print-table th:nth-child(4), .attendance-print-table td:nth-child(4) { width: 10%; }
+          .attendance-print-table th:nth-child(1), .attendance-print-table td:nth-child(1) { width: 5%; }
+          .attendance-print-table th:nth-child(2), .attendance-print-table td:nth-child(2) { width: 31%; white-space: nowrap; }
+          .attendance-print-table th:nth-child(3), .attendance-print-table td:nth-child(3) { width: 27%; white-space: nowrap; }
+          .attendance-print-table th:nth-child(4), .attendance-print-table td:nth-child(4) { width: 13%; }
           .attendance-print-table th:nth-child(5), .attendance-print-table td:nth-child(5) { width: 12%; }
           .attendance-print-table th:nth-child(6), .attendance-print-table td:nth-child(6) { width: 12%; }
           .attendance-print-total td { font-weight: 800; background: #f7f7f7 !important; }
@@ -2907,9 +2963,15 @@ function AttendanceMenu({ onBack, role, loggedInId }) {
       React.createElement('div', { className: "min-h-screen flex flex-col", style: { background: C.cream } },
       React.createElement(NavBar, { backLabel: "回功能表", onBack: handleStepBack }),
       React.createElement('div', { className: "max-w-md mx-auto w-full px-4 py-4 flex flex-col gap-3 flex-1",
-        style: supervisorMode
-          ? { paddingBottom: 88, height: "calc(100dvh - 52px)", minHeight: 0, overflow: "hidden" }
-          : { paddingBottom: 130, touchAction: "pan-y", WebkitOverflowScrolling: "touch", overscrollBehaviorY: "auto" } },
+        style: {
+          paddingBottom: 130,
+          minHeight: "100dvh",
+          height: "auto",
+          overflow: "visible",
+          touchAction: "pan-y",
+          WebkitOverflowScrolling: "touch",
+          overscrollBehaviorY: "auto",
+        } },
         !supervisorMode && React.createElement('div', { style: { fontFamily: "Inter", fontWeight: 700, fontSize: 20, color: C.ink } }, "上下班打卡"),
         !supervisorMode && React.createElement('div', { className: "text-xs", style: { color: C.inkSoft, fontFamily: "Inter" } },
           "正常班與加班分開記錄・請假可編輯假別・打卡附手機定位"
@@ -3033,7 +3095,7 @@ function AttendanceMenu({ onBack, role, loggedInId }) {
               const days = daysInMonth(recYear, recMonth);
               const byDate = {};
               myList.forEach((rec) => { if (rec.date && rec.date.startsWith(prefix)) byDate[rec.date] = rec; });
-              let sumReg = 0, sumOt = 0, leaveDays = 0;
+              let sumReg = 0, sumOver7 = 0, sumOt = 0, leaveDays = 0;
               const rows = [];
               for (let d = 1; d <= days; d++) {
                 const dk = prefix + String(d).padStart(2, "0");
@@ -3042,15 +3104,26 @@ function AttendanceMenu({ onBack, role, loggedInId }) {
                 const oh = rec ? calcBlockHours(rec.overtime) : { total: "—", totalNum: null };
                 const leave = rec && rec.leave ? rec.leave.type : "";
                 if (rh.totalNum != null) sumReg += rh.totalNum;
+                const over7 = Math.max(0, (rh.totalNum || 0) - 7);
+                sumOver7 += over7;
                 if (oh.totalNum != null) sumOt += oh.totalNum;
                 if (leave) leaveDays += 1;
                 const rp = (rec && rec.regular && rec.regular.punches) || {};
                 const op = (rec && rec.overtime && rec.overtime.punches) || {};
-                rows.push({ d, dk, rh, oh, leave, rp, op, has: !!rec });
+                rows.push({ d, dk, rh, oh, over7, leave, rp, op, has: !!rec });
               }
               return React.createElement('div', { className: "rounded-2xl overflow-hidden", style: { border: `1px solid ${C.line}`, background: C.paper } },
-                React.createElement('div', { className: "px-3 py-2 text-sm", style: { fontFamily: "Inter", fontWeight: 700, color: C.ink, borderBottom: `1px solid ${C.line}`, background: C.cream } },
-                  recYear, "年", recMonth, "月・整月出勤表"
+                React.createElement('div', { className: "px-3 py-2 flex items-center justify-between gap-2", style: { borderBottom: `1px solid ${C.line}`, background: C.cream } },
+                  React.createElement('span', { style: { fontFamily: "Inter", fontWeight: 700, color: C.ink, fontSize: 14 } }, recYear, "年", recMonth, "月・整月出勤表"),
+                  React.createElement('button', {
+                    onClick: () => exportAttendanceExcel({
+                      personId: loggedInId,
+                      personName: (people.find((p) => p.id === loggedInId) || {}).name || loggedInId,
+                      rows, sumReg, sumOver7, sumOt
+                    }),
+                    className: "px-2 py-1 rounded-lg text-xs",
+                    style: { background: "#217346", color: "white", fontFamily: "Inter", fontWeight: 800, flexShrink: 0 }
+                  }, "Excel")
                 ),
                 React.createElement('div', {
                   className: "overflow-x-auto",
@@ -3059,31 +3132,41 @@ function AttendanceMenu({ onBack, role, loggedInId }) {
                   React.createElement('table', { className: "w-full text-xs", style: { borderCollapse: "collapse", fontFamily: "Inter", minWidth: 320 } },
                     React.createElement('thead', null,
                       React.createElement('tr', { style: { background: "#F5F0E8" } },
-                        ["日", "正常班", "加班", "假別", "備註"].map((h) =>
-                          React.createElement('th', { key: h, className: "px-1.5 py-2 text-center", style: { border: `1px solid ${C.line}`, color: C.ink, fontWeight: 700 } }, h)
+                        [
+                          { top: "日" },
+                          { top: "正常上班時間", sub: "（第1輪＋第2輪）" },
+                          { top: "加班時間" },
+                          { top: "正常上班工時", sub: "（第1輪＋第2輪）" },
+                          { top: "（1＋2）超過7小時" },
+                          { top: "加班工時" },
+                        ].map((h) =>
+                          React.createElement('th', { key: h.top, className: "px-1 py-2 text-center", style: { border: `1px solid ${C.line}`, color: C.ink, fontWeight: 700, fontSize: 9, lineHeight: 1.25 } },
+                            React.createElement('div', null, h.top),
+                            h.sub && React.createElement('div', { style: { fontSize: 8, fontWeight: 600, marginTop: 2 } }, h.sub)
+                          )
                         )
                       )
                     ),
                     React.createElement('tbody', null,
                       rows.map((r) => React.createElement('tr', { key: r.dk, style: { background: r.has ? C.paper : "#FBF8F2" } },
-                        React.createElement('td', { className: "px-1.5 py-1.5 text-center", style: { border: `1px solid ${C.line}`, fontWeight: 700, color: C.ink } }, r.d),
-                        React.createElement('td', { className: "px-1 py-1.5 text-center", style: { border: `1px solid ${C.line}`, color: ATTEND_COLORS.inText, fontFamily: "IBM Plex Mono", fontSize: 10 } },
+                        React.createElement('td', { className: "px-1 py-1.5 text-center", style: { border: `1px solid ${C.line}`, fontWeight: 700, color: C.ink } }, r.d),
+                        React.createElement('td', { className: "px-1 py-1.5 text-center", style: { border: `1px solid ${C.line}`, color: ATTEND_COLORS.inText, fontFamily: "IBM Plex Mono", fontSize: 9 } },
                           r.has ? `${r.rp.amIn || "—"}-${r.rp.amOut || "—"} / ${r.rp.pmIn || "—"}-${r.rp.pmOut || "—"}` : "—"
                         ),
-                        React.createElement('td', { className: "px-1 py-1.5 text-center", style: { border: `1px solid ${C.line}`, color: ATTEND_COLORS.otText, fontFamily: "IBM Plex Mono", fontSize: 10 } },
-                          r.has && (r.op.amIn || r.op.pmOut) ? `${r.op.amIn || "—"}-${r.op.amOut || "—"} / ${r.op.pmIn || "—"}-${r.op.pmOut || "—"}` : "—"
+                        React.createElement('td', { className: "px-1 py-1.5 text-center", style: { border: `1px solid ${C.line}`, color: ATTEND_COLORS.otText, fontFamily: "IBM Plex Mono", fontSize: 9 } },
+                          r.has && (r.op.amIn || r.op.amOut || r.op.pmIn || r.op.pmOut) ? `${r.op.amIn || "—"}-${r.op.amOut || "—"} / ${r.op.pmIn || "—"}-${r.op.pmOut || "—"}` : "—"
                         ),
-                        React.createElement('td', { className: "px-1.5 py-1.5 text-center", style: { border: `1px solid ${C.line}`, color: r.leave ? "#B8860B" : C.line, fontWeight: 600 } }, r.leave || "—"),
-                        React.createElement('td', { className: "px-1.5 py-1.5 text-center", style: { border: `1px solid ${C.line}`, color: C.inkSoft, fontFamily: "IBM Plex Mono" } },
-                          r.has ? `正${r.rh.total}/加${r.oh.total}` : "—"
-                        )
+                        React.createElement('td', { className: "px-1 py-1.5 text-center", style: { border: `1px solid ${C.line}`, color: ATTEND_COLORS.inText, fontFamily: "IBM Plex Mono" } }, r.rh.totalNum != null ? r.rh.totalNum.toFixed(2) : "—"),
+                        React.createElement('td', { className: "px-1 py-1.5 text-center", style: { border: `1px solid ${C.line}`, color: r.over7 > 0 ? C.alert : C.inkSoft, fontFamily: "IBM Plex Mono", fontWeight: r.over7 > 0 ? 800 : 500 } }, r.over7 > 0 ? r.over7.toFixed(2) : "0.00"),
+                        React.createElement('td', { className: "px-1 py-1.5 text-center", style: { border: `1px solid ${C.line}`, color: ATTEND_COLORS.otText, fontFamily: "IBM Plex Mono" } }, r.oh.totalNum != null ? r.oh.totalNum.toFixed(2) : "—")
                       )),
                       React.createElement('tr', { style: { background: `${C.wine}10` } },
-                        React.createElement('td', { className: "px-1.5 py-2 text-center", style: { border: `1px solid ${C.line}`, fontWeight: 800, color: C.ink } }, "合計"),
-                        React.createElement('td', { className: "px-1.5 py-2 text-center", style: { border: `1px solid ${C.line}`, fontWeight: 700, color: ATTEND_COLORS.inText, fontFamily: "IBM Plex Mono" } }, sumReg ? sumReg.toFixed(2) + "h" : "—"),
-                        React.createElement('td', { className: "px-1.5 py-2 text-center", style: { border: `1px solid ${C.line}`, fontWeight: 700, color: ATTEND_COLORS.otText, fontFamily: "IBM Plex Mono" } }, sumOt ? sumOt.toFixed(2) + "h" : "—"),
-                        React.createElement('td', { className: "px-1.5 py-2 text-center", style: { border: `1px solid ${C.line}`, fontWeight: 700, color: "#B8860B" } }, leaveDays ? leaveDays + "天" : "—"),
-                        React.createElement('td', { className: "px-1.5 py-2 text-center", style: { border: `1px solid ${C.line}` } })
+                        React.createElement('td', { className: "px-1 py-2 text-center", style: { border: `1px solid ${C.line}`, fontWeight: 800, color: C.ink } }, "合計"),
+                        React.createElement('td', { className: "px-1 py-2 text-center", style: { border: `1px solid ${C.line}` } }, "—"),
+                        React.createElement('td', { className: "px-1 py-2 text-center", style: { border: `1px solid ${C.line}` } }, "—"),
+                        React.createElement('td', { className: "px-1 py-2 text-center", style: { border: `1px solid ${C.line}`, fontWeight: 800, color: ATTEND_COLORS.inText, fontFamily: "IBM Plex Mono" } }, sumReg.toFixed(2)),
+                        React.createElement('td', { className: "px-1 py-2 text-center", style: { border: `1px solid ${C.line}`, fontWeight: 800, color: C.alert, fontFamily: "IBM Plex Mono" } }, sumOver7.toFixed(2)),
+                        React.createElement('td', { className: "px-1 py-2 text-center", style: { border: `1px solid ${C.line}`, fontWeight: 900, color: ATTEND_COLORS.otText, fontFamily: "IBM Plex Mono" } }, sumOt.toFixed(2))
                       )
                     )
                   )
@@ -3168,7 +3251,7 @@ function AttendanceMenu({ onBack, role, loggedInId }) {
               const byDate = {};
               supervisorList.forEach((rec) => { if (rec.date && rec.date.startsWith(prefix)) byDate[rec.date] = rec; });
               const selectedPerson = attendancePeople.find((p) => p.id === supervisorPersonId);
-              let sumReg = 0, sumOt = 0, leaveDays = 0;
+              let sumReg = 0, sumOver7 = 0, sumOt = 0, leaveDays = 0;
               const rows = [];
               for (let d = 1; d <= days; d++) {
                 const date = prefix + String(d).padStart(2, "0");
@@ -3177,9 +3260,11 @@ function AttendanceMenu({ onBack, role, loggedInId }) {
                 const oh = rec ? calcBlockHours(rec.overtime) : { total: "—", totalNum: null };
                 const leave = rec && rec.leave ? rec.leave.type : "";
                 if (rh.totalNum != null) sumReg += rh.totalNum;
+                const over7 = Math.max(0, (rh.totalNum || 0) - 7);
+                sumOver7 += over7;
                 if (oh.totalNum != null) sumOt += oh.totalNum;
                 if (leave) leaveDays++;
-                rows.push({ d, date, rec, rh, oh, leave });
+                rows.push({ d, date, rec, rh, oh, over7, leave });
               }
               return React.createElement('div', { className: "rounded-2xl overflow-hidden", style: { border: `1px solid ${C.line}`, background: C.paper } },
                 React.createElement('div', { className: "px-3 py-2 no-print", style: { background: C.cream, borderBottom: `1px solid ${C.line}` } },
@@ -3215,19 +3300,27 @@ function AttendanceMenu({ onBack, role, loggedInId }) {
                         onClick: printSupervisorAttendance,
                         className: "px-2.5 py-1.5 rounded-lg text-xs",
                         style: { background: C.wine, color: "white", fontWeight: 800 },
-                      }, "列印／存PDF")
+                      }, "列印／存PDF"),
+                      React.createElement('button', {
+                        onClick: () => exportAttendanceExcel({
+                          personId: supervisorPersonId,
+                          personName: (selectedPerson && selectedPerson.name) || supervisorPersonId,
+                          rows, sumReg, sumOver7, sumOt
+                        }),
+                        className: "px-2.5 py-1.5 rounded-lg text-xs",
+                        style: { background: "#217346", color: "white", fontWeight: 800 },
+                      }, "Excel")
                     )
                   )
                 ),
                 React.createElement('div', {
                   style: {
-                    maxHeight: "calc(100dvh - 275px)",
-                    overflowY: "auto",
-                    overflowX: supervisorZoom > 1 ? "auto" : "hidden",
+                    width: "100%",
+                    overflowX: "auto",
+                    overflowY: "visible",
                     WebkitOverflowScrolling: "touch",
-                    overscrollBehavior: "auto",
-                    touchAction: supervisorZoom > 1 ? "pan-x pan-y" : "pan-y",
-                    scrollBehavior: "smooth",
+                    overscrollBehaviorX: "contain",
+                    touchAction: "pan-x pan-y",
                   },
                 },
                   React.createElement('table', { className: "w-full text-xs no-print",
@@ -3243,17 +3336,22 @@ function AttendanceMenu({ onBack, role, loggedInId }) {
                     React.createElement('thead', { style: { position: "sticky", top: 0, zIndex: 2, background: "#F5F0E8" } },
                       React.createElement('tr', null,
                         [
-                          { t: "日", w: "7%" },
-                          { t: "正常班", w: "30%" },
-                          { t: "加班", w: "27%" },
-                          { t: "假別", w: "16%" },
-                          { t: "修改", w: "20%" },
+                          { t: "日", w: "6%" },
+                          { t: "正常上班時間", sub: "（第1輪＋第2輪）", w: "25%" },
+                          { t: "加班時間", w: "20%" },
+                          { t: "正常上班工時", sub: "（第1輪＋第2輪）", w: "13%" },
+                          { t: "（1＋2）超過7小時", w: "12%" },
+                          { t: "加班工時", w: "11%" },
+                          { t: "修改", w: "13%" },
                         ].map((h) =>
                           React.createElement('th', {
                             key: h.t,
                             className: "px-0.5 py-2 text-center",
-                            style: { width: h.w, border: `1px solid ${C.line}`, fontWeight: 800, color: C.ink, fontSize: 8.5, padding: "4px 1px" },
-                          }, h.t)
+                            style: { width: h.w, border: `1px solid ${C.line}`, fontWeight: 800, color: C.ink, fontSize: 8.2, padding: "4px 1px", lineHeight: 1.18 },
+                          },
+                            React.createElement('div', null, h.t),
+                            h.sub && React.createElement('div', { style: { fontSize: 7.2, fontWeight: 600, marginTop: 2 } }, h.sub)
+                          )
                         )
                       )
                     ),
@@ -3262,14 +3360,16 @@ function AttendanceMenu({ onBack, role, loggedInId }) {
                         const rp = (r.rec && r.rec.regular && r.rec.regular.punches) || {};
                         const op = (r.rec && r.rec.overtime && r.rec.overtime.punches) || {};
                         return React.createElement('tr', { key: r.date, style: { background: r.rec ? C.paper : "#FBF8F2" } },
-                          React.createElement('td', { className: "px-0.5 py-1.5 text-center", style: { border: `1px solid ${C.line}`, fontWeight: 700, fontSize: 8.5, padding: "3px 1px" } }, r.d),
-                          React.createElement('td', { className: "px-1 py-2 text-center", style: { border: `1px solid ${C.line}`, color: ATTEND_COLORS.inText, fontFamily: "IBM Plex Mono", fontSize: 7.2, lineHeight: 1.15, wordBreak: "break-all" } },
+                          React.createElement('td', { className: "px-0.5 py-1.5 text-center", style: { border: `1px solid ${C.line}`, fontWeight: 700, fontSize: 8, padding: "3px 1px" } }, r.d),
+                          React.createElement('td', { className: "px-1 py-2 text-center", style: { border: `1px solid ${C.line}`, color: ATTEND_COLORS.inText, fontFamily: "IBM Plex Mono", fontSize: 6.8, lineHeight: 1.1, wordBreak: "break-all" } },
                             r.rec ? `${rp.amIn || "—"}-${rp.amOut || "—"} / ${rp.pmIn || "—"}-${rp.pmOut || "—"}` : "—"
                           ),
-                          React.createElement('td', { className: "px-1 py-2 text-center", style: { border: `1px solid ${C.line}`, color: ATTEND_COLORS.otText, fontFamily: "IBM Plex Mono", fontSize: 7.2, lineHeight: 1.15, wordBreak: "break-all" } },
+                          React.createElement('td', { className: "px-1 py-2 text-center", style: { border: `1px solid ${C.line}`, color: ATTEND_COLORS.otText, fontFamily: "IBM Plex Mono", fontSize: 6.8, lineHeight: 1.1, wordBreak: "break-all" } },
                             r.rec ? `${op.amIn || "—"}-${op.amOut || "—"} / ${op.pmIn || "—"}-${op.pmOut || "—"}` : "—"
                           ),
-                          React.createElement('td', { className: "px-1 py-2 text-center", style: { border: `1px solid ${C.line}`, color: r.leave ? "#B8860B" : C.inkSoft, fontSize: 8, padding: "3px 1px" } }, r.leave || "—"),
+                          React.createElement('td', { className: "px-0.5 py-1.5 text-center", style: { border: `1px solid ${C.line}`, color: ATTEND_COLORS.inText, fontFamily: "IBM Plex Mono", fontSize: 8 } }, r.rh.totalNum != null ? r.rh.totalNum.toFixed(2) : "—"),
+                          React.createElement('td', { className: "px-0.5 py-1.5 text-center", style: { border: `1px solid ${C.line}`, color: r.over7 > 0 ? C.alert : C.inkSoft, fontFamily: "IBM Plex Mono", fontWeight: r.over7 > 0 ? 800 : 500, fontSize: 8 } }, r.over7 > 0 ? r.over7.toFixed(2) : "0.00"),
+                          React.createElement('td', { className: "px-0.5 py-1.5 text-center", style: { border: `1px solid ${C.line}`, color: ATTEND_COLORS.otText, fontFamily: "IBM Plex Mono", fontSize: 8 } }, r.oh.totalNum != null ? r.oh.totalNum.toFixed(2) : "—"),
                           React.createElement('td', { className: "px-1 py-1.5 text-center", style: { border: `1px solid ${C.line}` } },
                             React.createElement('button', {
                               onClick: () => openAttendanceEditor(supervisorPersonId, r.date, r.rec),
@@ -3286,9 +3386,11 @@ function AttendanceMenu({ onBack, role, loggedInId }) {
                       }),
                       React.createElement('tr', { style: { background: `${C.wine}10` } },
                         React.createElement('td', { className: "px-1 py-2 text-center", style: { border: `1px solid ${C.line}`, fontWeight: 800 } }, "合計"),
-                        React.createElement('td', { className: "px-1 py-2 text-center", style: { border: `1px solid ${C.line}`, color: ATTEND_COLORS.inText, fontWeight: 800 } }, sumReg ? sumReg.toFixed(2) + "h" : "—"),
-                        React.createElement('td', { className: "px-1 py-2 text-center", style: { border: `1px solid ${C.line}`, color: ATTEND_COLORS.otText, fontWeight: 800 } }, sumOt ? sumOt.toFixed(2) + "h" : "—"),
-                        React.createElement('td', { className: "px-1 py-2 text-center", style: { border: `1px solid ${C.line}`, color: "#B8860B", fontWeight: 800 } }, leaveDays ? leaveDays + "天" : "—"),
+                        React.createElement('td', { style: { border: `1px solid ${C.line}` } }, "—"),
+                        React.createElement('td', { style: { border: `1px solid ${C.line}` } }, "—"),
+                        React.createElement('td', { className: "px-1 py-2 text-center", style: { border: `1px solid ${C.line}`, color: ATTEND_COLORS.inText, fontWeight: 800, fontFamily: "IBM Plex Mono" } }, sumReg.toFixed(2)),
+                        React.createElement('td', { className: "px-1 py-2 text-center", style: { border: `1px solid ${C.line}`, color: C.alert, fontWeight: 800, fontFamily: "IBM Plex Mono" } }, sumOver7.toFixed(2)),
+                        React.createElement('td', { className: "px-1 py-2 text-center", style: { border: `1px solid ${C.line}`, color: ATTEND_COLORS.otText, fontWeight: 900, fontFamily: "IBM Plex Mono" } }, sumOt.toFixed(2)),
                         React.createElement('td', { style: { border: `1px solid ${C.line}` } })
                       )
                     )
@@ -3306,8 +3408,18 @@ function AttendanceMenu({ onBack, role, loggedInId }) {
                   React.createElement('table', { className: "attendance-print-table" },
                     React.createElement('thead', null,
                       React.createElement('tr', null,
-                        ["日", "正常班", "加班", "假別", "正常工時", "加班工時"].map((h) =>
-                          React.createElement('th', { key: h }, h)
+                        [
+                          { top: "日" },
+                          { top: "正常上班時間", sub: "（第1輪＋第2輪）" },
+                          { top: "加班時間" },
+                          { top: "正常上班工時", sub: "（第1輪＋第2輪）" },
+                          { top: "（1＋2）超過7小時" },
+                          { top: "加班工時" },
+                        ].map((h) =>
+                          React.createElement('th', { key: h.top },
+                            h.top,
+                            h.sub && React.createElement(React.Fragment, null, React.createElement('br'), h.sub)
+                          )
                         )
                       )
                     ),
@@ -3319,18 +3431,18 @@ function AttendanceMenu({ onBack, role, loggedInId }) {
                           React.createElement('td', null, r.d),
                           React.createElement('td', null, r.rec ? `${rp.amIn || "—"}-${rp.amOut || "—"} / ${rp.pmIn || "—"}-${rp.pmOut || "—"}` : "—"),
                           React.createElement('td', null, r.rec ? `${op.amIn || "—"}-${op.amOut || "—"} / ${op.pmIn || "—"}-${op.pmOut || "—"}` : "—"),
-                          React.createElement('td', null, r.leave || "—"),
-                          React.createElement('td', null, r.rh.total || "—"),
-                          React.createElement('td', null, r.oh.total || "—")
+                          React.createElement('td', null, r.rh.totalNum != null ? r.rh.totalNum.toFixed(2) : "—"),
+                          React.createElement('td', null, r.over7 > 0 ? r.over7.toFixed(2) : "0.00"),
+                          React.createElement('td', null, r.oh.totalNum != null ? r.oh.totalNum.toFixed(2) : "—")
                         );
                       }),
                       React.createElement('tr', { className: "attendance-print-total" },
                         React.createElement('td', null, "合計"),
                         React.createElement('td', null, "—"),
                         React.createElement('td', null, "—"),
-                        React.createElement('td', null, leaveDays ? leaveDays + "天" : "—"),
-                        React.createElement('td', null, sumReg ? sumReg.toFixed(2) + "h" : "—"),
-                        React.createElement('td', null, sumOt ? sumOt.toFixed(2) + "h" : "—")
+                        React.createElement('td', null, sumReg.toFixed(2)),
+                        React.createElement('td', null, sumOver7.toFixed(2)),
+                        React.createElement('td', null, sumOt.toFixed(2))
                       )
                     )
                   )
@@ -3474,7 +3586,7 @@ function AttendanceMenu({ onBack, role, loggedInId }) {
               onClick: savePref, disabled: busy,
               className: "w-full py-3 rounded-xl text-sm flex items-center justify-center",
               style: { background: ATTEND_COLORS.panelBorder, color: "white", fontFamily: "Inter", fontWeight: 700, opacity: busy ? 0.6 : 1, textAlign: "center" },
-            }, busy ? "儲存中…" : "儲存休息時段")
+            }, busy ? "儲存中…" : "儲存提示時段")
           ),
           React.createElement('div', { className: "rounded-2xl p-4 flex flex-col gap-3", style: { background: C.paper, border: `1px solid ${C.line}` } },
             React.createElement('div', { className: "text-sm", style: { color: C.ink, fontFamily: "Inter", fontWeight: 700 } }, "假別編輯", canEditTypes ? "" : "（僅管理者可改）"),
