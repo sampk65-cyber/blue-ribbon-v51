@@ -516,7 +516,7 @@ const C = {
   tiffanyLight: "#B8ECE5",
   tiffanyText: "#2E8577",
 };
-const APP_VERSION = "V5.1+A・功能9環境數據";
+const APP_VERSION = "V5.1+A・氣候每小時累積+表五月報";
 const FONT_LINK = "https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,600;9..144,700&family=Inter:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap";
 
 const WORK_ITEMS = [
@@ -582,6 +582,8 @@ function EnvironmentMenu({ onBack, role, loggedInId }) {
   const [outdoor, setOutdoor] = useState(null);
   const [outdoorLoading, setOutdoorLoading] = useState(false);
   const [outdoorError, setOutdoorError] = useState("");
+  const [outdoorHistoryCount, setOutdoorHistoryCount] = useState(0);
+  const [autoSaveStatus, setAutoSaveStatus] = useState("");
 
   const pad2 = (v) => String(v).padStart(2, "0");
   const ym = `${year}-${pad2(month)}`;
@@ -670,18 +672,114 @@ function EnvironmentMenu({ onBack, role, loggedInId }) {
       rainfall:safeNum(pickValue(w,["Precipitation","H_24R","Rainfall"])), windSpeed:safeNum(pickValue(w,["WindSpeed","WDSD"])),
       windDirection:safeNum(pickValue(w,["WindDirection","WDIR"])), pressure:safeNum(pickValue(w,["AirPressure","PRES"])), weather:pickValue(w,["Weather","WeatherPhenomenon"])||"" };
   };
-  const fetchOutdoor = async (keyOverride) => {
-    const token=(keyOverride!==undefined?keyOverride:cwaKey).trim();
-    if(!token){setOutdoor(null);setOutdoorError("尚未設定中央氣象署 API 授權碼");return;}
-    setOutdoorLoading(true);setOutdoorError("");
-    try{
-      const url=`${ENV_CWA.apiBase}?Authorization=${encodeURIComponent(token)}&format=JSON&StationId=${ENV_CWA.stationId}`;
-      const res=await fetch(url,{cache:"no-store"}); if(!res.ok) throw new Error(`HTTP ${res.status}`);
-      const parsed=extractOutdoor(await res.json()); if(!parsed) throw new Error("回傳資料中找不到神岡測站 C0F9I0"); setOutdoor(parsed);
-    }catch(e){setOutdoor(null);setOutdoorError("神岡觀測資料匯入失敗："+(e&&e.message?e.message:String(e)));}
-    setOutdoorLoading(false);
+  const outdoorHourKey = (observedAt) => {
+    const dt = new Date(observedAt || Date.now());
+    if (!Number.isFinite(dt.getTime())) return null;
+    const parts = new Intl.DateTimeFormat("en-CA", {
+      timeZone: "Asia/Taipei",
+      year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit",
+      hour12: false,
+    }).formatToParts(dt);
+    const gv = (type) => ((parts.find((p) => p.type === type) || {}).value || "");
+    let hh = gv("hour");
+    if (hh === "24") hh = "00";
+    return `${gv("year")}-${gv("month")}-${gv("day")}T${hh}`;
   };
-  useEffect(()=>{if(cwaKey)fetchOutdoor(cwaKey);},[]);
+
+  const saveOutdoorHourly = async (record, source = "browser") => {
+    if (!record) return false;
+    const hourKey = outdoorHourKey(record.observedAt);
+    if (!hourKey) return false;
+    const key = `environment:outdoor:hour:${hourKey}`;
+    try {
+      await window.firebaseReady;
+      const existing = await window.storage.get(key);
+      if (existing) return false;
+      const payload = {
+        ...record,
+        hourKey,
+        source,
+        stationId: record.stationId || ENV_CWA.stationId,
+        savedAt: Date.now(),
+      };
+      await window.storage.set(key, JSON.stringify(payload));
+      if (hourKey.slice(0, 7) === ym) setOutdoorHistoryCount((n) => n + 1);
+      setAutoSaveStatus(`已保存 ${hourKey.replace("T", " ")} 觀測`);
+      return true;
+    } catch (e) {
+      console.warn("save outdoor hourly failed", e);
+      setAutoSaveStatus("室外歷史保存失敗");
+      return false;
+    }
+  };
+
+  const loadOutdoorHistoryCount = async () => {
+    try {
+      await window.firebaseReady;
+      const listRes = await window.storage.list(`environment:outdoor:hour:${ym}`);
+      setOutdoorHistoryCount(((listRes && listRes.keys) || []).length);
+    } catch (e) {
+      console.warn("load outdoor history count failed", e);
+      setOutdoorHistoryCount(0);
+    }
+  };
+
+  const fetchOutdoor = async (keyOverride, options = {}) => {
+    const token = (keyOverride !== undefined ? keyOverride : cwaKey).trim();
+    if (!token) {
+      if (!options.quiet) { setOutdoor(null); setOutdoorError("尚未設定中央氣象署 API 授權碼"); }
+      return null;
+    }
+    if (!options.quiet) { setOutdoorLoading(true); setOutdoorError(""); }
+    try {
+      const url = `${ENV_CWA.apiBase}?Authorization=${encodeURIComponent(token)}&format=JSON&StationId=${ENV_CWA.stationId}`;
+      const res = await fetch(url, { cache: "no-store" });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const parsed = extractOutdoor(await res.json());
+      if (!parsed) throw new Error("回傳資料中找不到神岡測站 C0F9I0");
+      setOutdoor(parsed);
+      await saveOutdoorHourly(parsed, options.source || "browser");
+      if (!options.quiet) { setOutdoorError(""); setOutdoorLoading(false); }
+      return parsed;
+    } catch (e) {
+      if (!options.quiet) {
+        setOutdoor(null);
+        setOutdoorError("神岡觀測資料匯入失敗：" + (e && e.message ? e.message : String(e)));
+        setOutdoorLoading(false);
+      }
+      return null;
+    }
+  };
+
+  useEffect(() => { loadOutdoorHistoryCount(); }, [year, month]);
+
+  useEffect(() => {
+    let alive = true;
+    let timer = null;
+    const tick = async () => {
+      if (!alive) return;
+      let serverSaved = false;
+      try {
+        const r = await fetch("/api/cwa-hourly", { cache: "no-store" });
+        if (r.ok) {
+          serverSaved = true;
+          setAutoSaveStatus("伺服器每小時自動累積已啟用");
+          await loadOutdoorHistoryCount();
+        }
+      } catch (_e) {}
+      if (!serverSaved && cwaKey) {
+        await fetchOutdoor(cwaKey, { quiet: true, source: "browser-auto" });
+      }
+    };
+    tick();
+    timer = window.setInterval(tick, 60 * 60 * 1000);
+    return () => { alive = false; if (timer) window.clearInterval(timer); };
+  }, [cwaKey]);
+
+  useEffect(() => {
+    if (cwaKey) fetchOutdoor(cwaKey, { source: "browser-open" });
+  }, []);
+
   const saveCwaKey=()=>{const token=cwaKey.trim();try{if(token)localStorage.setItem("blueRibbonCwaApiKey",token);else localStorage.removeItem("blueRibbonCwaApiKey");}catch(e){}setShowCwaKey(false);fetchOutdoor(token);};
 
   const OutdoorMetric=({label,value,unit})=>React.createElement('div',{className:"rounded-xl p-3",style:{background:C.paper,border:`1px solid ${C.line}`}},
@@ -740,7 +838,11 @@ function EnvironmentMenu({ onBack, role, loggedInId }) {
     React.createElement('div',{className:"rounded-2xl p-4 mb-5",style:{background:"#EEF5F1",border:`1px solid ${C.tableColor}55`}},React.createElement('div',{className:"flex items-center justify-between gap-2 mb-3"},React.createElement('div',null,React.createElement('div',{style:{fontFamily:"Inter",fontWeight:900,fontSize:17,color:C.ink}},"神岡區觀測資料"),React.createElement('div',{className:"text-xs mt-1",style:{color:C.inkSoft,fontFamily:"Inter"}},`中央氣象署・神岡站 ${ENV_CWA.stationId}`)),React.createElement('button',{onClick:()=>fetchOutdoor(),disabled:outdoorLoading,className:"px-3 py-2 rounded-lg text-xs",style:{background:C.tableColor,color:"white",fontFamily:"Inter",fontWeight:800,opacity:outdoorLoading?.6:1}},outdoorLoading?"更新中":"更新")),
       outdoor?React.createElement(React.Fragment,null,React.createElement('div',{className:"grid grid-cols-3 gap-2"},React.createElement(OutdoorMetric,{label:"氣溫",value:outdoor.temperature,unit:"°C"}),React.createElement(OutdoorMetric,{label:"濕度",value:outdoor.humidity,unit:"%"}),React.createElement(OutdoorMetric,{label:"日降雨",value:outdoor.rainfall,unit:" mm"}),React.createElement(OutdoorMetric,{label:"風速",value:outdoor.windSpeed,unit:" m/s"}),React.createElement(OutdoorMetric,{label:"風向",value:outdoor.windDirection,unit:"°"}),React.createElement(OutdoorMetric,{label:"氣壓",value:outdoor.pressure,unit:" hPa"})),React.createElement('div',{className:"mt-3 text-xs",style:{color:C.inkSoft,fontFamily:"Inter",lineHeight:1.5}},`${outdoor.stationName||"神岡"}・${outdoor.observedAt||"觀測時間未提供"}${outdoor.weather?`・${outdoor.weather}`:""}`)):React.createElement('div',{className:"text-sm py-2",style:{color:C.inkSoft,fontFamily:"Inter"}},outdoorError||"設定 API 授權碼後即可把神岡觀測資料直接匯入此畫面"),
       React.createElement('div',{className:"mt-3 flex gap-2"},React.createElement('button',{onClick:()=>setShowCwaKey(!showCwaKey),className:"px-3 py-2 rounded-lg text-xs",style:{background:C.paper,border:`1px solid ${C.line}`,color:C.ink,fontFamily:"Inter",fontWeight:700}},showCwaKey?"收起授權碼":"設定氣象署授權碼"),React.createElement('a',{href:ENV_CWA.townUrl,target:"_blank",rel:"noreferrer",className:"px-3 py-2 rounded-lg text-xs",style:{background:C.paper,border:`1px solid ${C.line}`,color:C.tableColor,fontFamily:"Inter",fontWeight:700,textDecoration:"none"}},"氣象署神岡頁")),
-      showCwaKey&&React.createElement('div',{className:"mt-3 flex gap-2"},React.createElement('input',{type:"password",value:cwaKey,onChange:(e)=>setCwaKey(e.target.value),placeholder:"中央氣象署 OpenData API 授權碼",className:"flex-1 px-3 py-2 rounded-lg text-xs",style:{border:`1px solid ${C.line}`,background:C.paper,fontFamily:"IBM Plex Mono"}}),React.createElement('button',{onClick:saveCwaKey,className:"px-3 py-2 rounded-lg text-xs",style:{background:C.wine,color:"white",fontFamily:"Inter",fontWeight:800}},"儲存")),React.createElement('div',{className:"mt-2 text-xs",style:{color:C.inkSoft,fontFamily:"Inter",lineHeight:1.4}},"授權碼只存於本機瀏覽器，不寫入共用雲端資料。")),
+      showCwaKey&&React.createElement('div',{className:"mt-3 flex gap-2"},React.createElement('input',{type:"password",value:cwaKey,onChange:(e)=>setCwaKey(e.target.value),placeholder:"中央氣象署 OpenData API 授權碼",className:"flex-1 px-3 py-2 rounded-lg text-xs",style:{border:`1px solid ${C.line}`,background:C.paper,fontFamily:"IBM Plex Mono"}}),React.createElement('button',{onClick:saveCwaKey,className:"px-3 py-2 rounded-lg text-xs",style:{background:C.wine,color:"white",fontFamily:"Inter",fontWeight:800}},"儲存")),React.createElement('div',{className:"mt-2 text-xs",style:{color:C.inkSoft,fontFamily:"Inter",lineHeight:1.4}},"授權碼只存於本機瀏覽器，不寫入共用雲端資料。"),
+      React.createElement('div',{className:"mt-2 px-3 py-2 rounded-lg text-xs",style:{background:"#FFFFFFAA",border:`1px solid ${C.line}`,color:C.inkSoft,fontFamily:"Inter",lineHeight:1.5}},
+        `${year}年${month}月室外歷史：${outdoorHistoryCount} 筆・每小時最多1筆`,
+        autoSaveStatus ? `・${autoSaveStatus}` : ""
+      )),
     React.createElement('div',{className:"mb-2",style:{fontFamily:"Inter",fontWeight:800,fontSize:17,color:C.ink}},`${year}年${month}月・溫室環境資料夾`),React.createElement('div',{className:"grid grid-cols-2 gap-3"},ZONES.map((z)=>React.createElement('button',{key:z.id,onClick:()=>setSelectedZoneId(z.id),className:"rounded-2xl p-4 text-left",style:{background:C.paper,border:`1px solid ${C.line}`}},React.createElement('div',{className:"flex items-center gap-2"},React.createElement(Folder,{size:18,color:C.tableColor}),React.createElement('span',{style:{fontFamily:"Inter",fontWeight:900,fontSize:16,color:C.ink}},z.name)),React.createElement('div',{className:"mt-2 text-xs",style:{color:C.inkSoft,fontFamily:"Inter"}},"環境數據"),React.createElement('div',{className:"mt-2 text-xs",style:{color:(counts[z.id]||0)?C.tableColor:C.inkSoft,fontFamily:"IBM Plex Mono",fontWeight:700}},`${counts[z.id]||0} 筆紀錄`))))));
 }
 
@@ -5653,7 +5755,7 @@ const REPORT_SLOTS = [
   { no: "二", label: "年度計畫表", key: "annual", ready: true },
   { no: "三", label: "分區耗材統計", key: "zoneMaterials", ready: true },
   { no: "四", label: "留言版內容", key: "noticeBoard", ready: true },
-  { no: "五", label: "尚未設計", key: null, ready: false },
+  { no: "五", label: "氣候資料", key: "climateData", ready: true },
   { no: "六", label: "尚未設計", key: null, ready: false },
   { no: "七", label: "尚未設計", key: null, ready: false },
   { no: "八", label: "尚未設計", key: null, ready: false },
@@ -5666,7 +5768,7 @@ function ReportsHub({ onBack }) {
   const now = new Date();
   const [yearSel, setYearSel] = useState(null);
   const [monthSel, setMonthSel] = useState(null);
-  const [openKey, setOpenKey] = useState(null); // "materials" | "annual" | "zoneMaterials" | "noticeBoard" | null
+  const [openKey, setOpenKey] = useState(null); // 表一～表五
 
   if (openKey === "materials") {
     return React.createElement(MonthlyReport, { year: yearSel, month: monthSel, onBack: () => setOpenKey(null),} );
@@ -5679,6 +5781,9 @@ function ReportsHub({ onBack }) {
   }
   if (openKey === "noticeBoard") {
     return React.createElement(NoticeBoardArchive, { year: yearSel, month: monthSel, onBack: () => setOpenKey(null),} );
+  }
+  if (openKey === "climateData") {
+    return React.createElement(ClimateDataReport, { year: yearSel, month: monthSel, onBack: () => setOpenKey(null),} );
   }
 
   return (
@@ -5956,6 +6061,150 @@ function MonthlyReport({ year, month, onBack }) {
 
 // 表三・分區耗材統計：與表一同一資料來源（zonework 6/7/8）
 // 以月曆呈現整月日期與當日確認內容；格子過擠時點選「顯示全部」展開
+
+
+
+function ClimateDataReport({ year, month, onBack }) {
+  const [rows, setRows] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const ym = `${year}-${String(month).padStart(2, "0")}`;
+
+  const n = (v) => { const x = Number(v); return Number.isFinite(x) ? x : null; };
+  const vals = (arr) => arr.map(n).filter((v) => v != null);
+  const avg = (arr) => { const a = vals(arr); return a.length ? a.reduce((s,v)=>s+v,0)/a.length : null; };
+  const minv = (arr) => { const a = vals(arr); return a.length ? Math.min(...a) : null; };
+  const maxv = (arr) => { const a = vals(arr); return a.length ? Math.max(...a) : null; };
+  const fmt = (v, d=1) => v == null ? "—" : Number(v).toFixed(d);
+
+  useEffect(() => {
+    let alive = true;
+    (async () => {
+      setLoading(true);
+      try {
+        await window.firebaseReady;
+        const listRes = await window.storage.list(`environment:outdoor:hour:${ym}`);
+        const keys = (listRes && listRes.keys) || [];
+        const recs = await runWithLimit(keys, 6, async (k) => {
+          try {
+            const res = await window.storage.get(k);
+            return res ? JSON.parse(res.value) : null;
+          } catch (_e) { return null; }
+        });
+        const list = recs.filter(Boolean).sort((a,b) =>
+          String(a.hourKey || a.observedAt || "").localeCompare(String(b.hourKey || b.observedAt || ""))
+        );
+        if (alive) setRows(list);
+      } catch (e) {
+        console.warn("load climate report failed", e);
+        if (alive) setRows([]);
+      }
+      if (alive) setLoading(false);
+    })();
+    return () => { alive = false; };
+  }, [year, month]);
+
+  const byDay = {};
+  rows.forEach((r) => {
+    const day = String(r.hourKey || r.observedAt || "").slice(0, 10);
+    if (!day) return;
+    (byDay[day] ||= []).push(r);
+  });
+
+  const daily = Object.keys(byDay).sort().map((day) => {
+    const a = byDay[day];
+    const weatherList = a.map((r)=>r.weather).filter(Boolean);
+    return {
+      day,
+      count: a.length,
+      tMin: minv(a.map((r)=>r.temperature)),
+      tMax: maxv(a.map((r)=>r.temperature)),
+      tAvg: avg(a.map((r)=>r.temperature)),
+      hAvg: avg(a.map((r)=>r.humidity)),
+      rain: maxv(a.map((r)=>r.rainfall)),
+      windMax: maxv(a.map((r)=>r.windSpeed)),
+      pressure: avg(a.map((r)=>r.pressure)),
+      weather: weatherList.length ? weatherList[weatherList.length-1] : "—",
+    };
+  });
+
+  const monthSummary = {
+    obs: rows.length,
+    tempMin: minv(rows.map((r)=>r.temperature)),
+    tempMax: maxv(rows.map((r)=>r.temperature)),
+    tempAvg: avg(rows.map((r)=>r.temperature)),
+    humAvg: avg(rows.map((r)=>r.humidity)),
+    rainTotal: daily.reduce((s,r)=>s+(n(r.rain)||0),0),
+  };
+
+  const printReport = () => setTimeout(() => window.print(), 80);
+
+  return React.createElement('div',{className:"min-h-screen flex flex-col",style:{background:C.cream}},
+    React.createElement(NavBar,{backLabel:"回表格",onBack:onBack}),
+    React.createElement('div',{className:"px-4 py-3 no-print",style:{borderBottom:`1px solid ${C.line}`,background:C.paper}},
+      React.createElement('div',{className:"flex items-center justify-between gap-2"},
+        React.createElement('div',null,
+          React.createElement('div',{style:{fontFamily:"Inter",fontWeight:800,fontSize:18,color:C.ink}},"表五・氣候資料"),
+          React.createElement('div',{className:"text-xs mt-1",style:{color:C.inkSoft,fontFamily:"IBM Plex Mono"}},`${year}年 ${month}月・神岡站 ${ENV_CWA.stationId}・每小時1筆`)
+        ),
+        React.createElement('button',{onClick:printReport,className:"px-3 py-2 rounded-lg text-xs flex items-center gap-1.5",style:{background:C.wine,color:"white",fontFamily:"Inter",fontWeight:700}},
+          React.createElement(Printer,{size:15,color:"white"}),"列印／存PDF")
+      )
+    ),
+    React.createElement('div',{className:"p-4 overflow-auto"},
+      React.createElement('div',{className:"print-area mx-auto",style:{width:"100%",maxWidth:1120,minHeight:760,background:"#FFF",color:"#222",padding:"24px 26px",boxShadow:"0 2px 10px rgba(0,0,0,.08)",fontFamily:"Inter"}},
+        React.createElement('style',null,`@media print{
+          @page{size:A4 landscape;margin:8mm;}
+          body *{visibility:hidden!important;}
+          .print-area,.print-area *{visibility:visible!important;}
+          .print-area{position:absolute!important;left:0!important;top:0!important;width:100%!important;max-width:none!important;min-height:0!important;box-shadow:none!important;padding:0!important;}
+        }`),
+        React.createElement('div',{style:{textAlign:"center",marginBottom:12}},
+          React.createElement('div',{style:{fontWeight:900,fontSize:20,letterSpacing:1}},"神岡區氣候資料月報"),
+          React.createElement('div',{style:{fontSize:12,marginTop:4}},`${year}年${month}月・中央氣象署神岡站 ${ENV_CWA.stationId}`)
+        ),
+        React.createElement('div',{style:{display:"grid",gridTemplateColumns:"repeat(6,1fr)",gap:6,marginBottom:12}},
+          [
+            ["觀測筆數",monthSummary.obs,"筆"],
+            ["最低溫",fmt(monthSummary.tempMin),"°C"],
+            ["最高溫",fmt(monthSummary.tempMax),"°C"],
+            ["平均溫",fmt(monthSummary.tempAvg),"°C"],
+            ["平均濕度",fmt(monthSummary.humAvg),"%"],
+            ["月雨量",fmt(monthSummary.rainTotal),"mm"],
+          ].map(([a,b,c])=>React.createElement('div',{key:a,style:{border:"1px solid #999",padding:"6px 4px",textAlign:"center",fontSize:10}},
+            React.createElement('div',{style:{color:"#666"}},a),
+            React.createElement('div',{style:{fontWeight:800,fontSize:13,marginTop:2}},`${b}${c}`)
+          ))
+        ),
+        loading ? React.createElement('div',{style:{padding:30,textAlign:"center"}},"載入中…")
+        : React.createElement('table',{style:{width:"100%",borderCollapse:"collapse",tableLayout:"fixed",fontSize:9,lineHeight:1.25}},
+            React.createElement('thead',null,React.createElement('tr',null,
+              ["日期","筆數","溫度 最低/最高","平均溫度","平均濕度","日降雨","最大風速","平均氣壓","天氣"].map((h)=>
+                React.createElement('th',{key:h,style:{border:"1px solid #777",padding:"5px 3px",background:"#F2F2F2"}},h)
+              )
+            )),
+            React.createElement('tbody',null,
+              daily.map((r)=>React.createElement('tr',{key:r.day},
+                React.createElement('td',{style:{border:"1px solid #888",padding:"4px 3px",textAlign:"center"}},r.day.slice(5)),
+                React.createElement('td',{style:{border:"1px solid #888",padding:"4px 3px",textAlign:"center"}},r.count),
+                React.createElement('td',{style:{border:"1px solid #888",padding:"4px 3px",textAlign:"center"}},`${fmt(r.tMin)} / ${fmt(r.tMax)} °C`),
+                React.createElement('td',{style:{border:"1px solid #888",padding:"4px 3px",textAlign:"center"}},`${fmt(r.tAvg)} °C`),
+                React.createElement('td',{style:{border:"1px solid #888",padding:"4px 3px",textAlign:"center"}},`${fmt(r.hAvg)} %`),
+                React.createElement('td',{style:{border:"1px solid #888",padding:"4px 3px",textAlign:"center"}},`${fmt(r.rain)} mm`),
+                React.createElement('td',{style:{border:"1px solid #888",padding:"4px 3px",textAlign:"center"}},`${fmt(r.windMax)} m/s`),
+                React.createElement('td',{style:{border:"1px solid #888",padding:"4px 3px",textAlign:"center"}},`${fmt(r.pressure)} hPa`),
+                React.createElement('td',{style:{border:"1px solid #888",padding:"4px 3px",textAlign:"center"}},r.weather||"—")
+              )),
+              !daily.length && React.createElement('tr',null,
+                React.createElement('td',{colSpan:9,style:{border:"1px solid #888",padding:18,textAlign:"center",color:"#777"}},"本月尚無自動保存的室外氣候資料")
+              )
+            )
+          ),
+        React.createElement('div',{style:{fontSize:9,color:"#666",marginTop:8,lineHeight:1.4}},
+          "資料來源：中央氣象署 O-A0001-001 神岡自動氣象站。日降雨取該日每小時觀測值中的最大值；月雨量為各日日降雨加總。")
+      )
+    )
+  );
+}
 
 
 // 功能表7・表四：留言版內容（月彙整）
