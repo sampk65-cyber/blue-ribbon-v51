@@ -4,14 +4,10 @@ on:
   schedule:
     - cron: "5 * * * *"
   workflow_dispatch:
-  
-  jobs:
+
+jobs:
   collect-weather:
     runs-on: ubuntu-latest
-
-      steps:
+    steps:
       - name: Collect hourly weather
-        run: |
-                  curl --fail --show-error --silent \
-                          --retry 3 \
-                                    "https://topv51.vercel.app/api/weather-hourly"
+        run: curl --fail --show-error --silent --retry 3 "https://topv51.vercel.app/api/weather-hourly"
