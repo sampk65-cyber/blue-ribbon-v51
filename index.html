@@ -516,7 +516,7 @@ const C = {
   tiffanyLight: "#B8ECE5",
   tiffanyText: "#2E8577",
 };
-const APP_VERSION = "V5.1+A・氣候每小時累積+表五月報";
+const APP_VERSION = "V5.1+C1・表五每小時細項";
 const FONT_LINK = "https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,600;9..144,700&family=Inter:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap";
 
 const WORK_ITEMS = [
@@ -6067,6 +6067,7 @@ function MonthlyReport({ year, month, onBack }) {
 function ClimateDataReport({ year, month, onBack }) {
   const [rows, setRows] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [detailDay, setDetailDay] = useState(null);
   const ym = `${year}-${String(month).padStart(2, "0")}`;
 
   const n = (v) => { const x = Number(v); return Number.isFinite(x) ? x : null; };
@@ -6082,43 +6083,15 @@ function ClimateDataReport({ year, month, onBack }) {
       setLoading(true);
       try {
         await window.firebaseReady;
-        const prefix = `environment:outdoor:hour:${ym}`;
-        let recs = [];
-
-        // 5.1+C：直接從既有 kv collection 讀每小時氣候資料。
-        // 同時保留 window.storage fallback；其他功能與資料格式完全不變。
-        if (window.__firebaseDb) {
+        const listRes = await window.storage.list(`environment:outdoor:hour:${ym}`);
+        const keys = (listRes && listRes.keys) || [];
+        const recs = await runWithLimit(keys, 6, async (k) => {
           try {
-            const snap = await window.__firebaseDb.collection("kv")
-              .where("key", ">=", prefix)
-              .where("key", "<", prefix + "\uf8ff")
-              .get();
-            recs = snap.docs.map((doc) => {
-              try {
-                const d = doc.data() || {};
-                if (d.value && typeof d.value === "string") return JSON.parse(d.value);
-                return d.value && typeof d.value === "object" ? d.value : null;
-              } catch (_e) { return null; }
-            });
-          } catch (directErr) {
-            console.warn("direct climate query failed; use storage fallback", directErr);
-          }
-        }
-
-        if (!recs.filter(Boolean).length) {
-          const listRes = await window.storage.list(prefix);
-          const keys = (listRes && listRes.keys) || [];
-          recs = await runWithLimit(keys, 6, async (k) => {
-            try {
-              const res = await window.storage.get(k);
-              return res ? JSON.parse(res.value) : null;
-            } catch (_e) { return null; }
-          });
-        }
-
-        const list = recs.filter(Boolean).filter((r) =>
-          String(r.hourKey || r.observedAt || "").slice(0, 7) === ym
-        ).sort((a,b) =>
+            const res = await window.storage.get(k);
+            return res ? JSON.parse(res.value) : null;
+          } catch (_e) { return null; }
+        });
+        const list = recs.filter(Boolean).sort((a,b) =>
           String(a.hourKey || a.observedAt || "").localeCompare(String(b.hourKey || b.observedAt || ""))
         );
         if (alive) setRows(list);
@@ -6211,17 +6184,38 @@ function ClimateDataReport({ year, month, onBack }) {
               )
             )),
             React.createElement('tbody',null,
-              daily.map((r)=>React.createElement('tr',{key:r.day},
-                React.createElement('td',{style:{border:"1px solid #888",padding:"4px 3px",textAlign:"center"}},r.day.slice(5)),
-                React.createElement('td',{style:{border:"1px solid #888",padding:"4px 3px",textAlign:"center"}},r.count),
-                React.createElement('td',{style:{border:"1px solid #888",padding:"4px 3px",textAlign:"center"}},`${fmt(r.tMin)} / ${fmt(r.tMax)} °C`),
-                React.createElement('td',{style:{border:"1px solid #888",padding:"4px 3px",textAlign:"center"}},`${fmt(r.tAvg)} °C`),
-                React.createElement('td',{style:{border:"1px solid #888",padding:"4px 3px",textAlign:"center"}},`${fmt(r.hAvg)} %`),
-                React.createElement('td',{style:{border:"1px solid #888",padding:"4px 3px",textAlign:"center"}},`${fmt(r.rain)} mm`),
-                React.createElement('td',{style:{border:"1px solid #888",padding:"4px 3px",textAlign:"center"}},`${fmt(r.windMax)} m/s`),
-                React.createElement('td',{style:{border:"1px solid #888",padding:"4px 3px",textAlign:"center"}},`${fmt(r.pressure)} hPa`),
-                React.createElement('td',{style:{border:"1px solid #888",padding:"4px 3px",textAlign:"center"}},r.weather||"—")
-              )),
+              daily.flatMap((r)=>{
+                const open = detailDay === r.day;
+                const summaryRow = React.createElement('tr',{key:r.day,onClick:()=>setDetailDay(open?null:r.day),style:{cursor:"pointer"}},
+                  React.createElement('td',{style:{border:"1px solid #888",padding:"4px 3px",textAlign:"center",fontWeight:700}},`${open?"▼":"▶"} ${r.day.slice(5)}`),
+                  React.createElement('td',{style:{border:"1px solid #888",padding:"4px 3px",textAlign:"center"}},r.count),
+                  React.createElement('td',{style:{border:"1px solid #888",padding:"4px 3px",textAlign:"center"}},`${fmt(r.tMin)} / ${fmt(r.tMax)} °C`),
+                  React.createElement('td',{style:{border:"1px solid #888",padding:"4px 3px",textAlign:"center"}},`${fmt(r.tAvg)} °C`),
+                  React.createElement('td',{style:{border:"1px solid #888",padding:"4px 3px",textAlign:"center"}},`${fmt(r.hAvg)} %`),
+                  React.createElement('td',{style:{border:"1px solid #888",padding:"4px 3px",textAlign:"center"}},`${fmt(r.rain)} mm`),
+                  React.createElement('td',{style:{border:"1px solid #888",padding:"4px 3px",textAlign:"center"}},`${fmt(r.windMax)} m/s`),
+                  React.createElement('td',{style:{border:"1px solid #888",padding:"4px 3px",textAlign:"center"}},`${fmt(r.pressure)} hPa`),
+                  React.createElement('td',{style:{border:"1px solid #888",padding:"4px 3px",textAlign:"center"}},r.weather||"—")
+                );
+                if (!open) return [summaryRow];
+                const detailRows = (byDay[r.day]||[]).map((d,i)=>{
+                  const ts = String(d.observedAt || d.hourKey || "");
+                  let time = ts.slice(11,16);
+                  if (!time) time = String(d.hourKey||"").slice(11,13)+":00";
+                  return React.createElement('tr',{key:`${r.day}-detail-${i}`,className:"no-print",style:{background:"#FCFAF6"}},
+                    React.createElement('td',{style:{border:"1px solid #AAA",padding:"4px 3px",textAlign:"center",fontFamily:"IBM Plex Mono",fontSize:8}},time||"—"),
+                    React.createElement('td',{style:{border:"1px solid #AAA",padding:"4px 3px",textAlign:"center"}},"細項"),
+                    React.createElement('td',{style:{border:"1px solid #AAA",padding:"4px 3px",textAlign:"center"}},`${fmt(d.temperature)} °C`),
+                    React.createElement('td',{style:{border:"1px solid #AAA",padding:"4px 3px",textAlign:"center"}},`${fmt(d.temperature)} °C`),
+                    React.createElement('td',{style:{border:"1px solid #AAA",padding:"4px 3px",textAlign:"center"}},`${fmt(d.humidity)} %`),
+                    React.createElement('td',{style:{border:"1px solid #AAA",padding:"4px 3px",textAlign:"center"}},`${fmt(d.rainfall)} mm`),
+                    React.createElement('td',{style:{border:"1px solid #AAA",padding:"4px 3px",textAlign:"center"}},`${fmt(d.windSpeed)} m/s`),
+                    React.createElement('td',{style:{border:"1px solid #AAA",padding:"4px 3px",textAlign:"center"}},`${fmt(d.pressure)} hPa`),
+                    React.createElement('td',{style:{border:"1px solid #AAA",padding:"4px 3px",textAlign:"center"}},d.weather||"—")
+                  );
+                });
+                return [summaryRow,...detailRows];
+              }),
               !daily.length && React.createElement('tr',null,
                 React.createElement('td',{colSpan:9,style:{border:"1px solid #888",padding:18,textAlign:"center",color:"#777"}},"本月尚無自動保存的室外氣候資料")
               )
