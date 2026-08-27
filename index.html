@@ -6082,15 +6082,43 @@ function ClimateDataReport({ year, month, onBack }) {
       setLoading(true);
       try {
         await window.firebaseReady;
-        const listRes = await window.storage.list(`environment:outdoor:hour:${ym}`);
-        const keys = (listRes && listRes.keys) || [];
-        const recs = await runWithLimit(keys, 6, async (k) => {
+        const prefix = `environment:outdoor:hour:${ym}`;
+        let recs = [];
+
+        // 5.1+C：直接從既有 kv collection 讀每小時氣候資料。
+        // 同時保留 window.storage fallback；其他功能與資料格式完全不變。
+        if (window.__firebaseDb) {
           try {
-            const res = await window.storage.get(k);
-            return res ? JSON.parse(res.value) : null;
-          } catch (_e) { return null; }
-        });
-        const list = recs.filter(Boolean).sort((a,b) =>
+            const snap = await window.__firebaseDb.collection("kv")
+              .where("key", ">=", prefix)
+              .where("key", "<", prefix + "\uf8ff")
+              .get();
+            recs = snap.docs.map((doc) => {
+              try {
+                const d = doc.data() || {};
+                if (d.value && typeof d.value === "string") return JSON.parse(d.value);
+                return d.value && typeof d.value === "object" ? d.value : null;
+              } catch (_e) { return null; }
+            });
+          } catch (directErr) {
+            console.warn("direct climate query failed; use storage fallback", directErr);
+          }
+        }
+
+        if (!recs.filter(Boolean).length) {
+          const listRes = await window.storage.list(prefix);
+          const keys = (listRes && listRes.keys) || [];
+          recs = await runWithLimit(keys, 6, async (k) => {
+            try {
+              const res = await window.storage.get(k);
+              return res ? JSON.parse(res.value) : null;
+            } catch (_e) { return null; }
+          });
+        }
+
+        const list = recs.filter(Boolean).filter((r) =>
+          String(r.hourKey || r.observedAt || "").slice(0, 7) === ym
+        ).sort((a,b) =>
           String(a.hourKey || a.observedAt || "").localeCompare(String(b.hourKey || b.observedAt || ""))
         );
         if (alive) setRows(list);
