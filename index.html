@@ -516,8 +516,139 @@ const C = {
   tiffanyLight: "#B8ECE5",
   tiffanyText: "#2E8577",
 };
-const APP_VERSION = "V5.1+C1・表五每小時細項";
+const APP_VERSION = "V5.1+C3・版本更新提示+通知路由+登入語音";
 const FONT_LINK = "https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,600;9..144,700&family=Inter:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap";
+
+
+// ===== C3 / V3.99：版本更新提示、通知路由顯示、登入語音 =====
+function noticeRouteText(n) {
+  const sender = (n && (n.senderName || n.senderId)) || "—";
+  const ids = (n && Array.isArray(n.recipientIds)) ? n.recipientIds : [];
+  const names = ids.map((id) => {
+    const map = (n && n.recipientNames) || {};
+    return map[id] || id;
+  }).filter(Boolean);
+  return names.length ? `${sender} to ${names.join(" & ")}` : sender;
+}
+
+function taipeiHourNow() {
+  try {
+    const parts = new Intl.DateTimeFormat("en-GB", {
+      timeZone: "Asia/Taipei", hour: "2-digit", hour12: false
+    }).formatToParts(new Date());
+    const h = parts.find((p) => p.type === "hour");
+    return h ? Number(h.value) : new Date().getHours();
+  } catch (_e) {
+    return new Date().getHours();
+  }
+}
+
+function speakLoginGuide() {
+  try {
+    if (!("speechSynthesis" in window)) return;
+    const h = taipeiHourNow();
+    const greeting = (h >= 5 && h < 11) ? "早安" : (h >= 11 && h < 18) ? "午安" : "晚安";
+    window.speechSynthesis.cancel();
+    const u = new SpeechSynthesisUtterance(`${greeting}，指定請按溫室，確認請按功能表四。`);
+    u.lang = "zh-TW";
+    u.rate = 0.95;
+    window.speechSynthesis.speak(u);
+  } catch (e) {
+    console.warn("登入語音播報不可用", e);
+  }
+}
+
+function installVersionAutoUpdater() {
+  let checking = false;
+  let postponedUntil = 0;
+  let promptOpen = false;
+
+  const forceReload = () => {
+    try {
+      const u = new URL(window.location.href);
+      u.searchParams.set("__app_update", String(Date.now()));
+      window.location.replace(u.toString());
+    } catch (_e) {
+      window.location.reload();
+    }
+  };
+
+  const showPrompt = (newVersion) => {
+    if (promptOpen || Date.now() < postponedUntil) return;
+    promptOpen = true;
+
+    const wrap = document.createElement("div");
+    wrap.id = "__app_update_prompt";
+    wrap.style.cssText = [
+      "position:fixed","left:14px","right:14px","bottom:18px","z-index:2147483647",
+      "background:#FFFDF8","color:#2B2119","border:2px solid #4E7C6B",
+      "border-radius:16px","box-shadow:0 12px 32px rgba(0,0,0,.22)",
+      "padding:14px","font-family:Inter,sans-serif"
+    ].join(";");
+
+    const title = document.createElement("div");
+    title.style.cssText = "font-weight:800;font-size:15px;margin-bottom:5px";
+    title.textContent = "發現新版本";
+
+    const msg = document.createElement("div");
+    msg.style.cssText = "font-size:12px;line-height:1.55;color:#6B5D50;margin-bottom:10px";
+    msg.textContent = `目前 ${APP_VERSION}，伺服器已有 ${newVersion}。登入狀態會保留，系統將在 10 秒後自動更新。`;
+
+    const row = document.createElement("div");
+    row.style.cssText = "display:flex;gap:8px";
+
+    const later = document.createElement("button");
+    later.type = "button";
+    later.textContent = "稍後";
+    later.style.cssText = "flex:1;padding:10px;border-radius:10px;border:1px solid #E4D9C8;background:#F7F3EA;color:#2B2119;font-weight:700";
+
+    const now = document.createElement("button");
+    now.type = "button";
+    now.textContent = "立即更新";
+    now.style.cssText = "flex:1;padding:10px;border-radius:10px;border:0;background:#4E7C6B;color:white;font-weight:800";
+
+    row.appendChild(later);
+    row.appendChild(now);
+    wrap.appendChild(title);
+    wrap.appendChild(msg);
+    wrap.appendChild(row);
+    document.body.appendChild(wrap);
+
+    const timer = window.setTimeout(forceReload, 10000);
+    now.onclick = () => {
+      window.clearTimeout(timer);
+      forceReload();
+    };
+    later.onclick = () => {
+      window.clearTimeout(timer);
+      postponedUntil = Date.now() + 10 * 60 * 1000;
+      promptOpen = false;
+      wrap.remove();
+    };
+  };
+
+  const check = async () => {
+    if (checking || promptOpen || Date.now() < postponedUntil) return;
+    checking = true;
+    try {
+      const u = new URL(window.location.href);
+      u.searchParams.set("__version_check", String(Date.now()));
+      const r = await fetch(u.toString(), { cache: "no-store" });
+      if (!r.ok) return;
+      const text = await r.text();
+      const m = text.match(/const\s+APP_VERSION\s*=\s*["']([^"']+)["']/);
+      if (m && m[1] && m[1] !== APP_VERSION) showPrompt(m[1]);
+    } catch (e) {
+      console.warn("版本檢查略過", e);
+    } finally {
+      checking = false;
+    }
+  };
+
+  window.setTimeout(check, 2500);
+  window.setInterval(check, 10 * 60 * 1000);
+}
+
 
 const WORK_ITEMS = [
   { id: 1, name: "打芽(側)", type: "level" },
@@ -7467,7 +7598,7 @@ function ZoneNoticeBoard({ role, loggedInId }) {
                   , React.createElement(MessageCircle, { size: 16, color: unread ? C.alert : C.leaf,} )
                 )
                 , React.createElement('span', { className: "flex-1 min-w-0" ,}
-                  , React.createElement('span', { className: "block text-xs mb-0.5"  , style: { color: C.inkSoft, fontFamily: "Inter" },}, n.senderName, " · "  , n.postedAt)
+                  , React.createElement('span', { className: "block text-xs mb-0.5"  , style: { color: C.inkSoft, fontFamily: "Inter" },}, noticeRouteText(n), " · ", n.postedAt)
                   , React.createElement('span', { className: "block truncate" , style: { fontFamily: "Inter", fontWeight: 600, fontSize: 14, color: unread ? C.alert : C.ink },}, n.text)
                 )
                 , unread && (
@@ -7589,7 +7720,7 @@ function ZoneNoticeBoard({ role, loggedInId }) {
             ) : (
               React.createElement('div', { className: "overflow-y-auto flex-1 min-h-0"  ,}
                 , React.createElement('div', { className: "text-xs mb-1" , style: { color: C.inkSoft, fontFamily: "Inter" },}
-                  , selected.senderName, " · "  , selected.postedAt, selected.editedAt ? `（已於 ${selected.editedAt} 修改）` : ""
+                  , noticeRouteText(selected), " · ", selected.postedAt, selected.editedAt ? `（已於 ${selected.editedAt} 修改）` : ""
                 )
                 , React.createElement('div', { className: "text-sm mb-2 p-3 rounded-xl"   , style: { background: C.cream, color: C.ink, fontFamily: "Inter", lineHeight: 1.6 },}, selected.text)
                 , React.createElement('div', { className: "flex items-center gap-2 mb-4"   ,}
@@ -8903,6 +9034,11 @@ function AppMain({ initialRole, initialId, onLogoutToSplash }) {
   };
   useEffect(() => { refreshPendingCount(); }, []);
   useEffect(() => { if (loggedInId) loadCurrentPersonPerm(loggedInId); }, [loggedInId]);
+  useEffect(() => {
+    if (!loggedInId) return;
+    const t = window.setTimeout(() => speakLoginGuide(), 650);
+    return () => window.clearTimeout(t);
+  }, [loggedInId]);
 
   const handleLogin = (r, id) => { setRole(r); setLoggedInId(id); loadCurrentPersonPerm(id); };
   const handleLogout = () => {
@@ -9163,6 +9299,7 @@ const root = ReactDOM.createRoot(rootEl);
 root.render(React.createElement(App, null ));
 
 window.__farmAppMounted = true;
+installVersionAutoUpdater();
 </script>
 </body>
 </html>
