@@ -1,3 +1,4 @@
+// redeploy weather-hourly 2026-08-29
 const CWA_URL = "https://opendata.cwa.gov.tw/api/v1/rest/datastore/O-A0001-001";
 const STATION_ID = "C0F9I0";
 const FIREBASE_API_KEY = "AIzaSyDJXF_9jyibl5GsbJHEuPVBIOqQ2Eovjw4";
