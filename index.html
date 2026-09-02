@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-<title>完全體 V5.1C7・藍帶無花果</title>
+<title>完全體 V5.1C8・藍帶無花果</title>
 <meta name="apple-mobile-web-app-capable" content="yes" />
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
 <meta name="apple-mobile-web-app-title" content="藍帶無花果" />
@@ -519,7 +519,7 @@ const C = {
   tiffanyLight: "#B8ECE5",
   tiffanyText: "#2E8577",
 };
-const APP_VERSION = "V5.1+C7・氣候雨量校正版";
+const APP_VERSION = "V5.1+C8・語音與照片上傳優化版";
 const FONT_LINK = "https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,600;9..144,700&family=Inter:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap";
 
 const WORK_ITEMS = [
@@ -2723,14 +2723,14 @@ async function v51CompressPhoto(file) {
       el.onerror = reject;
       el.src = url;
     });
-    const maxSide = 1800;
+    const maxSide = 1280;
     const ratio = Math.min(1, maxSide / Math.max(img.width, img.height));
     const canvas = document.createElement("canvas");
     canvas.width = Math.max(1, Math.round(img.width * ratio));
     canvas.height = Math.max(1, Math.round(img.height * ratio));
     canvas.getContext("2d").drawImage(img, 0, 0, canvas.width, canvas.height);
     return await new Promise(function(resolve, reject) {
-      canvas.toBlob(function(blob) { blob ? resolve(blob) : reject(new Error("照片壓縮失敗")); }, "image/jpeg", .82);
+      canvas.toBlob(function(blob) { blob ? resolve(blob) : reject(new Error("照片壓縮失敗")); }, "image/jpeg", .75);
     });
   } finally { URL.revokeObjectURL(url); }
 }
@@ -2747,7 +2747,9 @@ function PhotoLibrary({ zone, onBack, role, loggedInId }) {
   const [recordDate, setRecordDate] = useState(v51Today());
   const [note, setNote] = useState("");
   const [preview, setPreview] = useState(null);
-  const fileRef = useRef(null);
+  const [uploadProgress, setUploadProgress] = useState({});
+  const cameraRef = useRef(null);
+  const galleryRef = useRef(null);
   // 照片資料庫自本年度啟用，不顯示過往年代；預留未來五年資料夾。
   const years = Array.from({length: 6}, function(_, i) { return now.getFullYear() + i; });
 
@@ -2782,29 +2784,45 @@ function PhotoLibrary({ zone, onBack, role, loggedInId }) {
 
   const uploadFiles = async function(files) {
     if (!editable || !files || !files.length || !year || !month) return;
-    setBusy(true); setMessage("正在壓縮並上傳照片…");
+    const imageFiles = Array.from(files).filter(function(file){ return String(file.type || "").startsWith("image/"); });
+    if (!imageFiles.length) { setMessage("請選擇照片檔案。"); return; }
+    setBusy(true); setMessage("正在壓縮並上傳 " + imageFiles.length + " 張照片…"); setUploadProgress({});
     try {
       await window.firebaseReady;
-      for (const file of Array.from(files)) {
-        if (!String(file.type || "").startsWith("image/")) continue;
+      const uploadOne = async function(file, fileIndex) {
         const blob = await v51CompressPhoto(file);
         const id = Date.now().toString(36) + Math.random().toString(36).slice(2,8);
         const ym = v51Ym(year, month);
         const safeName = String(file.name || "photo.jpg").replace(/[^a-zA-Z0-9._-]/g, "_");
         const path = "greenhousePhotos/" + zone.id + "/" + ym + "/" + id + "_" + safeName.replace(/\.[^.]+$/, "") + ".jpg";
         const ref = window.__firebaseStorage.ref(path);
-        await ref.put(blob, {contentType:"image/jpeg"});
+        const task = ref.put(blob, {contentType:"image/jpeg"});
+        await new Promise(function(resolve, reject) {
+          task.on("state_changed", function(snapshot) {
+            const percent = snapshot.totalBytes ? Math.round(snapshot.bytesTransferred / snapshot.totalBytes * 100) : 0;
+            setUploadProgress(function(prev) { const next = Object.assign({}, prev); next[fileIndex] = percent; return next; });
+          }, reject, resolve);
+        });
         const url = await ref.getDownloadURL();
         const meta = {id:id, zoneId:zone.id, zoneName:zone.name, ym:ym, recordDate:recordDate, note:note.trim(), url:url, path:path, fileName:file.name || "photo.jpg", uploadedAt:Date.now(), uploaderId:loggedInId || ""};
         await window.storage.set("photoMeta:" + zone.id + ":" + ym + ":" + id, JSON.stringify(meta));
-      }
+      };
+      let nextIndex = 0;
+      const worker = async function() {
+        while (nextIndex < imageFiles.length) {
+          const fileIndex = nextIndex++;
+          await uploadOne(imageFiles[fileIndex], fileIndex);
+        }
+      };
+      await Promise.all(Array.from({length:Math.min(2, imageFiles.length)}, worker));
       setNote("");
-      if (fileRef.current) fileRef.current.value = "";
+      if (cameraRef.current) cameraRef.current.value = "";
+      if (galleryRef.current) galleryRef.current.value = "";
       await loadMonth(year, month);
       await loadAllCounts();
       setMessage("照片已儲存到「" + zone.name + "／" + year + "年／" + month + "月」。");
     } catch (e) { setMessage(v51FriendlyError(e)); }
-    finally { setBusy(false); }
+    finally { setBusy(false); setUploadProgress({}); }
   };
   const removePhoto = async function(rec) {
     if (!editable || !confirm("確定刪除這張照片？刪除後無法復原。")) return;
@@ -2860,8 +2878,15 @@ function PhotoLibrary({ zone, onBack, role, loggedInId }) {
               React.createElement("input",{type:"date",value:recordDate,onChange:function(e){setRecordDate(e.target.value);},style:v51InputStyle()}),
               React.createElement("input",{value:note,onChange:function(e){setNote(e.target.value);},placeholder:"照片備註（可不填）",style:v51InputStyle()})
             ),
-            React.createElement("input",{ref:fileRef,type:"file",accept:"image/*",capture:"environment",multiple:true,onChange:function(e){uploadFiles(e.target.files);},disabled:busy,style:{display:"none"}}),
-            React.createElement("button",{onClick:function(){fileRef.current && fileRef.current.click();},disabled:busy,className:"w-full mt-3",style:v51PrimaryStyle(busy)},busy?"處理中…":"📷 拍照／上傳照片")
+            React.createElement("input",{ref:cameraRef,type:"file",accept:"image/*",capture:"environment",onChange:function(e){uploadFiles(e.target.files);},disabled:busy,style:{display:"none"}}),
+            React.createElement("input",{ref:galleryRef,type:"file",accept:"image/*",multiple:true,onChange:function(e){uploadFiles(e.target.files);},disabled:busy,style:{display:"none"}}),
+            React.createElement("div",{className:"grid grid-cols-2 gap-2 mt-3"},
+              React.createElement("button",{onClick:function(){cameraRef.current && cameraRef.current.click();},disabled:busy,style:v51PrimaryStyle(busy)},"📷 直接拍照"),
+              React.createElement("button",{onClick:function(){galleryRef.current && galleryRef.current.click();},disabled:busy,style:v51PrimaryStyle(busy)},"🖼️ 從相簿選取")
+            ),
+            busy && React.createElement("div",{className:"mt-3 text-xs",style:{fontFamily:"Inter",color:C.inkSoft}},
+              Object.keys(uploadProgress).length ? "上傳進度：" + Object.values(uploadProgress).join("%／") + "%" : "正在準備照片…"
+            )
           ),
           !editable && React.createElement("div",{className:"text-xs mt-3",style:{color:C.inkSoft,fontFamily:"Inter"}},"目前權限為瀏覽模式")
         ),
@@ -9257,6 +9282,20 @@ function LoginSplash({ onLogin }) {
   const completeLogin = (remember) => {
     if (!pendingLogin) return;
     const { role, personId } = pendingLogin;
+    // Android Chrome 必須在使用者點擊事件內先啟動語音，否則稍後的未讀留言播報可能被封鎖。
+    if ("speechSynthesis" in window) {
+      try {
+        window.speechSynthesis.cancel();
+        const loginVoice = new SpeechSynthesisUtterance("登入成功，正在檢查新留言。");
+        loginVoice.lang = "zh-TW";
+        loginVoice.rate = 0.92;
+        loginVoice.volume = 0.9;
+        const voices = window.speechSynthesis.getVoices();
+        const taiwanVoice = voices.find((v) => /zh[-_]TW/i.test(v.lang || ""));
+        if (taiwanVoice) loginVoice.voice = taiwanVoice;
+        window.speechSynthesis.speak(loginVoice);
+      } catch (e) { console.warn("登入語音不可用", e); }
+    }
     setFadingOut(true);
     setTimeout(() => onLogin(role, personId, remember), 480);
   };
