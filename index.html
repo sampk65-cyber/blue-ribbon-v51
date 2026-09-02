@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-<title>完全體 V5.1C8.1・藍帶無花果</title>
+<title>完全體 V5.1C8.2・藍帶無花果</title>
 <meta name="apple-mobile-web-app-capable" content="yes" />
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
 <meta name="apple-mobile-web-app-title" content="藍帶無花果" />
@@ -519,7 +519,7 @@ const C = {
   tiffanyLight: "#B8ECE5",
   tiffanyText: "#2E8577",
 };
-const APP_VERSION = "V5.1+C8.1・登入提示語音修正版";
+const APP_VERSION = "V5.1+C8.2・表一月份範圍校正版";
 const FONT_LINK = "https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,600;9..144,700&family=Inter:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap";
 
 const WORK_ITEMS = [
@@ -6615,13 +6615,27 @@ function MonthlyReport({ year, month, onBack }) {
           const res = await window.storage.get(`zonework:${z.id}:${ym}`, true);
           if (!res) return;
           const zdata = JSON.parse(res.value);
-          if (_optionalChain([zdata, 'access', _167 => _167.checks, 'optionalAccess', _168 => _168[6]]) === "溝灌") add("溝灌", z.id, _optionalChain([zdata, 'access', _169 => _169.extra, 'optionalAccess', _170 => _170[6], 'optionalAccess', _171 => _171.tons]));
-          if (_optionalChain([zdata, 'access', _172 => _172.checks, 'optionalAccess', _173 => _173[6]]) === "噴灌") add("噴灌", z.id, _optionalChain([zdata, 'access', _174 => _174.extra, 'optionalAccess', _175 => _175[6], 'optionalAccess', _176 => _176.minutes]));
-          if (_optionalChain([zdata, 'access', _177 => _177.checks, 'optionalAccess', _178 => _178[7]]) === "米糠") add("米糠", z.id, _optionalChain([zdata, 'access', _179 => _179.extra, 'optionalAccess', _180 => _180[7], 'optionalAccess', _181 => _181.bags]));
-          if (_optionalChain([zdata, 'access', _182 => _182.checks, 'optionalAccess', _183 => _183[7]]) === "金旺") add("金旺", z.id, _optionalChain([zdata, 'access', _184 => _184.extra, 'optionalAccess', _185 => _185[7], 'optionalAccess', _186 => _186.bags]));
-          (zdata.multi8Main || []).forEach((opt) => add(opt, z.id, _optionalChain([zdata, 'access', _187 => _187.extra8, 'optionalAccess', _188 => _188[opt]])));
-          // 已確認完成的歷史累計量（工作延續變動時，前一輪確認過的數量不會因為下一輪新指令而消失）
-          Object.entries(zdata.confirmedTotals || {}).forEach(([rowKey, val]) => add(rowKey, z.id, val));
+          // 表一與表三統一：只統計實際回報確認的 confirmHistory。
+          // 不讀取尚未確認的指令欄位，也不再加入跨月 confirmedTotals，避免月份混入與重複計算。
+          (zdata.confirmHistory || []).forEach((h) => {
+            if (!h || !h.rowKey) return;
+            const qty = parseFloat(h.qty);
+            if (isNaN(qty) || qty <= 0) return;
+
+            // 依每一筆實際回報時間比對目前迴圈的選定年月。
+            const stamp = String(h.at || "");
+            let hy = null, hm = null;
+            if (stamp.includes("/")) {
+              const p = stamp.split(" ")[0].split("/");
+              if (p.length >= 2) { hy = Number(p[0]); hm = Number(p[1]); }
+            } else if (stamp.includes("-")) {
+              const p = stamp.split(" ")[0].split("T")[0].split("-");
+              if (p.length >= 2) { hy = Number(p[0]); hm = Number(p[1]); }
+            }
+            const targetParts = ym.split("-");
+            if (hy !== Number(targetParts[0]) || hm !== Number(targetParts[1])) return;
+            add(h.rowKey, z.id, qty);
+          });
         } catch (e) { console.error(e); }
       });
       setRows(totals);
