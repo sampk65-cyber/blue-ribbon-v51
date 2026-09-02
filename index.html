@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-<title>完全體 V5.1C6・藍帶無花果</title>
+<title>完全體 V5.1C7・藍帶無花果</title>
 <meta name="apple-mobile-web-app-capable" content="yes" />
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
 <meta name="apple-mobile-web-app-title" content="藍帶無花果" />
@@ -519,7 +519,7 @@ const C = {
   tiffanyLight: "#B8ECE5",
   tiffanyText: "#2E8577",
 };
-const APP_VERSION = "V5.1+C6・照片與果樹履歷";
+const APP_VERSION = "V5.1+C7・氣候雨量校正版";
 const FONT_LINK = "https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,600;9..144,700&family=Inter:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap";
 
 const WORK_ITEMS = [
@@ -592,8 +592,15 @@ function EnvironmentMenu({ onBack, role, loggedInId }) {
   const ym = `${year}-${pad2(month)}`;
   const selectedZone = ZONES.find((z) => z.id === selectedZoneId) || null;
   const envKey = (zoneId) => `environment:${zoneId}:${ym}`;
-  const safeNum = (v) => { const n = Number(v); return Number.isFinite(n) && n > -90 ? n : null; };
+  const safeNum = (v) => { if (v === null || v === undefined || v === "") return null; const n = Number(v); return Number.isFinite(n) && n > -90 ? n : null; };
   const pickValue = (obj, keys) => { for (const k of keys) if (obj && obj[k] !== undefined && obj[k] !== null && obj[k] !== "") return obj[k]; return null; };
+  const weatherClass = (text) => {
+    const s = String(text || "");
+    if (/雨|雷|降水/.test(s)) return "雨";
+    if (/晴/.test(s)) return "晴";
+    if (/陰|雲/.test(s)) return "陰";
+    return s || "—";
+  };
 
   const [form, setForm] = useState({
     date: `${year}-${pad2(month)}-${pad2(Math.min(now.getDate(), new Date(year, month, 0).getDate()))}`,
@@ -672,11 +679,12 @@ function EnvironmentMenu({ onBack, role, loggedInId }) {
     // 舊版則可能直接放在 WeatherElement.Precipitation，兩種格式都要相容。
     const wNow=w.Now||w.now||w.Current||w.current||{};
     const h0=safeNum(pickValue(w,["RelativeHumidity","HUMD","Humidity"]));
+    const weatherText = pickValue(w,["Weather","WeatherPhenomenon"])||"";
     return { stationName:station.StationName||station.locationName||ENV_CWA.stationName, stationId:station.StationId||station.StationID||station.stationId||ENV_CWA.stationId,
       town:g.TownName||g.townName||ENV_CWA.townName, observedAt:o.DateTime||station.DateTime||station.obsTime||"",
       temperature:safeNum(pickValue(w,["AirTemperature","TEMP","Temperature"])), humidity:h0==null?null:(h0<=1.2?h0*100:h0),
       rainfall:safeNum(pickValue(wNow,["Precipitation","H_24R","Rainfall"]) ?? pickValue(w,["Precipitation","H_24R","Rainfall"])), windSpeed:safeNum(pickValue(w,["WindSpeed","WDSD"])),
-      windDirection:safeNum(pickValue(w,["WindDirection","WDIR"])), pressure:safeNum(pickValue(w,["AirPressure","PRES"])), weather:pickValue(w,["Weather","WeatherPhenomenon"])||"" };
+      windDirection:safeNum(pickValue(w,["WindDirection","WDIR"])), pressure:safeNum(pickValue(w,["AirPressure","PRES"])), weather:weatherText, weatherClass:weatherClass(weatherText) };
   };
   const outdoorHourKey = (observedAt) => {
     const dt = new Date(observedAt || Date.now());
@@ -700,17 +708,27 @@ function EnvironmentMenu({ onBack, role, loggedInId }) {
     try {
       await window.firebaseReady;
       const existing = await window.storage.get(key);
-      if (existing) return false;
+      let previous = {};
+      if (existing && existing.value) {
+        try { previous = JSON.parse(existing.value) || {}; } catch (_e) { previous = {}; }
+      }
+      const oldRain = safeNum(previous.rainfall);
+      const newRain = safeNum(record.rainfall);
+      const keptRain = oldRain == null ? newRain : newRain == null ? oldRain : Math.max(oldRain, newRain);
       const payload = {
+        ...previous,
         ...record,
+        rainfall: keptRain,
+        weather: record.weather || previous.weather || "",
+        weatherClass: weatherClass(record.weather || previous.weather || ""),
         hourKey,
         source,
         stationId: record.stationId || ENV_CWA.stationId,
         savedAt: Date.now(),
       };
       await window.storage.set(key, JSON.stringify(payload));
-      if (hourKey.slice(0, 7) === ym) setOutdoorHistoryCount((n) => n + 1);
-      setAutoSaveStatus(`已保存 ${hourKey.replace("T", " ")} 觀測`);
+      if (!existing && hourKey.slice(0, 7) === ym) setOutdoorHistoryCount((n) => n + 1);
+      setAutoSaveStatus(`${existing ? "已更新" : "已保存"} ${hourKey.replace("T", " ")} 觀測${keptRain > 0 ? `・雨量 ${keptRain} mm` : ""}`);
       return true;
     } catch (e) {
       console.warn("save outdoor hourly failed", e);
@@ -773,12 +791,15 @@ function EnvironmentMenu({ onBack, role, loggedInId }) {
           await loadOutdoorHistoryCount();
         }
       } catch (_e) {}
-      if (!serverSaved && cwaKey) {
+      // 即使伺服器排程已成功，瀏覽器仍以最新觀測校正同一小時資料；
+      // 這樣整點後才開始下雨時，雨量不會被該小時最早的 0 mm 鎖住。
+      if (cwaKey) {
         await fetchOutdoor(cwaKey, { quiet: true, source: "browser-auto" });
       }
     };
     tick();
-    timer = window.setInterval(tick, 60 * 60 * 1000);
+    // 每10分鐘檢查，但 Firestore key 仍以小時計，因此每小時最多一筆。
+    timer = window.setInterval(tick, 10 * 60 * 1000);
     return () => { alive = false; if (timer) window.clearInterval(timer); };
   }, [cwaKey]);
 
@@ -1238,6 +1259,22 @@ function MapLogin({ onEnter, onOpenReport, onOpenCalendar, onOpenFolders, onOpen
 
   // 掃描目前登入的人有幾則通知還沒讀，用於首頁明顯提示「您有N則留言」
   const [unreadMsgCount, setUnreadMsgCount] = useState(0);
+  const unreadVoiceSpokenRef = useRef("");
+  const speakUnreadMessages = () => {
+    if (!unreadMsgCount || !("speechSynthesis" in window)) return;
+    const text = `您有${unreadMsgCount}則新留言。指定工作請點選溫室，進入功能表4確認工作。`;
+    try {
+      window.speechSynthesis.cancel();
+      const u = new SpeechSynthesisUtterance(text);
+      u.lang = "zh-TW";
+      u.rate = 0.92;
+      u.volume = 0.9;
+      const voices = window.speechSynthesis.getVoices();
+      const taiwanVoice = voices.find((v) => /zh[-_]TW/i.test(v.lang || ""));
+      if (taiwanVoice) u.voice = taiwanVoice;
+      window.speechSynthesis.speak(u);
+    } catch (e) { console.warn("未讀留言語音播報不可用", e); }
+  };
   const scanUnreadMessages = async () => {
     if (!loggedInId) { setUnreadMsgCount(0); return; }
     try {
@@ -1255,6 +1292,14 @@ function MapLogin({ onEnter, onOpenReport, onOpenCalendar, onOpenFolders, onOpen
     } catch (e) { console.error(e); }
   };
   useEffect(() => { scanUnreadMessages(); }, [loggedInId]);
+  useEffect(() => {
+    if (!loggedInId || unreadMsgCount <= 0) return;
+    const voiceKey = `${loggedInId}:${unreadMsgCount}`;
+    if (unreadVoiceSpokenRef.current === voiceKey) return;
+    unreadVoiceSpokenRef.current = voiceKey;
+    const timer = window.setTimeout(speakUnreadMessages, 450);
+    return () => window.clearTimeout(timer);
+  }, [loggedInId, unreadMsgCount]);
 
   return (
     React.createElement('div', { className: "min-h-screen", style: { background: C.cream },}
@@ -1315,7 +1360,9 @@ function MapLogin({ onEnter, onOpenReport, onOpenCalendar, onOpenFolders, onOpen
 
         , unreadMsgCount > 0 && (
           React.createElement('div', { className: "w-full max-w-md px-5 mb-3"   ,}
-            , React.createElement('div', {
+            , React.createElement('button', {
+              type: "button",
+              onClick: speakUnreadMessages,
               className: "w-full rounded-xl p-3.5 flex items-start gap-2.5 text-left"      ,
               style: { background: `${C.alert}18`, border: `1.5px solid ${C.alert}` },}
 
@@ -1327,6 +1374,8 @@ function MapLogin({ onEnter, onOpenReport, onOpenCalendar, onOpenFolders, onOpen
                     , unreadMsgCount, " 則新留言"
                   )
                   , React.createElement('div', { className: "mt-1", style: { fontWeight: 600, fontSize: 12.5, lineHeight: 1.55 },}, "指定工作請點選溫室，進入功能表4確認工作。"
+                  )
+                  , React.createElement('div', { className: "mt-1", style: { fontWeight: 500, fontSize: 11, opacity: .75 },}, "點此可重播語音"
                   )
               )
             )
@@ -6736,7 +6785,8 @@ function ClimateDataReport({ year, month, onBack }) {
   const [detailDay, setDetailDay] = useState(null);
   const ym = `${reportYear}-${String(reportMonth).padStart(2, "0")}`;
 
-  const n = (v) => { const x = Number(v); return Number.isFinite(x) && x > -90 ? x : null; };
+  const n = (v) => { if (v === null || v === undefined || v === "") return null; const x = Number(v); return Number.isFinite(x) && x > -90 ? x : null; };
+  const classifyWeather = (text) => { const s=String(text||""); return /雨|雷|降水/.test(s)?"雨":/晴/.test(s)?"晴":/陰|雲/.test(s)?"陰":s||"—"; };
   const vals = (arr) => arr.map(n).filter((v) => v != null);
   const avg = (arr) => { const a = vals(arr); return a.length ? a.reduce((s,v)=>s+v,0)/a.length : null; };
   const minv = (arr) => { const a = vals(arr); return a.length ? Math.min(...a) : null; };
@@ -6770,6 +6820,7 @@ function ClimateDataReport({ year, month, onBack }) {
           windDirection: n(r.windDirection ?? r.WindDirection ?? r.WDIR),
           pressure: n(r.pressure ?? r.AirPressure ?? r.PRES),
           weather: r.weather || r.Weather || r.weatherDescription || "",
+          weatherClass: r.weatherClass || classifyWeather(r.weather || r.Weather || r.weatherDescription || ""),
         })).filter((r) => String(r.hourKey || r.observedAt || "").slice(0, 7) === ym).sort((a,b) =>
           String(a.hourKey || a.observedAt || "").localeCompare(String(b.hourKey || b.observedAt || ""))
         );
@@ -6792,7 +6843,7 @@ function ClimateDataReport({ year, month, onBack }) {
 
   const daily = Object.keys(byDay).sort().map((day) => {
     const a = byDay[day];
-    const weatherList = a.map((r)=>r.weather).filter(Boolean);
+    const weatherList = a.map((r)=>r.weather || r.weatherClass).filter(Boolean);
     return {
       day,
       count: a.length,
@@ -6804,6 +6855,7 @@ function ClimateDataReport({ year, month, onBack }) {
       windMax: maxv(a.map((r)=>r.windSpeed)),
       pressure: avg(a.map((r)=>r.pressure)),
       weather: weatherList.length ? weatherList[weatherList.length-1] : "—",
+      weatherClass: classifyWeather(weatherList.length ? weatherList[weatherList.length-1] : ""),
     };
   });
 
@@ -6880,7 +6932,7 @@ function ClimateDataReport({ year, month, onBack }) {
                   React.createElement('td',{style:{border:"1px solid #888",padding:"4px 3px",textAlign:"center"}},`${fmt(r.rain)} mm`),
                   React.createElement('td',{style:{border:"1px solid #888",padding:"4px 3px",textAlign:"center"}},`${fmt(r.windMax)} m/s`),
                   React.createElement('td',{style:{border:"1px solid #888",padding:"4px 3px",textAlign:"center"}},`${fmt(r.pressure)} hPa`),
-                  React.createElement('td',{style:{border:"1px solid #888",padding:"4px 3px",textAlign:"center"}},r.weather||"—")
+                  React.createElement('td',{style:{border:"1px solid #888",padding:"4px 3px",textAlign:"center"}},`${r.weatherClass||"—"}${r.weather&&r.weather!==r.weatherClass?`（${r.weather}）`:""}`)
                 );
                 if (!open) return [summaryRow];
                 const detailRows = (byDay[r.day]||[]).map((d,i)=>{
@@ -6896,7 +6948,7 @@ function ClimateDataReport({ year, month, onBack }) {
                     React.createElement('td',{style:{border:"1px solid #AAA",padding:"4px 3px",textAlign:"center"}},`${fmt(d.rainfall)} mm`),
                     React.createElement('td',{style:{border:"1px solid #AAA",padding:"4px 3px",textAlign:"center"}},`${fmt(d.windSpeed)} m/s`),
                     React.createElement('td',{style:{border:"1px solid #AAA",padding:"4px 3px",textAlign:"center"}},`${fmt(d.pressure)} hPa`),
-                    React.createElement('td',{style:{border:"1px solid #AAA",padding:"4px 3px",textAlign:"center"}},d.weather||"—")
+                    React.createElement('td',{style:{border:"1px solid #AAA",padding:"4px 3px",textAlign:"center"}},`${d.weatherClass||"—"}${d.weather&&d.weather!==d.weatherClass?`（${d.weather}）`:""}`)
                   );
                 });
                 return [summaryRow,...detailRows];
@@ -6907,7 +6959,7 @@ function ClimateDataReport({ year, month, onBack }) {
             )
           ),
         React.createElement('div',{style:{fontSize:9,color:"#666",marginTop:8,lineHeight:1.4}},
-          "資料來源：中央氣象署 O-A0001-001 神岡自動氣象站。日降雨取該日每小時觀測值中的最大值；月雨量為各日日降雨加總。")
+          "資料來源：中央氣象署 O-A0001-001 神岡自動氣象站。同一小時保留最新觀測並保留較大雨量；日降雨取該日每小時觀測值最大值，月雨量為各日日降雨加總；天氣另歸類為晴／陰／雨。")
       )
     )
   );
