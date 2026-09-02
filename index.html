@@ -1315,16 +1315,19 @@ function MapLogin({ onEnter, onOpenReport, onOpenCalendar, onOpenFolders, onOpen
 
         , unreadMsgCount > 0 && (
           React.createElement('div', { className: "w-full max-w-md px-5 mb-3"   ,}
-            , React.createElement('button', {
-              onClick: onOpenFolders,
-              className: "w-full rounded-xl p-3.5 flex items-center gap-2.5 text-left"      ,
+            , React.createElement('div', {
+              className: "w-full rounded-xl p-3.5 flex items-start gap-2.5 text-left"      ,
               style: { background: `${C.alert}18`, border: `1.5px solid ${C.alert}` },}
 
               , React.createElement('span', { className: "flex items-center justify-center rounded-lg flex-shrink-0"    , style: { width: 34, height: 34, background: `${C.alert}28` },}
                 , React.createElement(MessageCircle, { size: 17, color: C.alert,} )
               )
-              , React.createElement('span', { className: "flex-1", style: { fontFamily: "Inter", fontWeight: 700, fontSize: 15, color: C.alert },}, "📢 您有 "
-                  , unreadMsgCount, " 則留言，點此查看"
+              , React.createElement('span', { className: "flex-1", style: { fontFamily: "Inter", color: C.alert },}
+                  , React.createElement('div', { style: { fontWeight: 800, fontSize: 15 },}, "您有 "
+                    , unreadMsgCount, " 則新留言"
+                  )
+                  , React.createElement('div', { className: "mt-1", style: { fontWeight: 600, fontSize: 12.5, lineHeight: 1.55 },}, "指定工作請點選溫室，進入功能表4確認工作。"
+                  )
               )
             )
           )
@@ -2634,6 +2637,34 @@ function v51FriendlyError(err) {
   if (code.indexOf("storage/") >= 0) return "照片上傳失敗：" + code;
   return (err && err.message) ? err.message : "雲端資料處理失敗，請稍後再試。";
 }
+
+function FeatureZonePortal({ type, onBack, role, loggedInId }) {
+  const [pickedZone, setPickedZone] = useState(null);
+  const isPhotos = type === "photos";
+  const title = isPhotos ? "照片影像資料庫" : "果樹履歷・節間生長";
+  const subtitle = isPhotos ? "依溫室／年度／月份管理現場照片" : "依溫室／年度／月份建立節間紀錄";
+  if (pickedZone) {
+    return isPhotos
+      ? React.createElement(PhotoLibrary, { zone:pickedZone, onBack:function(){setPickedZone(null);}, role:role, loggedInId:loggedInId })
+      : React.createElement(TreeHistory, { zone:pickedZone, onBack:function(){setPickedZone(null);}, role:role, loggedInId:loggedInId });
+  }
+  return React.createElement("div", {className:"min-h-screen",style:{background:C.cream}},
+    React.createElement(NavBar,{backLabel:title,onBack:onBack}),
+    React.createElement("main",{className:"max-w-md mx-auto px-5 py-7 pb-32"},
+      React.createElement("div",{className:"mb-7"},
+        React.createElement("div",{style:{fontFamily:"Inter",fontWeight:900,fontSize:25,color:C.ink}},title),
+        React.createElement("div",{className:"mt-2 text-sm",style:{fontFamily:"Inter",color:C.inkSoft}},subtitle)
+      ),
+      React.createElement("div",{className:"mb-4",style:{fontFamily:"Inter",fontWeight:900,fontSize:19,color:C.ink}},"選擇溫室"),
+      React.createElement("div",{className:"grid grid-cols-2 gap-3"},ZONES.map(function(z){
+        return React.createElement("button",{key:z.id,onClick:function(){setPickedZone(z);},className:"rounded-2xl p-5 text-left",style:{minHeight:132,background:C.paper,border:"1px solid "+C.line,boxShadow:"0 3px 10px rgba(55,45,37,.03)"}},
+          React.createElement("div",{style:{fontFamily:"Inter",fontWeight:900,fontSize:18,color:C.ink,lineHeight:1.35}},z.name),
+          React.createElement("div",{className:"mt-3 text-sm",style:{fontFamily:"Inter",color:C.inkSoft,lineHeight:1.5}},isPhotos?"開啟照片資料夾":"開啟果樹履歷")
+        );
+      }))
+    )
+  );
+}
 async function v51CompressPhoto(file) {
   const url = URL.createObjectURL(file);
   try {
@@ -2668,7 +2699,8 @@ function PhotoLibrary({ zone, onBack, role, loggedInId }) {
   const [note, setNote] = useState("");
   const [preview, setPreview] = useState(null);
   const fileRef = useRef(null);
-  const years = Array.from({length: 12}, function(_, i) { return now.getFullYear() + 1 - i; });
+  // 照片資料庫自本年度啟用，不顯示過往年代；預留未來五年資料夾。
+  const years = Array.from({length: 6}, function(_, i) { return now.getFullYear() + i; });
 
   const loadAllCounts = async function() {
     try {
@@ -2814,60 +2846,100 @@ function PhotoLibrary({ zone, onBack, role, loggedInId }) {
 function TreeHistory({ zone, onBack, role, loggedInId }) {
   const now = new Date();
   const editable = v51CanEdit(role);
+  const points = ((FLOOR_SHAPES[zone.id] || {}).cells || []).map(function(c){ return String(c.id); });
   const [year,setYear] = useState(now.getFullYear());
   const [month,setMonth] = useState(now.getMonth()+1);
-  const points = ((FLOOR_SHAPES[zone.id] || {}).cells || []).map(function(c){return String(c.id);});
   const [point,setPoint] = useState(points[0] || "全區");
   const [treeAge,setTreeAge] = useState(1);
-  const [records,setRecords] = useState([]);
+  const [pruneDate,setPruneDate] = useState(v51Today());
+  const [nodeCount,setNodeCount] = useState(30);
+  const [rows,setRows] = useState([]);
+  const [generated,setGenerated] = useState(false);
+  const [editingNode,setEditingNode] = useState(null);
+  const [editForm,setEditForm] = useState({markDate:"",spacing:"",matureDate:"",note:""});
   const [busy,setBusy] = useState(false);
   const [message,setMessage] = useState("");
-  const blank = function(){return {nodeNo:1,markDate:v51Today(),internodeLength:"",matureDate:"",note:""};};
-  const [form,setForm] = useState(blank());
-  const [editingKey,setEditingKey] = useState(null);
-  const years = Array.from({length:35},function(_,i){return now.getFullYear()+1-i;});
+  const years = Array.from({length:6},function(_,i){ return now.getFullYear()+i; });
+  const select = function(value,onChange,children){ return React.createElement("select",{value:value,onChange:onChange,style:v51InputStyle()},children); };
+  const label = function(text,control){ return React.createElement("label",{className:"block"},React.createElement("div",{className:"text-xs mb-1",style:{fontFamily:"Inter",fontWeight:800,color:C.inkSoft}},text),control); };
+  const pruneMd = function(){ return String(pruneDate || "").slice(5) || "未定"; };
+  const tableKey = function(){ return "treeTable:"+zone.id+":"+v51Ym(year,month)+":"+point+":"+treeAge+":"+pruneMd(); };
+  const blankRows = function(count){ return Array.from({length:Number(count)},function(_,i){return {nodeNo:i+1,markDate:"",spacing:"",matureDate:"",note:""};}); };
 
-  const prefix = function(){return "treeHistory:"+zone.id+":"+v51Ym(year,month)+":"+point+":"+treeAge+":";};
-  const load = async function(){
+  useEffect(function(){ setGenerated(false);setRows([]);setEditingNode(null); },[zone.id,year,month,point,treeAge,pruneDate,nodeCount]);
+
+  const generateTable = async function(){
     setBusy(true);setMessage("");
     try{
-      const list=await window.storage.list(prefix());
-      const rows=await Promise.all((list.keys||[]).map(async function(key){
-        const val=v51ParseStored(await window.storage.get(key));
-        return val?Object.assign({storageKey:key},val):null;
-      }));
-      setRecords(rows.filter(Boolean).sort(function(a,b){return Number(a.nodeNo)-Number(b.nodeNo)||String(a.markDate||"").localeCompare(String(b.markDate||""));}));
+      const res=await window.storage.get(tableKey());
+      const saved=v51ParseStored(res);
+      if(saved&&Array.isArray(saved.rows)){
+        const next=blankRows(nodeCount).map(function(row){
+          const found=saved.rows.find(function(x){return Number(x.nodeNo)===row.nodeNo;});
+          return found?Object.assign(row,found):row;
+        });
+        setRows(next);setMessage("已讀取這組條件的節間紀錄表。");
+      }else{
+        setRows(blankRows(nodeCount));setMessage("已產生第1節至第"+nodeCount+"節表格，請點選任一列輸入紀錄。");
+      }
+      setGenerated(true);
     }catch(e){setMessage(v51FriendlyError(e));}
     finally{setBusy(false);}
   };
-  useEffect(function(){setEditingKey(null);setForm(blank());load();},[zone.id,year,month,point,treeAge]);
-
-  const setField=function(name,value){setForm(function(prev){return Object.assign({},prev,{[name]:value});});};
-  const save=async function(){
-    if(!editable)return;
-    if(!form.markDate){setMessage("請填寫標示日期。");return;}
-    if(form.internodeLength===""||Number(form.internodeLength)<0){setMessage("請填寫正確的節間長度。");return;}
-    setBusy(true);setMessage("");
-    try{
-      const key=editingKey||prefix()+(Date.now().toString(36)+Math.random().toString(36).slice(2,7));
-      const old=editingKey?records.find(function(r){return r.storageKey===editingKey;}):null;
-      const data={id:(old&&old.id)||key.split(":").pop(),zoneId:zone.id,zoneName:zone.name,ym:v51Ym(year,month),point:point,treeAge:Number(treeAge),nodeNo:Number(form.nodeNo),markDate:form.markDate,internodeLength:Number(form.internodeLength),matureDate:form.matureDate||"",note:form.note.trim(),updatedAt:Date.now(),updatedBy:loggedInId||""};
-      await window.storage.set(key,JSON.stringify(data));
-      setEditingKey(null);setForm(blank());await load();setMessage("節間紀錄已儲存。");
-    }catch(e){setMessage(v51FriendlyError(e));}
-    finally{setBusy(false);}
+  const saveWholeTable = async function(nextRows){
+    const data={zoneId:zone.id,zoneName:zone.name,year:Number(year),month:Number(month),point:point,treeAge:Number(treeAge),pruneDate:pruneDate,nodeCount:Number(nodeCount),rows:nextRows,updatedAt:Date.now(),updatedBy:loggedInId||""};
+    await window.storage.set(tableKey(),JSON.stringify(data));
   };
-  const edit=function(rec){setEditingKey(rec.storageKey);setForm({nodeNo:rec.nodeNo,markDate:rec.markDate||"",internodeLength:rec.internodeLength,matureDate:rec.matureDate||"",note:rec.note||""});window.scrollTo({top:0,behavior:"smooth"});};
-  const remove=async function(rec){
-    if(!editable||!confirm("確定刪除此筆節間紀錄？"))return;
+  const openRow = function(row){
+    if(!generated)return;
+    setEditingNode(row.nodeNo);
+    setEditForm({markDate:row.markDate||"",spacing:row.spacing==null?"":row.spacing,matureDate:row.matureDate||"",note:row.note||""});
+  };
+  const saveRow = async function(){
+    if(!editable||editingNode==null)return;
+    if(editForm.spacing!==""&&Number(editForm.spacing)<0){setMessage("間距不可小於0。");return;}
     setBusy(true);
-    try{await window.storage.delete(rec.storageKey);await load();setMessage("紀錄已刪除。");}
-    catch(e){setMessage(v51FriendlyError(e));}finally{setBusy(false);}
+    try{
+      const next=rows.map(function(row){return row.nodeNo===editingNode?Object.assign({},row,{markDate:editForm.markDate||"",spacing:editForm.spacing===""?"":Number(editForm.spacing),matureDate:editForm.matureDate||"",note:String(editForm.note||"").trim()}):row;});
+      await saveWholeTable(next);setRows(next);setEditingNode(null);setMessage("第"+editingNode+"節紀錄已儲存。");
+    }catch(e){setMessage(v51FriendlyError(e));}
+    finally{setBusy(false);}
   };
+  const filledCount=rows.filter(function(r){return r.markDate||r.spacing!==""||r.matureDate||r.note;}).length;
 
-  const select = function(value,onChange,children){return React.createElement("select",{value:value,onChange:onChange,style:v51InputStyle()},children);};
-  const label = function(text,control){return React.createElement("label",{className:"block"},React.createElement("div",{className:"text-xs mb-1",style:{fontFamily:"Inter",fontWeight:800,color:C.inkSoft}},text),control);};
+  const ensureTreeXlsx = async function(){
+    if(window.XLSX)return window.XLSX;
+    return await new Promise(function(resolve,reject){
+      const script=document.createElement("script");
+      script.src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js";
+      script.onload=function(){window.XLSX?resolve(window.XLSX):reject(new Error("Excel元件載入失敗"));};
+      script.onerror=function(){reject(new Error("Excel元件載入失敗"));};
+      document.head.appendChild(script);
+    });
+  };
+  const exportExcel = async function(){
+    if(!generated)return;
+    setBusy(true);
+    try{
+      const XLSX=await ensureTreeXlsx();
+      const data=[
+        ["果樹履歷・節間生長"],
+        ["溫室",zone.name,"年度",year+"年","月份",month+"月"],
+        ["定位點",point,"樹齡",treeAge+"年","剪枝日",pruneMd()],
+        [],
+        ["節數","標示日","間距(cm)","成熟日","備註"]
+      ].concat(rows.map(function(r){return ["第"+r.nodeNo+"節",r.markDate||"",r.spacing===""?"":r.spacing,r.matureDate||"",r.note||""];}));
+      const ws=XLSX.utils.aoa_to_sheet(data);
+      ws["!cols"]=[{wch:12},{wch:14},{wch:12},{wch:14},{wch:28}];
+      ws["!merges"]=[XLSX.utils.decode_range("A1:E1")];
+      const wb=XLSX.utils.book_new();XLSX.utils.book_append_sheet(wb,ws,"節間紀錄");
+      XLSX.writeFile(wb,"果樹履歷_"+zone.name+"_"+year+"-"+String(month).padStart(2,"0")+"_"+point+".xlsx",{compression:true});
+    }catch(e){setMessage(v51FriendlyError(e));}
+    finally{setBusy(false);}
+  };
+  const exportPdf = function(){ if(generated)window.print(); };
 
+  const cellStyle={padding:"12px 9px",borderBottom:"1px solid "+C.line,fontSize:13,color:C.ink,verticalAlign:"top"};
   return React.createElement("div",{className:"min-h-screen",style:{position:"relative",background:C.cream}},
     React.createElement("div",{style:{position:"fixed",inset:0,zIndex:0,backgroundImage:"linear-gradient(rgba(247,243,234,.82),rgba(247,243,234,.91)),url('"+TREE_HISTORY_BACKGROUND+"')",backgroundPosition:"center",backgroundSize:"cover",filter:"contrast(.72) brightness(1.15) saturate(.72)"}}),
     React.createElement("div",{style:{position:"relative",zIndex:1}},
@@ -2875,64 +2947,62 @@ function TreeHistory({ zone, onBack, role, loggedInId }) {
       React.createElement("main",{className:"max-w-3xl mx-auto px-5 py-6 pb-32"},
         React.createElement("div",{className:"mb-5"},
           React.createElement("div",{style:{fontFamily:"Inter",fontWeight:900,fontSize:25,color:C.ink}},"果樹履歷・節間生長"),
-          React.createElement("div",{className:"mt-1 text-sm",style:{fontFamily:"Inter",color:C.inkSoft}},zone.name+"・依年月、定位點與樹齡紀錄")
+          React.createElement("div",{className:"mt-1 text-sm",style:{fontFamily:"Inter",color:C.inkSoft}},zone.name+"・先設定條件，再產生可點選的節間表格")
         ),
-        message&&React.createElement("div",{className:"rounded-xl p-3 mb-4 text-sm",style:{background:"rgba(238,245,241,.94)",border:"1px solid "+C.tableColor+"55",color:C.ink,fontFamily:"Inter"}},message),
-        React.createElement("section",{className:"rounded-2xl p-4 mb-5",style:{background:"rgba(255,253,248,.91)",border:"1px solid "+C.line,boxShadow:"0 8px 24px rgba(53,45,37,.06)"}},
-          React.createElement("div",{className:"grid grid-cols-2 md:grid-cols-4 gap-3"},
+        message&&React.createElement("div",{className:"rounded-xl p-3 mb-4 text-sm no-print",style:{background:"rgba(238,245,241,.94)",border:"1px solid "+C.tableColor+"55",color:C.ink,fontFamily:"Inter",lineHeight:1.55}},message),
+        React.createElement("section",{className:"rounded-2xl p-4 mb-5 no-print",style:{background:"rgba(255,253,248,.93)",border:"1px solid "+C.line}},
+          React.createElement("div",{className:"grid grid-cols-2 md:grid-cols-3 gap-3"},
             label("年度",select(year,function(e){setYear(Number(e.target.value));},years.map(function(y){return React.createElement("option",{key:y,value:y},y+"年");}))),
             label("月份",select(month,function(e){setMonth(Number(e.target.value));},Array.from({length:12},function(_,i){return i+1;}).map(function(m){return React.createElement("option",{key:m,value:m},m+"月");}))),
             label("定位點",select(point,function(e){setPoint(e.target.value);},points.map(function(p){return React.createElement("option",{key:p,value:p},p);}))),
-            label("樹齡",select(treeAge,function(e){setTreeAge(Number(e.target.value));},Array.from({length:30},function(_,i){return i+1;}).map(function(n){return React.createElement("option",{key:n,value:n},n+"年");})))
-          )
-        ),
-        editable&&React.createElement("section",{className:"rounded-2xl p-4 mb-5",style:{background:"rgba(255,253,248,.94)",border:"1px solid "+C.line}},
-          React.createElement("div",{className:"mb-3",style:{fontFamily:"Inter",fontWeight:900,fontSize:18,color:C.ink}},editingKey?"修改節間紀錄":"新增節間紀錄"),
-          React.createElement("div",{className:"grid grid-cols-2 md:grid-cols-3 gap-3"},
-            label("第 n 節",select(form.nodeNo,function(e){setField("nodeNo",Number(e.target.value));},Array.from({length:30},function(_,i){return i+1;}).map(function(n){return React.createElement("option",{key:n,value:n},"第"+n+"節");}))),
-            label("標示日期",React.createElement("input",{type:"date",value:form.markDate,onChange:function(e){setField("markDate",e.target.value);},style:v51InputStyle()})),
-            label("節間長度（cm）",React.createElement("input",{type:"number",min:"0",step:"0.1",inputMode:"decimal",value:form.internodeLength,onChange:function(e){setField("internodeLength",e.target.value);},placeholder:"例如 12.5",style:v51InputStyle()})),
-            label("成熟日期",React.createElement("input",{type:"date",value:form.matureDate,onChange:function(e){setField("matureDate",e.target.value);},style:v51InputStyle()})),
-            React.createElement("label",{className:"block col-span-2"},
-              React.createElement("div",{className:"text-xs mb-1",style:{fontFamily:"Inter",fontWeight:800,color:C.inkSoft}},"備註"),
-              React.createElement("input",{value:form.note,onChange:function(e){setField("note",e.target.value);},placeholder:"生長狀態、標牌或其他說明",style:v51InputStyle()})
-            )
+            label("樹齡",select(treeAge,function(e){setTreeAge(Number(e.target.value));},Array.from({length:30},function(_,i){return i+1;}).map(function(n){return React.createElement("option",{key:n,value:n},n+"年");}))),
+            label("剪枝（月／日）",React.createElement("input",{type:"date",value:pruneDate,onChange:function(e){setPruneDate(e.target.value);},style:v51InputStyle()})),
+            label("節數",select(nodeCount,function(e){setNodeCount(Number(e.target.value));},Array.from({length:30},function(_,i){return i+1;}).map(function(n){return React.createElement("option",{key:n,value:n},n+"節");})))
           ),
-          React.createElement("div",{className:"flex gap-2 mt-4"},
-            editingKey&&React.createElement("button",{onClick:function(){setEditingKey(null);setForm(blank());},className:"flex-1",style:{padding:"11px",borderRadius:12,border:"1px solid "+C.line,background:C.paper,color:C.ink,fontFamily:"Inter",fontWeight:800}},"取消"),
-            React.createElement("button",{onClick:save,disabled:busy,className:"flex-1",style:v51PrimaryStyle(busy)},busy?"儲存中…":editingKey?"儲存修改":"新增紀錄")
-          )
+          React.createElement("button",{onClick:generateTable,disabled:busy||!pruneDate,className:"w-full mt-4",style:v51PrimaryStyle(busy||!pruneDate)},busy?"讀取中…":"產生／讀取節間表格")
         ),
-        !editable&&React.createElement("div",{className:"rounded-xl p-3 mb-4 text-sm",style:{background:"rgba(255,253,248,.9)",border:"1px solid "+C.line,color:C.inkSoft,fontFamily:"Inter"}},"目前權限為瀏覽模式"),
-        React.createElement("section",{className:"rounded-2xl overflow-hidden",style:{background:"rgba(255,253,248,.94)",border:"1px solid "+C.line}},
-          React.createElement("div",{className:"p-4",style:{borderBottom:"1px solid "+C.line}},
-            React.createElement("div",{style:{fontFamily:"Inter",fontWeight:900,fontSize:18,color:C.ink}},year+"年"+month+"月・"+point+"・樹齡"+treeAge+"年"),
-            React.createElement("div",{className:"text-xs mt-1",style:{fontFamily:"Inter",color:C.inkSoft}},records.length+" 筆節間紀錄")
+        generated&&React.createElement(React.Fragment,null,
+          React.createElement("div",{className:"flex flex-wrap gap-2 mb-4 no-print"},
+            React.createElement("button",{onClick:exportPdf,style:{padding:"10px 14px",borderRadius:11,border:0,background:C.wine,color:"white",fontFamily:"Inter",fontWeight:800}},"列印／存PDF"),
+            React.createElement("button",{onClick:exportExcel,disabled:busy,style:{padding:"10px 14px",borderRadius:11,border:0,background:"#217346",color:"white",fontFamily:"Inter",fontWeight:800,opacity:busy ? .55 : 1}},"Excel .xlsx")
           ),
-          busy&&records.length===0?React.createElement("div",{className:"text-center py-10",style:{fontFamily:"Inter",color:C.inkSoft}},"讀取中…"):
-          records.length===0?React.createElement("div",{className:"text-center py-12",style:{fontFamily:"Inter",color:C.inkSoft}},"尚無節間紀錄"):
-          React.createElement("div",{style:{overflowX:"auto"}},
-            React.createElement("table",{style:{width:"100%",minWidth:720,borderCollapse:"collapse",fontFamily:"Inter"}},
-              React.createElement("thead",null,React.createElement("tr",{style:{background:"rgba(238,245,241,.92)"}},
-                ["第n節","標示日期","節間長度","成熟日期","備註","操作"].map(function(h){return React.createElement("th",{key:h,style:{padding:"12px 10px",textAlign:"left",fontSize:13,color:C.ink,borderBottom:"1px solid "+C.line,whiteSpace:"nowrap"}},h);})
-              )),
-              React.createElement("tbody",null,records.map(function(rec){
-                return React.createElement("tr",{key:rec.storageKey},
-                  React.createElement("td",{style:{padding:"13px 10px",borderBottom:"1px solid "+C.line,fontWeight:900,color:C.tableColor}},"第"+rec.nodeNo+"節"),
-                  React.createElement("td",{style:{padding:"13px 10px",borderBottom:"1px solid "+C.line,whiteSpace:"nowrap"}},rec.markDate||"—"),
-                  React.createElement("td",{style:{padding:"13px 10px",borderBottom:"1px solid "+C.line,whiteSpace:"nowrap"}},rec.internodeLength+" cm"),
-                  React.createElement("td",{style:{padding:"13px 10px",borderBottom:"1px solid "+C.line,whiteSpace:"nowrap"}},rec.matureDate||"—"),
-                  React.createElement("td",{style:{padding:"13px 10px",borderBottom:"1px solid "+C.line,minWidth:150}},rec.note||"—"),
-                  React.createElement("td",{style:{padding:"13px 10px",borderBottom:"1px solid "+C.line,whiteSpace:"nowrap"}},
-                    editable&&React.createElement(React.Fragment,null,
-                      React.createElement("button",{onClick:function(){edit(rec);},style:{border:0,background:"transparent",color:C.tableColor,fontWeight:800,marginRight:8}},"修改"),
-                      React.createElement("button",{onClick:function(){remove(rec);},style:{border:0,background:"transparent",color:"#B34A45",fontWeight:800}},"刪除")
-                    )
-                  )
-                );
-              }))
+          React.createElement("section",{className:"rounded-2xl overflow-hidden print-area",style:{background:"rgba(255,253,248,.96)",border:"1px solid "+C.line}},
+            React.createElement("div",{className:"p-4",style:{borderBottom:"1px solid "+C.line}},
+              React.createElement("div",{style:{fontFamily:"Inter",fontWeight:900,fontSize:19,color:C.ink}},"果樹履歷・節間紀錄表"),
+              React.createElement("div",{className:"text-xs mt-2",style:{fontFamily:"Inter",color:C.inkSoft,lineHeight:1.7}},zone.name+"｜"+year+"年"+month+"月｜定位點 "+point+"｜樹齡 "+treeAge+"年｜剪枝 "+pruneMd()+"｜"+nodeCount+"節｜已填 "+filledCount+"節")
+            ),
+            React.createElement("div",{style:{overflowX:"auto"}},
+              React.createElement("table",{style:{width:"100%",minWidth:680,borderCollapse:"collapse",fontFamily:"Inter"}},
+                React.createElement("thead",null,React.createElement("tr",{style:{background:"rgba(238,245,241,.96)"}},["節數","標示日","間距","成熟日","備註"].map(function(h){return React.createElement("th",{key:h,style:{padding:"12px 9px",textAlign:"left",fontSize:13,color:C.ink,borderBottom:"1px solid "+C.line,whiteSpace:"nowrap"}},h);}))),
+                React.createElement("tbody",null,rows.map(function(r){
+                  const filled=r.markDate||r.spacing!==""||r.matureDate||r.note;
+                  return React.createElement("tr",{key:r.nodeNo,onClick:function(){openRow(r);},style:{cursor:editable?"pointer":"default",background:filled?"rgba(78,124,107,.06)":"transparent"}},
+                    React.createElement("td",{style:Object.assign({},cellStyle,{fontWeight:900,color:C.tableColor,whiteSpace:"nowrap"})},"第"+r.nodeNo+"節"),
+                    React.createElement("td",{style:Object.assign({},cellStyle,{whiteSpace:"nowrap"})},r.markDate||"點選輸入"),
+                    React.createElement("td",{style:Object.assign({},cellStyle,{whiteSpace:"nowrap"})},r.spacing===""?"—":r.spacing+" cm"),
+                    React.createElement("td",{style:Object.assign({},cellStyle,{whiteSpace:"nowrap"})},r.matureDate||"—"),
+                    React.createElement("td",{style:Object.assign({},cellStyle,{minWidth:160})},r.note||"—")
+                  );
+                }))
+              )
             )
           )
+        ),
+        !generated&&React.createElement("div",{className:"text-center py-12 rounded-2xl",style:{background:"rgba(255,253,248,.9)",border:"1px dashed "+C.line,color:C.inkSoft,fontFamily:"Inter"}},"完成上方條件後，按「產生節間表格」")
+      )
+    ),
+    editingNode!=null&&React.createElement("div",{className:"no-print",style:{position:"fixed",inset:0,zIndex:150,background:"rgba(25,19,16,.58)",display:"flex",alignItems:"flex-end",justifyContent:"center"}},
+      React.createElement("div",{style:{width:"100%",maxWidth:620,maxHeight:"88vh",overflowY:"auto",background:C.paper,borderRadius:"22px 22px 0 0",padding:20}},
+        React.createElement("div",{style:{fontFamily:"Inter",fontWeight:900,fontSize:20,color:C.ink}},"第"+editingNode+"節・紀錄內容"),
+        React.createElement("div",{className:"grid grid-cols-2 gap-3 mt-4"},
+          label("標示日",React.createElement("input",{type:"date",value:editForm.markDate,onChange:function(e){setEditForm(Object.assign({},editForm,{markDate:e.target.value}));},style:v51InputStyle()})),
+          label("間距（cm）",React.createElement("input",{type:"number",min:"0",step:"0.1",inputMode:"decimal",value:editForm.spacing,onChange:function(e){setEditForm(Object.assign({},editForm,{spacing:e.target.value}));},style:v51InputStyle()})),
+          label("成熟日",React.createElement("input",{type:"date",value:editForm.matureDate,onChange:function(e){setEditForm(Object.assign({},editForm,{matureDate:e.target.value}));},style:v51InputStyle()})),
+          React.createElement("label",{className:"block"},React.createElement("div",{className:"text-xs mb-1",style:{fontFamily:"Inter",fontWeight:800,color:C.inkSoft}},"備註"),React.createElement("input",{value:editForm.note,onChange:function(e){setEditForm(Object.assign({},editForm,{note:e.target.value}));},placeholder:"生長狀態或其他說明",style:v51InputStyle()}))
+        ),
+        React.createElement("div",{className:"flex gap-2 mt-5"},
+          React.createElement("button",{onClick:function(){setEditingNode(null);},className:"flex-1",style:{padding:12,borderRadius:12,border:"1px solid "+C.line,background:C.cream,color:C.ink,fontFamily:"Inter",fontWeight:800}},"取消"),
+          editable&&React.createElement("button",{onClick:saveRow,disabled:busy,className:"flex-1",style:v51PrimaryStyle(busy)},busy?"儲存中…":"儲存此節")
         )
       )
     )
@@ -9426,6 +9496,8 @@ function AppMain({ initialRole, initialId, onLogoutToSplash }) {
   const [globalReport, setGlobalReport] = useState(false);
   const [globalCalendar, setGlobalCalendar] = useState(false);
   const [globalFolders, setGlobalFolders] = useState(false);
+  const [globalPhotos, setGlobalPhotos] = useState(false);
+  const [globalTrees, setGlobalTrees] = useState(false);
   const [globalPersonnel, setGlobalPersonnel] = useState(false);
   const [globalPermissions, setGlobalPermissions] = useState(false);
   const [globalEnvironment, setGlobalEnvironment] = useState(false);
@@ -9567,6 +9639,8 @@ function AppMain({ initialRole, initialId, onLogoutToSplash }) {
     setGlobalReport(false);
     setGlobalCalendar(false);
     setGlobalFolders(false);
+    setGlobalPhotos(false);
+    setGlobalTrees(false);
     setGlobalPersonnel(false);
     setGlobalPermissions(false);
     setGlobalEnvironment(false);
@@ -9576,7 +9650,7 @@ function AppMain({ initialRole, initialId, onLogoutToSplash }) {
   const backToFunction = () => setView("function");
   const cycleRole = () => setRole((r) => ROLE_ORDER[(ROLE_ORDER.indexOf(r) + 1) % ROLE_ORDER.length]);
 
-  const atMap = !zone && !globalReport && !globalCalendar && !globalFolders && !globalPersonnel && !globalPermissions && !globalEnvironment && !globalAttendance;
+  const atMap = !zone && !globalReport && !globalCalendar && !globalFolders && !globalPhotos && !globalTrees && !globalPersonnel && !globalPermissions && !globalEnvironment && !globalAttendance;
 
   return (
     React.createElement('div', null
@@ -9639,8 +9713,8 @@ function AppMain({ initialRole, initialId, onLogoutToSplash }) {
           onOpenReport: () => setGlobalReport(true),
           onOpenCalendar: () => openCalendarPortal(loggedInId, roleForMenu(4)),
           onOpenFolders: () => setGlobalFolders(true),
-          onOpenPhotos: () => window.alert("請先點選一座溫室，再進入功能表 6「照片影像資料庫」。"),
-          onOpenTrees: () => window.alert("請先點選一座溫室，再進入功能表 8「果樹履歷」。"),
+          onOpenPhotos: () => setGlobalPhotos(true),
+          onOpenTrees: () => setGlobalTrees(true),
           onOpenPersonnel: () => setGlobalPersonnel(true),
           onOpenPermissions: () => setGlobalPermissions(true),
           onOpenYield: () => openYieldPortal(loggedInId, roleForMenu(2)),
@@ -9657,6 +9731,8 @@ function AppMain({ initialRole, initialId, onLogoutToSplash }) {
       , globalReport && React.createElement(ReportsHub, { onBack: backToMap,} )
       , globalCalendar && React.createElement(MasterCalendar, { onBack: backToMap, role: roleForMenu(4),} )
       , globalFolders && React.createElement(ZoneWorkFolders, { onBack: backToMap, role: roleForMenu(3), loggedInId: loggedInId,} )
+      , globalPhotos && React.createElement(FeatureZonePortal, { type: "photos", onBack: backToMap, role: roleForMenu(5), loggedInId: loggedInId,} )
+      , globalTrees && React.createElement(FeatureZonePortal, { type: "trees", onBack: backToMap, role: roleForMenu(7), loggedInId: loggedInId,} )
       , globalPersonnel && React.createElement(PersonnelMenu, { onBack: backToMap, role: roleForMenu(0), onChanged: refreshPendingCount,} )
       , globalPermissions && React.createElement(PermissionsMenu, { onBack: backToMap, role: roleForMenu(1), onChanged: async () => { await refreshPendingCount(); await loadCurrentPersonPerm(loggedInId); },} )
       , globalEnvironment && React.createElement(EnvironmentMenu, { onBack: backToMap, role: roleForMenu(8), loggedInId: loggedInId,} )
