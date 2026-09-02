@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-<title>完全體 V5.1C8・藍帶無花果</title>
+<title>完全體 V5.1C8.1・藍帶無花果</title>
 <meta name="apple-mobile-web-app-capable" content="yes" />
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
 <meta name="apple-mobile-web-app-title" content="藍帶無花果" />
@@ -519,7 +519,7 @@ const C = {
   tiffanyLight: "#B8ECE5",
   tiffanyText: "#2E8577",
 };
-const APP_VERSION = "V5.1+C8・語音與照片上傳優化版";
+const APP_VERSION = "V5.1+C8.1・登入提示語音修正版";
 const FONT_LINK = "https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,600;9..144,700&family=Inter:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap";
 
 const WORK_ITEMS = [
@@ -9286,7 +9286,7 @@ function LoginSplash({ onLogin }) {
     if ("speechSynthesis" in window) {
       try {
         window.speechSynthesis.cancel();
-        const loginVoice = new SpeechSynthesisUtterance("登入成功，正在檢查新留言。");
+        const loginVoice = new SpeechSynthesisUtterance("登入成功。指定工作請按溫室，確認工作請按功能表四。");
         loginVoice.lang = "zh-TW";
         loginVoice.rate = 0.92;
         loginVoice.volume = 0.9;
