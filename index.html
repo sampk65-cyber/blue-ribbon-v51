@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-<title>完全體 V5.1C8.2・藍帶無花果</title>
+<title>完全體 V5.1C8.3・藍帶無花果</title>
 <meta name="apple-mobile-web-app-capable" content="yes" />
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
 <meta name="apple-mobile-web-app-title" content="藍帶無花果" />
@@ -519,7 +519,7 @@ const C = {
   tiffanyLight: "#B8ECE5",
   tiffanyText: "#2E8577",
 };
-const APP_VERSION = "V5.1+C8.2・表一月份範圍校正版";
+const APP_VERSION = "V5.1+C8.3・年度計畫同步版";
 const FONT_LINK = "https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,600;9..144,700&family=Inter:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap";
 
 const WORK_ITEMS = [
@@ -6459,7 +6459,7 @@ const REPORT_SLOTS = [
 ];
 
 // 耗材與報表主入口：年份資料夾 → 月份資料夾 → 10個表格選項（表一~表十）
-function ReportsHub({ onBack }) {
+function ReportsHub({ onBack, loggedInId, calendarRole }) {
   const now = new Date();
   const [yearSel, setYearSel] = useState(null);
   const [monthSel, setMonthSel] = useState(null);
@@ -6532,7 +6532,15 @@ function ReportsHub({ onBack }) {
               React.createElement('button', {
                 key: slot.no,
                 disabled: !slot.ready,
-                onClick: () => slot.ready && setOpenKey(slot.key),
+                onClick: () => {
+                  if (!slot.ready) return;
+                  // 表二與功能5共用同一個年度計畫模組、資料來源與PDF輸出，避免兩套內容不同步。
+                  if (slot.key === "annual") {
+                    openCalendarPortal(loggedInId, calendarRole);
+                    return;
+                  }
+                  setOpenKey(slot.key);
+                },
                 className: "rounded-xl p-4 flex flex-col gap-1 text-left relative"      ,
                 style: {
                   background: slot.ready ? C.paper : "#F0EBE0",
@@ -9833,7 +9841,7 @@ function AppMain({ initialRole, initialId, onLogoutToSplash }) {
         )
       )
 
-      , globalReport && React.createElement(ReportsHub, { onBack: backToMap,} )
+      , globalReport && React.createElement(ReportsHub, { onBack: backToMap, loggedInId: loggedInId, calendarRole: roleForMenu(4),} )
       , globalCalendar && React.createElement(MasterCalendar, { onBack: backToMap, role: roleForMenu(4),} )
       , globalFolders && React.createElement(ZoneWorkFolders, { onBack: backToMap, role: roleForMenu(3), loggedInId: loggedInId,} )
       , globalPhotos && React.createElement(FeatureZonePortal, { type: "photos", onBack: backToMap, role: roleForMenu(5), loggedInId: loggedInId,} )
@@ -9870,7 +9878,7 @@ function AppMain({ initialRole, initialId, onLogoutToSplash }) {
       , zone && view === "workmonth" && (
         React.createElement(WorkMonthForm, { zone: zone, onBack: backToMenu, role: roleForMenu(3),} )
       )
-      , zone && view === "report" && React.createElement(ReportsHub, { onBack: backToFunction,} )
+      , zone && view === "report" && React.createElement(ReportsHub, { onBack: backToFunction, loggedInId: loggedInId, calendarRole: roleForMenu(4),} )
       , zone && view === "calendar" && React.createElement(MasterCalendar, { onBack: backToFunction, role: roleForMenu(4),} )
       , zone && view === "folders" && React.createElement(ZoneWorkFolders, { onBack: backToFunction, role: roleForMenu(3), loggedInId: loggedInId,} )
       , zone && view === "photos" && React.createElement(PhotoLibrary, { zone: zone, onBack: backToFunction, role: roleForMenu(5), loggedInId: loggedInId,} )
