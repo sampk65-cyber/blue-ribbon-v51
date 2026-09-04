@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-<title>完全體 V5.1C8.3・藍帶無花果</title>
+<title>完全體 V5.1C8.4・藍帶無花果</title>
 <meta name="apple-mobile-web-app-capable" content="yes" />
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
 <meta name="apple-mobile-web-app-title" content="藍帶無花果" />
@@ -519,7 +519,7 @@ const C = {
   tiffanyLight: "#B8ECE5",
   tiffanyText: "#2E8577",
 };
-const APP_VERSION = "V5.1+C8.3・年度計畫同步版";
+const APP_VERSION = "V5.1+C8.4・表一副表編輯版";
 const FONT_LINK = "https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,600;9..144,700&family=Inter:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap";
 
 const WORK_ITEMS = [
@@ -6574,6 +6574,12 @@ function MonthlyReport({ year, month, onBack }) {
   const [updating, setUpdating] = useState(false);
   const [lastUpdated, setLastUpdated] = useState("");
   const [printVersion, setPrintVersion] = useState(0);
+  const [draftOpen, setDraftOpen] = useState(false);
+  const [draftRows, setDraftRows] = useState(null);
+  const [draftName, setDraftName] = useState("");
+  const [draftNote, setDraftNote] = useState("");
+  const [draftSavedAt, setDraftSavedAt] = useState("");
+  const [draftBusy, setDraftBusy] = useState(false);
   const bumpPrint = () => setPrintVersion((v) => v + 1);
   const monthsBetween = (start, end) => {
     if (!start || !end || start > end) return [];
@@ -6595,6 +6601,8 @@ function MonthlyReport({ year, month, onBack }) {
     setRows(null);
     setComputedYm("");
     setLastUpdated("");
+    setDraftOpen(false);
+    setDraftRows(null);
   };
 
   // 指令：平時不運算、不呼叫，只有按「更新」才彙總一次，減少不必要的 storage 請求
@@ -6710,6 +6718,119 @@ function MonthlyReport({ year, month, onBack }) {
     }
   };
 
+  // 副表是表一的可編輯快照，獨立儲存，不回寫原始耗材紀錄或表一結果。
+  const draftStorageKey = () => `materialSubtable:${startYm}:${endYm}`;
+  const copyRowsToDraft = (source) => {
+    const next = {};
+    REPORT_ROWS.forEach((r) => {
+      next[r.key] = {};
+      ZONES.forEach((z) => {
+        const value = source && source[r.key] ? source[r.key][z.id] : "";
+        next[r.key][z.id] = value === undefined || value === null || Number(value) === 0 ? "" : String(value);
+      });
+    });
+    return next;
+  };
+  const openDraftEditor = async () => {
+    if (!rows) { alert("請先按「更新」產生表一資料"); return; }
+    setDraftBusy(true);
+    try {
+      const saved = await window.storage.get(draftStorageKey(), true);
+      if (saved && saved.value) {
+        const payload = JSON.parse(saved.value);
+        setDraftRows(copyRowsToDraft(payload.rows || rows));
+        setDraftName(payload.name || `副表 ${rangeLabel(startYm, endYm)}`);
+        setDraftNote(payload.note || "");
+        setDraftSavedAt(payload.savedAt || "");
+      } else {
+        setDraftRows(copyRowsToDraft(rows));
+        setDraftName(`副表 ${rangeLabel(startYm, endYm)}`);
+        setDraftNote("");
+        setDraftSavedAt("");
+      }
+      setDraftOpen(true);
+    } catch (e) {
+      console.error("副表讀取失敗", e);
+      setDraftRows(copyRowsToDraft(rows));
+      setDraftName(`副表 ${rangeLabel(startYm, endYm)}`);
+      setDraftNote("");
+      setDraftSavedAt("");
+      setDraftOpen(true);
+    }
+    setDraftBusy(false);
+  };
+  const setDraftCell = (rowKey, zoneId, value) => {
+    if (value !== "" && !/^\d*(\.\d*)?$/.test(value)) return;
+    setDraftRows((prev) => ({ ...prev, [rowKey]: { ...(prev && prev[rowKey] ? prev[rowKey] : {}), [zoneId]: value } }));
+  };
+  const draftNumber = (value) => {
+    const n = parseFloat(value);
+    return isNaN(n) ? 0 : n;
+  };
+  const draftRowTotal = (rowKey) => ZONES.reduce((sum, z) => sum + draftNumber(draftRows && draftRows[rowKey] ? draftRows[rowKey][z.id] : 0), 0);
+  const draftZoneTotal = (zoneId) => REPORT_ROWS.reduce((sum, r) => sum + draftNumber(draftRows && draftRows[r.key] ? draftRows[r.key][zoneId] : 0), 0);
+  const cleanDraftRows = () => {
+    const clean = {};
+    REPORT_ROWS.forEach((r) => {
+      clean[r.key] = {};
+      ZONES.forEach((z) => { clean[r.key][z.id] = draftNumber(draftRows && draftRows[r.key] ? draftRows[r.key][z.id] : 0); });
+    });
+    return clean;
+  };
+  const saveDraft = async () => {
+    if (!draftRows) return;
+    setDraftBusy(true);
+    try {
+      const savedAt = nowStamp();
+      await window.storage.set(draftStorageKey(), JSON.stringify({
+        name: draftName.trim() || `副表 ${rangeLabel(startYm, endYm)}`,
+        note: draftNote.trim(), startYm, endYm, range: rangeLabel(startYm, endYm),
+        rows: cleanDraftRows(), savedAt
+      }), true);
+      setDraftSavedAt(savedAt);
+      alert("副表已儲存；原始表一未變更");
+    } catch (e) {
+      console.error("副表儲存失敗", e);
+      alert("副表儲存失敗，請確認網路後重試");
+    }
+    setDraftBusy(false);
+  };
+  const exportDraftXlsx = async () => {
+    if (!draftRows) return;
+    try {
+      const XLSX = await ensureXlsxLibrary();
+      const data = [
+        [draftName || "表一副表", rangeLabel(startYm, endYm)],
+        ["備註", draftNote || ""], [],
+        ["品項", ...ZONES.map((z) => z.short), "合計"],
+      ];
+      REPORT_ROWS.forEach((r) => data.push([
+        `${r.label} (${r.unit})`,
+        ...ZONES.map((z) => draftNumber(draftRows[r.key] && draftRows[r.key][z.id])),
+        draftRowTotal(r.key)
+      ]));
+      data.push(["各區合計", ...ZONES.map((z) => draftZoneTotal(z.id)), ""]);
+      const ws = XLSX.utils.aoa_to_sheet(data);
+      ws["!cols"] = [{ wch: 22 }, ...ZONES.map(() => ({ wch: 12 })), { wch: 14 }];
+      const wb = XLSX.utils.book_new();
+      XLSX.utils.book_append_sheet(wb, ws, "表一副表");
+      XLSX.writeFile(wb, `表一副表_${rangeLabel(startYm, endYm)}.xlsx`, { compression: true });
+    } catch (e) {
+      console.error("副表 xlsx export failed", e);
+      alert(e && e.message ? e.message : "Excel 匯出失敗，請稍後再試");
+    }
+  };
+  const printDraftPdf = () => {
+    if (!draftRows) return;
+    const esc = (value) => String(value == null ? "" : value).replace(/[&<>\"]/g, (ch) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", "\"": "&quot;" }[ch]));
+    const bodyRows = REPORT_ROWS.map((r) => `<tr><td>${esc(r.label)} (${esc(r.unit)})</td>${ZONES.map((z) => `<td>${esc(draftRows[r.key] && draftRows[r.key][z.id] ? draftRows[r.key][z.id] : "－")}</td>`).join("")}<td class="total">${esc(draftRowTotal(r.key) || "－")}</td></tr>`).join("");
+    const totals = `<tr class="total"><td>各區合計</td>${ZONES.map((z) => `<td>${esc(draftZoneTotal(z.id) || "－")}</td>`).join("")}<td></td></tr>`;
+    const popup = window.open("", "_blank");
+    if (!popup) { alert("瀏覽器封鎖列印視窗，請允許彈出式視窗後重試"); return; }
+    popup.document.write(`<!doctype html><html><head><meta charset="utf-8"><title>${esc(draftName || "表一副表")}</title><style>@page{size:A4 landscape;margin:12mm}body{font-family:Arial,"Noto Sans TC",sans-serif;color:#2f2922}h1{font-size:20px;margin:0 0 6px}.meta{font-size:12px;color:#665f55;margin-bottom:12px}table{width:100%;border-collapse:collapse;font-size:11px}th,td{border:1px solid #bdb5a7;padding:6px;text-align:center}th:first-child,td:first-child{text-align:left}.total{font-weight:700;background:#f3eee4}</style></head><body><h1>${esc(draftName || "表一副表")}</h1><div class="meta">資料範圍：${esc(rangeLabel(startYm, endYm))}　｜　手動調整副表（不影響原始表一）${draftSavedAt ? `　｜　儲存：${esc(draftSavedAt)}` : ""}</div>${draftNote ? `<div class="meta">備註：${esc(draftNote)}</div>` : ""}<table><thead><tr><th>品項</th>${ZONES.map((z) => `<th>${esc(z.short)}</th>`).join("")}<th>合計</th></tr></thead><tbody>${bodyRows}${totals}</tbody></table><script>window.onload=()=>setTimeout(()=>window.print(),200)<\/script></body></html>`);
+    popup.document.close();
+  };
+
   return (
     React.createElement('div', { className: "min-h-screen flex flex-col"  , style: { background: C.cream },}
       , React.createElement(NavBar, { backLabel: "回耗材與報表", onBack: onBack,} )
@@ -6740,6 +6861,14 @@ function MonthlyReport({ year, month, onBack }) {
             )
           )
         )
+        , React.createElement('div', { className: "flex justify-end mt-2 no-print" },
+            React.createElement('button', {
+              onClick: openDraftEditor,
+              disabled: !rows || draftBusy,
+              className: "px-3 py-1.5 rounded-lg text-xs",
+              style: { background: C.wine, color: "white", fontFamily: "Inter", fontWeight: 800, opacity: rows && !draftBusy ? 1 : .45 }
+            }, draftBusy ? "讀取中…" : "副表編輯")
+          )
         , React.createElement('div', { className: "grid grid-cols-2 gap-2 mt-3 no-print" },
             React.createElement('label', { className: "text-xs", style: { color: C.inkSoft, fontFamily: "Inter" } }, "開始月份",
               React.createElement('input', { type: "month", value: startYm, min: "2020-01", max: "2035-12", onChange: changeRange(setStartYm), className: "w-full mt-1 px-3 py-2 rounded-lg text-sm", style: { border: `1px solid ${C.line}`, background: C.paper, color: C.ink } })
@@ -6808,6 +6937,57 @@ function MonthlyReport({ year, month, onBack }) {
         )
         , React.createElement('div', { className: "text-xs text-center mt-3"  , style: { color: C.inkSoft, fontFamily: "Inter" },}, "數量依各表格最後一次變更時間所屬月份計算，非累計歷史紀錄"
 
+        )
+      )
+
+      , draftOpen && draftRows && (
+        React.createElement('div', { className: "fixed inset-0 z-50 overflow-auto", style: { background: C.cream } },
+          React.createElement('div', { className: "sticky top-0 px-4 py-3 no-print", style: { background: C.cream, borderBottom: `1px solid ${C.line}`, zIndex: 2 } },
+            React.createElement('div', { className: "flex items-center justify-between gap-2" },
+              React.createElement('div', null,
+                React.createElement('div', { className: "font-bold", style: { color: C.ink, fontFamily: "Inter", fontSize: 18 } }, "表一・副表編輯"),
+                React.createElement('div', { className: "text-xs mt-1", style: { color: C.inkSoft } }, rangeLabel(startYm, endYm), "・手動調整不影響原始表一")
+              ),
+              React.createElement('button', { onClick: () => setDraftOpen(false), className: "px-3 py-2 rounded-lg", style: { border: `1px solid ${C.line}`, background: C.paper, color: C.ink, fontWeight: 800 } }, "關閉")
+            ),
+            React.createElement('div', { className: "grid grid-cols-1 sm:grid-cols-2 gap-2 mt-3" },
+              React.createElement('input', { value: draftName, onChange: (e) => setDraftName(e.target.value), placeholder: "副表名稱", className: "px-3 py-2 rounded-lg text-sm", style: { border: `1px solid ${C.line}`, background: C.paper, color: C.ink } }),
+              React.createElement('input', { value: draftNote, onChange: (e) => setDraftNote(e.target.value), placeholder: "備註（可不填）", className: "px-3 py-2 rounded-lg text-sm", style: { border: `1px solid ${C.line}`, background: C.paper, color: C.ink } })
+            ),
+            React.createElement('div', { className: "flex flex-wrap gap-2 mt-3" },
+              React.createElement('button', { onClick: saveDraft, disabled: draftBusy, className: "px-3 py-2 rounded-lg text-xs", style: { background: C.tableColor, color: "white", fontWeight: 800, opacity: draftBusy ? .5 : 1 } }, draftBusy ? "儲存中…" : "儲存副表"),
+              React.createElement('button', { onClick: printDraftPdf, className: "px-3 py-2 rounded-lg text-xs", style: { background: C.wine, color: "white", fontWeight: 800 } }, "列印/存PDF"),
+              React.createElement('button', { onClick: exportDraftXlsx, className: "px-3 py-2 rounded-lg text-xs", style: { background: "#217346", color: "white", fontWeight: 800 } }, "Excel .xlsx"),
+              React.createElement('button', { onClick: () => setDraftRows(copyRowsToDraft(rows)), className: "px-3 py-2 rounded-lg text-xs", style: { border: `1px solid ${C.line}`, background: C.paper, color: C.ink, fontWeight: 700 } }, "恢復表一數值")
+            ),
+            draftSavedAt && React.createElement('div', { className: "text-xs mt-2", style: { color: C.tableColor } }, "上次儲存：", draftSavedAt)
+          ),
+          React.createElement('div', { className: "px-3 py-3 overflow-auto" },
+            React.createElement('table', { className: "w-full text-xs", style: { borderCollapse: "collapse", fontFamily: "Inter", minWidth: 620 } },
+              React.createElement('thead', null,
+                React.createElement('tr', { style: { background: "#EFE8DB" } },
+                  React.createElement('th', { className: "px-2 py-2 text-left", style: { border: `1px solid ${C.line}`, minWidth: 120 } }, "品項"),
+                  ZONES.map((z) => React.createElement('th', { key: z.id, className: "px-2 py-2 text-center", style: { border: `1px solid ${C.line}`, minWidth: 76 } }, z.short)),
+                  React.createElement('th', { className: "px-2 py-2 text-center", style: { border: `1px solid ${C.line}`, minWidth: 66, color: C.wine } }, "合計")
+                )
+              ),
+              React.createElement('tbody', null,
+                REPORT_ROWS.map((r, idx) => React.createElement('tr', { key: r.key, style: { background: idx % 2 === 0 ? C.paper : "#FBF8F2" } },
+                  React.createElement('td', { className: "px-2 py-1.5", style: { border: `1px solid ${C.line}`, color: C.ink, fontWeight: 600 } }, r.label, React.createElement('span', { style: { color: C.inkSoft } }, " (", r.unit, ")")),
+                  ZONES.map((z) => React.createElement('td', { key: z.id, className: "p-1", style: { border: `1px solid ${C.line}` } },
+                    React.createElement('input', { type: "text", inputMode: "decimal", value: draftRows[r.key] && draftRows[r.key][z.id] != null ? draftRows[r.key][z.id] : "", onChange: (e) => setDraftCell(r.key, z.id, e.target.value), onFocus: (e) => e.target.select(), className: "w-full px-2 py-2 rounded text-center", placeholder: "－", style: { border: `1px solid ${C.line}`, background: "#FFFDF8", color: C.ink, fontFamily: "IBM Plex Mono", minWidth: 62 } })
+                  )),
+                  React.createElement('td', { className: "px-2 py-1.5 text-center", style: { border: `1px solid ${C.line}`, color: C.wine, fontWeight: 800, fontFamily: "IBM Plex Mono" } }, draftRowTotal(r.key) || "－")
+                )),
+                React.createElement('tr', { style: { background: "#EFE8DB" } },
+                  React.createElement('td', { className: "px-2 py-2", style: { border: `1px solid ${C.line}`, fontWeight: 800 } }, "各區合計"),
+                  ZONES.map((z) => React.createElement('td', { key: z.id, className: "px-2 py-2 text-center", style: { border: `1px solid ${C.line}`, color: C.tableColor, fontWeight: 800, fontFamily: "IBM Plex Mono" } }, draftZoneTotal(z.id) || "－")),
+                  React.createElement('td', { style: { border: `1px solid ${C.line}` } })
+                )
+              )
+            ),
+            React.createElement('div', { className: "text-xs text-center mt-3 pb-6", style: { color: C.inkSoft } }, "副表為獨立手動調整版本，不會修改表一或原始耗材紀錄。")
+          )
         )
       )
 
