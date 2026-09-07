@@ -3245,6 +3245,50 @@ function calcBlockHours(block) {
   };
 }
 
+
+// 打卡定位：比對六個溫室，最近距離 >100m 標示異常
+function geoDistanceMeters(lat1, lon1, lat2, lon2) {
+  const R=6371000, rad=(v)=>v*Math.PI/180;
+  const p1=rad(lat1), p2=rad(lat2), dp=rad(lat2-lat1), dl=rad(lon2-lon1);
+  const a=Math.sin(dp/2)**2+Math.cos(p1)*Math.cos(p2)*Math.sin(dl/2)**2;
+  return R*2*Math.atan2(Math.sqrt(a),Math.sqrt(1-a));
+}
+function classifyPunchGeo(geo) {
+  if(!geo||geo.lat==null||geo.lon==null) return geo;
+  let nearest=null;
+  ZONES.forEach((z)=>{
+    const d=geoDistanceMeters(+geo.lat,+geo.lon,+z.lat,+z.lon);
+    if(!nearest||d<nearest.distanceM) nearest={zoneId:z.id,zoneName:z.name,distanceM:Math.round(d)};
+  });
+  return {...geo,nearestZoneId:nearest&&nearest.zoneId,nearestZoneName:nearest&&nearest.zoneName,distanceM:nearest&&nearest.distanceM,locationAbnormal:!!(nearest&&nearest.distanceM>100)};
+}
+function normalizePunchGeo(g) {
+  if(!g||g.lat==null||g.lon==null) return g;
+  return (g.nearestZoneName && g.distanceM!=null) ? g : classifyPunchGeo(g);
+}
+function geoLabel(g) {
+  g=normalizePunchGeo(g);
+  if(!g) return "—"; if(g.error) return "無定位"; if(g.lat==null) return "—";
+  return `${g.nearestZoneName||"最近溫室"}${g.distanceM!=null?" "+g.distanceM+"m":""}`;
+}
+function recordGeoSummary(rec) {
+  const out=[];
+  ["regular","overtime"].forEach((kind)=>{
+    const gm=(rec&&rec[kind]&&rec[kind].geo)||{};
+    ATTEND_SLOTS.forEach((s)=>{
+      const raw=gm[s.key], g=normalizePunchGeo(raw);
+      if(g&&g.lat!=null) out.push({label:(kind==="overtime"?"加班":"正常")+s.label,...g});
+    });
+  });
+  if(!out.length) return {text:"—",abnormal:false};
+  const abnormal=out.filter((g)=>g.locationAbnormal);
+  if(!abnormal.length) return {text:"正常",abnormal:false};
+  return {
+    text:abnormal.map((g)=>`${g.label}：${geoLabel(g)}（超出100m）`).join(" / "),
+    abnormal:true
+  };
+}
+
 function AttendanceMenu({ onBack, role, loggedInId }) {
   const canEditTypes = role === "designer" || role === "manager" || role === "founder";
   // V5.1+ 主管模式：帳號身分字母 A / B / C 可查看並修改個人出勤紀錄。
@@ -3390,11 +3434,11 @@ function AttendanceMenu({ onBack, role, loggedInId }) {
       const timeText = (p) => `${(p && p.amIn) || "—"}-${(p && p.amOut) || "—"} / ${(p && p.pmIn) || "—"}-${(p && p.pmOut) || "—"}`;
 
       const data = [
-        ["出勤紀錄表", "", "", "", "", ""],
-        [`人員：${personName || personId || ""}`, "", `代號：${personId || ""}`, "", `${recYear}年${recMonth}月`, ""],
+        ["出勤紀錄表", "", "", "", "", "", ""],
+        [`人員：${personName || personId || ""}`, "", `代號：${personId || ""}`, "", `${recYear}年${recMonth}月`, "", ""],
         [],
-        ["日", "正常上班時間", "加班時間", "正常上班工時", "（1＋2）超過7小時", "加班工時"],
-        ["", "（第1輪＋第2輪）", "", "（第1輪＋第2輪）", "", ""],
+        ["日", "正常上班時間", "加班時間", "正常上班工時", "（1＋2）超過7小時", "加班工時", "打卡定位"],
+        ["", "（第1輪＋第2輪）", "", "（第1輪＋第2輪）", "", "", ""],
       ];
 
       rows.forEach((r) => {
@@ -3406,20 +3450,21 @@ function AttendanceMenu({ onBack, role, loggedInId }) {
         const regHours = r.rh && r.rh.totalNum != null ? Number(r.rh.totalNum) : "";
         const over7 = Number(r.over7 || 0);
         const otHours = r.oh && r.oh.totalNum != null ? Number(r.oh.totalNum) : "";
-        data.push([r.d, normal, overtime, regHours, over7, otHours]);
+        const geoText = recordGeoSummary(r.rec).text;
+        data.push([r.d, normal, overtime, regHours, over7, otHours, geoText]);
       });
 
-      data.push(["合計", "", "", Number(sumReg || 0), Number(sumOver7 || 0), Number(sumOt || 0)]);
+      data.push(["合計", "", "", Number(sumReg || 0), Number(sumOver7 || 0), Number(sumOt || 0), ""]);
 
       const ws = XLSX.utils.aoa_to_sheet(data);
       ws["!cols"] = [
-        { wch: 6 }, { wch: 32 }, { wch: 28 }, { wch: 20 }, { wch: 18 }, { wch: 14 }
+        { wch: 6 }, { wch: 32 }, { wch: 28 }, { wch: 20 }, { wch: 18 }, { wch: 14 }, { wch: 48 }
       ];
       ws["!merges"] = [
-        XLSX.utils.decode_range("A1:F1"),
+        XLSX.utils.decode_range("A1:G1"),
         XLSX.utils.decode_range("A2:B2"),
         XLSX.utils.decode_range("C2:D2"),
-        XLSX.utils.decode_range("E2:F2"),
+        XLSX.utils.decode_range("E2:G2"),
         XLSX.utils.decode_range("A4:A5"),
         XLSX.utils.decode_range("C4:C5"),
         XLSX.utils.decode_range("E4:E5"),
@@ -3530,6 +3575,23 @@ function AttendanceMenu({ onBack, role, loggedInId }) {
     loadLeaveTypes();
     loadAllPeople().then(setPeople).catch(() => setPeople([]));
   }, [loggedInId]);
+  const refreshAttendanceRecords = async () => {
+    setBusy(true);
+    setMsg("正在更新出勤紀錄…");
+    try {
+      await loadToday();
+      await loadMine();
+      if (canViewAll) await loadAll();
+      if (supervisorMode && canSupervisorEdit && supervisorPersonId) {
+        await loadSupervisorPerson(supervisorPersonId);
+      }
+      setMsg("出勤紀錄已更新");
+    } catch (_e) {
+      setMsg("更新失敗，請確認網路後再試");
+    }
+    setBusy(false);
+  };
+
   useEffect(() => {
     if (mode === "records") { loadMine(); if (canViewAll) loadAll(); }
   }, [mode]);
@@ -3551,6 +3613,14 @@ function AttendanceMenu({ onBack, role, loggedInId }) {
   const saveRec = async (next) => {
     await window.storage.set(`attendance:${loggedInId}:${dateKey}`, JSON.stringify(next));
     setTodayRec(next);
+    // 打卡完成後立即同步個人出勤清單，避免整月表仍顯示舊快取
+    setMyList((prev) => {
+      const arr = Array.isArray(prev) ? prev.slice() : [];
+      const idx = arr.findIndex((r) => r && r.date === next.date && r.personId === next.personId);
+      if (idx >= 0) arr[idx] = normalizeAttendance(next, next.personId, next.date);
+      else arr.push(normalizeAttendance(next, next.personId, next.date));
+      return arr.sort((a, b) => (a.date < b.date ? 1 : -1));
+    });
   };
 
   const doPunch = async (kind) => {
@@ -3577,7 +3647,8 @@ function AttendanceMenu({ onBack, role, loggedInId }) {
     setBusy(true);
     setMsg("正在取得定位…");
     try {
-      const geo = await getPhoneGeo();
+      const rawGeo = await getPhoneGeo();
+      const geo = (rawGeo && rawGeo.lat != null && !rawGeo.error) ? classifyPunchGeo(rawGeo) : rawGeo;
       const geoOk = geo && geo.lat != null && !geo.error;
       const time = candidateTime;
       const name = (people.find((p) => p.id === loggedInId) || {}).name || loggedInId;
@@ -3597,7 +3668,7 @@ function AttendanceMenu({ onBack, role, loggedInId }) {
       };
       await saveRec(next);
       const label = (kind === "overtime" ? "加班・" : "正常班・") + slot.label;
-      if (geoOk) setMsg(`${label} ${time}（GPS ${geo.lat}, ${geo.lon} ±${geo.accuracy}m）`);
+      if (geoOk) setMsg(`${label} ${time}（${geoLabel(geo)}${geo.locationAbnormal ? "・異常：超過100公尺" : "・位置正常"}）`);
       else setMsg(`${label} ${time}（${(geo && geo.error) || "無定位"}，已完成打卡）`);
     } catch (e) {
       setMsg("打卡失敗，請確認網路後再試");
@@ -3995,15 +4066,23 @@ function AttendanceMenu({ onBack, role, loggedInId }) {
               return React.createElement('div', { className: "rounded-2xl overflow-hidden", style: { border: `1px solid ${C.line}`, background: C.paper } },
                 React.createElement('div', { className: "px-3 py-2 flex items-center justify-between gap-2", style: { borderBottom: `1px solid ${C.line}`, background: C.cream } },
                   React.createElement('span', { style: { fontFamily: "Inter", fontWeight: 700, color: C.ink, fontSize: 14 } }, recYear, "年", recMonth, "月・整月出勤表"),
-                  React.createElement('button', {
-                    onClick: () => exportAttendanceExcel({
-                      personId: loggedInId,
-                      personName: (people.find((p) => p.id === loggedInId) || {}).name || loggedInId,
-                      rows, sumReg, sumOver7, sumOt
-                    }),
-                    className: "px-2 py-1 rounded-lg text-xs",
-                    style: { background: "#217346", color: "white", fontFamily: "Inter", fontWeight: 800, flexShrink: 0 }
-                  }, "Excel")
+                  React.createElement('div', { className: "flex items-center gap-2", style: { flexShrink: 0 } },
+                    React.createElement('button', {
+                      onClick: refreshAttendanceRecords,
+                      disabled: busy,
+                      className: "px-2 py-1 rounded-lg text-xs",
+                      style: { background: "#2E8577", color: "white", fontFamily: "Inter", fontWeight: 800, opacity: busy ? .55 : 1 }
+                    }, busy ? "更新中" : "↻ 更新"),
+                    React.createElement('button', {
+                      onClick: () => exportAttendanceExcel({
+                        personId: loggedInId,
+                        personName: (people.find((p) => p.id === loggedInId) || {}).name || loggedInId,
+                        rows, sumReg, sumOver7, sumOt
+                      }),
+                      className: "px-2 py-1 rounded-lg text-xs",
+                      style: { background: "#217346", color: "white", fontFamily: "Inter", fontWeight: 800, flexShrink: 0 }
+                    }, "Excel")
+                  )
                 ),
                 React.createElement('div', {
                   className: "overflow-x-auto",
@@ -4019,6 +4098,7 @@ function AttendanceMenu({ onBack, role, loggedInId }) {
                           { top: "正常上班工時", sub: "（第1輪＋第2輪）" },
                           { top: "（1＋2）超過7小時" },
                           { top: "加班工時" },
+                          { top: "打卡定位" },
                         ].map((h) =>
                           React.createElement('th', { key: h.top, className: "px-1 py-2 text-center", style: { border: `1px solid ${C.line}`, color: C.ink, fontWeight: 700, fontSize: 9, lineHeight: 1.25 } },
                             React.createElement('div', null, h.top),
@@ -4038,7 +4118,8 @@ function AttendanceMenu({ onBack, role, loggedInId }) {
                         ),
                         React.createElement('td', { className: "px-1 py-1.5 text-center", style: { border: `1px solid ${C.line}`, color: ATTEND_COLORS.inText, fontFamily: "IBM Plex Mono" } }, r.rh.totalNum != null ? r.rh.totalNum.toFixed(2) : "—"),
                         React.createElement('td', { className: "px-1 py-1.5 text-center", style: { border: `1px solid ${C.line}`, color: r.over7 > 0 ? C.alert : C.inkSoft, fontFamily: "IBM Plex Mono", fontWeight: r.over7 > 0 ? 800 : 500 } }, r.over7 > 0 ? r.over7.toFixed(2) : "0.00"),
-                        React.createElement('td', { className: "px-1 py-1.5 text-center", style: { border: `1px solid ${C.line}`, color: ATTEND_COLORS.otText, fontFamily: "IBM Plex Mono" } }, r.oh.totalNum != null ? r.oh.totalNum.toFixed(2) : "—")
+                        React.createElement('td', { className: "px-1 py-1.5 text-center", style: { border: `1px solid ${C.line}`, color: ATTEND_COLORS.otText, fontFamily: "IBM Plex Mono" } }, r.oh.totalNum != null ? r.oh.totalNum.toFixed(2) : "—"),
+                        (()=>{ const gs=recordGeoSummary(byDate[r.dk]); return React.createElement('td',{className:"px-1 py-1.5",style:{border:`1px solid ${C.line}`,color:gs.abnormal?"#C62828":C.inkSoft,fontWeight:gs.abnormal?800:500,fontSize:8,lineHeight:1.25,minWidth:150}},gs.text); })()
                       )),
                       React.createElement('tr', { style: { background: `${C.wine}10` } },
                         React.createElement('td', { className: "px-1 py-2 text-center", style: { border: `1px solid ${C.line}`, fontWeight: 800, color: C.ink } }, "合計"),
@@ -4046,7 +4127,8 @@ function AttendanceMenu({ onBack, role, loggedInId }) {
                         React.createElement('td', { className: "px-1 py-2 text-center", style: { border: `1px solid ${C.line}` } }, "—"),
                         React.createElement('td', { className: "px-1 py-2 text-center", style: { border: `1px solid ${C.line}`, fontWeight: 800, color: ATTEND_COLORS.inText, fontFamily: "IBM Plex Mono" } }, sumReg.toFixed(2)),
                         React.createElement('td', { className: "px-1 py-2 text-center", style: { border: `1px solid ${C.line}`, fontWeight: 800, color: C.alert, fontFamily: "IBM Plex Mono" } }, sumOver7.toFixed(2)),
-                        React.createElement('td', { className: "px-1 py-2 text-center", style: { border: `1px solid ${C.line}`, fontWeight: 900, color: ATTEND_COLORS.otText, fontFamily: "IBM Plex Mono" } }, sumOt.toFixed(2))
+                        React.createElement('td', { className: "px-1 py-2 text-center", style: { border: `1px solid ${C.line}`, fontWeight: 900, color: ATTEND_COLORS.otText, fontFamily: "IBM Plex Mono" } }, sumOt.toFixed(2)),
+                        React.createElement('td', { style: { border: `1px solid ${C.line}` } }, "—")
                       )
                     )
                   )
@@ -4074,7 +4156,8 @@ function AttendanceMenu({ onBack, role, loggedInId }) {
                 ),
                 React.createElement('div', { className: "text-xs", style: { color: ATTEND_COLORS.otText, fontFamily: "IBM Plex Mono" } },
                   "加 ", (op.amIn || "—"), "→", (op.amOut || "—"), " / ", (op.pmIn || "—"), "→", (op.pmOut || "—")
-                )
+                ),
+                (()=>{ const gs=recordGeoSummary(rec); return React.createElement('div',{className:"text-xs mt-1",style:{color:gs.abnormal?"#C62828":C.inkSoft,fontFamily:"Inter",fontWeight:gs.abnormal?800:600,lineHeight:1.35}},"定位：",gs.text); })()
               );
             })
           ),
@@ -4221,8 +4304,9 @@ function AttendanceMenu({ onBack, role, loggedInId }) {
                           { t: "加班時間", w: "20%" },
                           { t: "正常上班工時", sub: "（第1輪＋第2輪）", w: "13%" },
                           { t: "（1＋2）超過7小時", w: "12%" },
-                          { t: "加班工時", w: "11%" },
-                          { t: "修改", w: "13%" },
+                          { t: "加班工時", w: "10%" },
+                          { t: "打卡定位", w: "20%" },
+                          { t: "修改", w: "10%" },
                         ].map((h) =>
                           React.createElement('th', {
                             key: h.t,
@@ -4251,6 +4335,7 @@ function AttendanceMenu({ onBack, role, loggedInId }) {
                           React.createElement('td', { className: "px-0.5 py-1.5 text-center", style: { border: `1px solid ${C.line}`, color: ATTEND_COLORS.inText, fontFamily: "IBM Plex Mono", fontSize: 8 } }, r.rh.totalNum != null ? r.rh.totalNum.toFixed(2) : "—"),
                           React.createElement('td', { className: "px-0.5 py-1.5 text-center", style: { border: `1px solid ${C.line}`, color: r.over7 > 0 ? C.alert : C.inkSoft, fontFamily: "IBM Plex Mono", fontWeight: r.over7 > 0 ? 800 : 500, fontSize: 8 } }, r.over7 > 0 ? r.over7.toFixed(2) : "0.00"),
                           React.createElement('td', { className: "px-0.5 py-1.5 text-center", style: { border: `1px solid ${C.line}`, color: ATTEND_COLORS.otText, fontFamily: "IBM Plex Mono", fontSize: 8 } }, r.oh.totalNum != null ? r.oh.totalNum.toFixed(2) : "—"),
+                          (()=>{ const gs=recordGeoSummary(r.rec); return React.createElement('td',{className:"px-0.5 py-1.5",style:{border:`1px solid ${C.line}`,color:gs.abnormal?"#C62828":C.inkSoft,fontWeight:gs.abnormal?800:500,fontSize:7,lineHeight:1.15,wordBreak:"break-word"}},gs.text); })(),
                           React.createElement('td', { className: "px-1 py-1.5 text-center", style: { border: `1px solid ${C.line}` } },
                             React.createElement('button', {
                               onClick: () => openAttendanceEditor(supervisorPersonId, r.date, r.rec),
@@ -4272,6 +4357,7 @@ function AttendanceMenu({ onBack, role, loggedInId }) {
                         React.createElement('td', { className: "px-1 py-2 text-center", style: { border: `1px solid ${C.line}`, color: ATTEND_COLORS.inText, fontWeight: 800, fontFamily: "IBM Plex Mono" } }, sumReg.toFixed(2)),
                         React.createElement('td', { className: "px-1 py-2 text-center", style: { border: `1px solid ${C.line}`, color: C.alert, fontWeight: 800, fontFamily: "IBM Plex Mono" } }, sumOver7.toFixed(2)),
                         React.createElement('td', { className: "px-1 py-2 text-center", style: { border: `1px solid ${C.line}`, color: ATTEND_COLORS.otText, fontWeight: 900, fontFamily: "IBM Plex Mono" } }, sumOt.toFixed(2)),
+                        React.createElement('td', { style: { border: `1px solid ${C.line}` } }, "—"),
                         React.createElement('td', { style: { border: `1px solid ${C.line}` } })
                       )
                     )
@@ -4314,7 +4400,8 @@ function AttendanceMenu({ onBack, role, loggedInId }) {
                           React.createElement('td', null, r.rec ? `${op.amIn || "—"}-${op.amOut || "—"} / ${op.pmIn || "—"}-${op.pmOut || "—"}` : "—"),
                           React.createElement('td', null, r.rh.totalNum != null ? r.rh.totalNum.toFixed(2) : "—"),
                           React.createElement('td', null, r.over7 > 0 ? r.over7.toFixed(2) : "0.00"),
-                          React.createElement('td', null, r.oh.totalNum != null ? r.oh.totalNum.toFixed(2) : "—")
+                          React.createElement('td', null, r.oh.totalNum != null ? r.oh.totalNum.toFixed(2) : "—"),
+                          (()=>{ const gs=recordGeoSummary(r.rec); return React.createElement('td',{style:{color:gs.abnormal?"#C62828":"#222",fontWeight:gs.abnormal?700:400}},gs.text); })()
                         );
                       }),
                       React.createElement('tr', { className: "attendance-print-total" },
@@ -4323,7 +4410,8 @@ function AttendanceMenu({ onBack, role, loggedInId }) {
                         React.createElement('td', null, "—"),
                         React.createElement('td', null, sumReg.toFixed(2)),
                         React.createElement('td', null, sumOver7.toFixed(2)),
-                        React.createElement('td', null, sumOt.toFixed(2))
+                        React.createElement('td', null, sumOt.toFixed(2)),
+                        React.createElement('td', null, "—")
                       )
                     )
                   )
