@@ -4061,7 +4061,7 @@ function AttendanceMenu({ onBack, role, loggedInId }) {
                 if (leave) leaveDays += 1;
                 const rp = (rec && rec.regular && rec.regular.punches) || {};
                 const op = (rec && rec.overtime && rec.overtime.punches) || {};
-                rows.push({ d, dk, rh, oh, over7, leave, rp, op, has: !!rec });
+                rows.push({ d, dk, rec, rh, oh, over7, leave, rp, op, has: !!rec });
               }
               return React.createElement('div', { className: "rounded-2xl overflow-hidden", style: { border: `1px solid ${C.line}`, background: C.paper } },
                 React.createElement('div', { className: "px-3 py-2 flex items-center justify-between gap-2", style: { borderBottom: `1px solid ${C.line}`, background: C.cream } },
