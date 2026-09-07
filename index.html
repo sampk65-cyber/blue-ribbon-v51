@@ -519,7 +519,7 @@ const C = {
   tiffanyLight: "#B8ECE5",
   tiffanyText: "#2E8577",
 };
-const APP_VERSION = "V5.1+C8.4・表一副表編輯版";
+const APP_VERSION = "V5.1+C8.5・確認後快速回報版";
 const FONT_LINK = "https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,600;9..144,700&family=Inter:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap";
 
 const WORK_ITEMS = [
@@ -3390,10 +3390,11 @@ function AttendanceMenu({ onBack, role, loggedInId }) {
       const timeText = (p) => `${(p && p.amIn) || "—"}-${(p && p.amOut) || "—"} / ${(p && p.pmIn) || "—"}-${(p && p.pmOut) || "—"}`;
 
       const data = [
-        ["出勤紀錄表"],
-        [`人員：${personName || personId || ""}`, `代號：${personId || ""}`, `${recYear}年${recMonth}月`],
+        ["出勤紀錄表", "", "", "", "", ""],
+        [`人員：${personName || personId || ""}`, "", `代號：${personId || ""}`, "", `${recYear}年${recMonth}月`, ""],
         [],
-        ["日", "正常上班時間（第1輪＋第2輪）", "加班時間", "正常上班工時（第1輪＋第2輪）", "（1＋2）超過7小時", "加班工時"],
+        ["日", "正常上班時間", "加班時間", "正常上班工時", "（1＋2）超過7小時", "加班工時"],
+        ["", "（第1輪＋第2輪）", "", "（第1輪＋第2輪）", "", ""],
       ];
 
       rows.forEach((r) => {
@@ -3414,7 +3415,16 @@ function AttendanceMenu({ onBack, role, loggedInId }) {
       ws["!cols"] = [
         { wch: 6 }, { wch: 32 }, { wch: 28 }, { wch: 20 }, { wch: 18 }, { wch: 14 }
       ];
-      ws["!merges"] = [XLSX.utils.decode_range("A1:F1")];
+      ws["!merges"] = [
+        XLSX.utils.decode_range("A1:F1"),
+        XLSX.utils.decode_range("A2:B2"),
+        XLSX.utils.decode_range("C2:D2"),
+        XLSX.utils.decode_range("E2:F2"),
+        XLSX.utils.decode_range("A4:A5"),
+        XLSX.utils.decode_range("C4:C5"),
+        XLSX.utils.decode_range("E4:E5"),
+        XLSX.utils.decode_range("F4:F5"),
+      ];
 
       const wb = XLSX.utils.book_new();
       XLSX.utils.book_append_sheet(wb, ws, "出勤紀錄");
@@ -4999,6 +5009,48 @@ function PermissionEditor({ person, editable, onClose, onSaved }) {
 }
 
 // ============ 產能資料輸入（功能表3） ============
+
+// ============================================================
+// 指定工項後「是否回報」捷徑對話框（V4.5 / V5.1C8.5）
+// 僅新增導航捷徑，不改動既有工項、權限、打卡與資料儲存邏輯。
+// ============================================================
+function showReportShortcutDialog(onYes) {
+  const old = document.getElementById("report-shortcut-dialog");
+  if (old) old.remove();
+  const overlay = document.createElement("div");
+  overlay.id = "report-shortcut-dialog";
+  Object.assign(overlay.style, {
+    position: "fixed", inset: "0", zIndex: "100000",
+    background: "rgba(43,33,25,.38)", display: "flex",
+    alignItems: "center", justifyContent: "center", padding: "24px"
+  });
+  const box = document.createElement("div");
+  Object.assign(box.style, {
+    width: "min(360px, 92vw)", background: "#FFFDF8", borderRadius: "18px",
+    border: "1px solid #E4D9C8", boxShadow: "0 18px 46px rgba(43,33,25,.24)",
+    padding: "22px 20px 18px", fontFamily: "Inter, sans-serif", textAlign: "center"
+  });
+  const title = document.createElement("div");
+  title.textContent = "是否回報？";
+  Object.assign(title.style, { fontWeight: "800", fontSize: "20px", color: "#2B2119", marginBottom: "8px" });
+  const hint = document.createElement("div");
+  hint.textContent = "按「是」直接前往功能表4的溫室選單進行回報。";
+  Object.assign(hint.style, { fontSize: "13px", lineHeight: "1.6", color: "#6B5D50", marginBottom: "18px" });
+  const row = document.createElement("div");
+  Object.assign(row.style, { display: "grid", gridTemplateColumns: "1fr 1fr", gap: "10px" });
+  const noBtn = document.createElement("button");
+  noBtn.type = "button"; noBtn.textContent = "否";
+  Object.assign(noBtn.style, { padding: "12px", borderRadius: "12px", border: "1px solid #E4D9C8", background: "#F7F3EA", color: "#6B5D50", fontWeight: "800" });
+  const yesBtn = document.createElement("button");
+  yesBtn.type = "button"; yesBtn.textContent = "是";
+  Object.assign(yesBtn.style, { padding: "12px", borderRadius: "12px", border: "1px solid #4E7C6B", background: "#4E7C6B", color: "white", fontWeight: "800" });
+  const close = () => overlay.remove();
+  noBtn.onclick = close;
+  yesBtn.onclick = () => { close(); if (typeof onYes === "function") onYes(); };
+  overlay.onclick = (e) => { if (e.target === overlay) close(); };
+  row.append(noBtn, yesBtn); box.append(title, hint, row); overlay.append(box); document.body.append(overlay);
+}
+
 function nowStamp() {
   const d = new Date();
   const parts = new Intl.DateTimeFormat("en-CA", {
@@ -5123,7 +5175,7 @@ function PrintLog({ refreshKey }) {
   );
 }
 
-function CellWorkTable({ zone, cellId, role, onClose, ym, loggedInId }) {
+function CellWorkTable({ zone, cellId, role, onClose, ym, loggedInId, onGoReport }) {
   const editable = role === "designer" || role === "manager" || role === "founder";
   const isUser = role === "user" || role === "founder";
   const shape = FLOOR_SHAPES[zone.id];
@@ -5228,6 +5280,9 @@ function CellWorkTable({ zone, cellId, role, onClose, ym, loggedInId }) {
   const confirmAssignmentSave = () => {
     runWrite(data);
     runZoneWrite(zoneData);
+    showReportShortcutDialog(() => {
+      if (typeof onGoReport === "function") onGoReport();
+    });
   };
 
   const persist = (next) => {
@@ -9082,7 +9137,7 @@ function ZoneWorkFolders({ onBack, role, loggedInId }) {
     )
   );
 }
-function FloorPlan({ zone, onBack, role, onCycleRole, loggedInId }) {
+function FloorPlan({ zone, onBack, role, onCycleRole, loggedInId, onGoReport }) {
   const shape = FLOOR_SHAPES[zone.id];
   const [activeCell, setActiveCell] = useState(null);
   const [zoom, setZoom] = useState(1);
@@ -9245,7 +9300,7 @@ function FloorPlan({ zone, onBack, role, onCycleRole, loggedInId }) {
       )
 
       , activeCell && (
-        React.createElement(CellWorkTable, { zone: zone, cellId: activeCell, role: role, onClose: closeCell, loggedInId: loggedInId,} )
+        React.createElement(CellWorkTable, { zone: zone, cellId: activeCell, role: role, onClose: closeCell, loggedInId: loggedInId, onGoReport: onGoReport,} )
       )
     )
   );
@@ -10050,7 +10105,7 @@ function AppMain({ initialRole, initialId, onLogoutToSplash }) {
         )
       )
       , zone && view === "floorplan" && (
-        React.createElement(FloorPlan, { zone: zone, onBack: backToMenu, role: roleForMenu(3), onCycleRole: cycleRole, loggedInId: loggedInId,} )
+        React.createElement(FloorPlan, { zone: zone, onBack: backToMenu, role: roleForMenu(3), onCycleRole: cycleRole, loggedInId: loggedInId, onGoReport: () => setView("folders"),} )
       )
       , zone && view === "spray" && (
         React.createElement(SprayWorksheet, { zone: zone, onBack: backToMenu, role: roleForMenu(6),} )
