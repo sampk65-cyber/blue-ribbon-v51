@@ -519,7 +519,7 @@ const C = {
   tiffanyLight: "#B8ECE5",
   tiffanyText: "#2E8577",
 };
-const APP_VERSION = "V5.1+C8.8・每小時氣候紀錄穩定版";
+const APP_VERSION = "V5.1+C8.9・每小時氣候紀錄穩定版";
 const FONT_LINK = "https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,600;9..144,700&family=Inter:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap";
 
 const WORK_ITEMS = [
@@ -791,15 +791,17 @@ function EnvironmentMenu({ onBack, role, loggedInId }) {
           await loadOutdoorHistoryCount();
         }
       } catch (_e) {}
-      // 只在伺服器本次寫入失敗時使用瀏覽器備援；
-      // 同一小時固定使用 environment:outdoor:hour:YYYY-MM-DDTHH，同小時只保留一筆。
-      if (!serverSaved && cwaKey) {
+      // 恢復 C8.2～C8.4 的穩定容錯：不論伺服器本次是否成功，
+      // 瀏覽器都以最新神岡觀測校正同一小時資料。
+      // Firestore key 固定為 environment:outdoor:hour:YYYY-MM-DDTHH，
+      // 因此每10分鐘重試仍然只會保留該小時1筆，不會增加重複筆數。
+      if (cwaKey) {
         await fetchOutdoor(cwaKey, { quiet: true, source: "browser-auto" });
       }
     };
     tick();
-    // 恢復每小時檢查一次；不再由 index 每10分鐘重複寫入同一小時資料。
-    timer = window.setInterval(tick, 60 * 60 * 1000);
+    // C8.2～C8.4：每10分鐘檢查／補寫同一小時固定 key，提升漏抓容錯。
+    timer = window.setInterval(tick, 10 * 60 * 1000);
     return () => { alive = false; if (timer) window.clearInterval(timer); };
   }, [cwaKey]);
 
