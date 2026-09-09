@@ -6642,6 +6642,141 @@ function FertilizerUsageReport({ year, month, onBack }) {
 }
 
 
+// ============================================================
+// 表十：成功登入稽核（時間固定以 Asia/Taipei 顯示）
+// 每次帳密驗證成功新增一筆獨立 kv 文件，避免多人同時登入互相覆蓋。
+// ============================================================
+const LOGIN_AUDIT_PREFIX = "loginAudit:";
+let lastLoginAuditSignature = "";
+let lastLoginAuditAt = 0;
+
+function taipeiLoginParts(value) {
+  const date = value instanceof Date ? value : new Date(value || Date.now());
+  const parts = new Intl.DateTimeFormat("en-CA", {
+    timeZone: "Asia/Taipei", year: "numeric", month: "2-digit", day: "2-digit",
+    hour: "2-digit", minute: "2-digit", second: "2-digit", hourCycle: "h23",
+  }).formatToParts(date);
+  const get = (type) => (_optionalChain([parts, 'access', _audit0 => _audit0.find, 'call', _audit1 => _audit1((p) => p.type === type), 'optionalAccess', _audit2 => _audit2.value]) || "");
+  const year = get("year"), month = get("month"), day = get("day");
+  const hour = get("hour"), minute = get("minute"), second = get("second");
+  return { ym: `${year}-${month}`, date: `${year}/${month}/${day}`, time: `${hour}:${minute}:${second}` };
+}
+
+async function lookupPublicLoginIp() {
+  const controller = typeof AbortController !== "undefined" ? new AbortController() : null;
+  const timer = window.setTimeout(() => { if (controller) controller.abort(); }, 6500);
+  try {
+    const response = await fetch("https://api64.ipify.org?format=json", {
+      method: "GET", cache: "no-store", signal: controller ? controller.signal : undefined,
+    });
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    const data = await response.json();
+    return String((data && data.ip) || "").trim() || "無法取得";
+  } catch (e) {
+    console.warn("login audit ip lookup failed", e);
+    return "無法取得";
+  } finally {
+    window.clearTimeout(timer);
+  }
+}
+
+async function recordSuccessfulLogin(role, personId) {
+  const id = String(personId || "").trim().toUpperCase();
+  if (!id) return;
+  const loggedAt = Date.now();
+  const signature = `${id}|${role || ""}`;
+  if (signature === lastLoginAuditSignature && loggedAt - lastLoginAuditAt < 5000) return;
+  lastLoginAuditSignature = signature;
+  lastLoginAuditAt = loggedAt;
+
+  const parts = taipeiLoginParts(loggedAt);
+  const suffix = `${loggedAt}-${Math.random().toString(36).slice(2, 9)}`;
+  const key = `${LOGIN_AUDIT_PREFIX}${parts.ym}:${suffix}`;
+  const base = {
+    id: suffix, personId: id, personName: id,
+    role: role || "user", roleLabel: ROLE_LABELS[role] || role || "一般人員",
+    ip: "取得中…", loggedAt: loggedAt, loginDate: parts.date, loginTime: parts.time,
+    timeZone: "Asia/Taipei",
+    appVersion: typeof APP_VERSION !== "undefined" ? APP_VERSION : "完全體V5.1",
+  };
+
+  // 先寫入時間，再補上 IP；即使外部 IP 查詢失敗，仍保留本次成功登入紀錄。
+  await window.storage.set(key, JSON.stringify(base), true);
+  const results = await Promise.allSettled([lookupPublicLoginIp(), loadAllPeople()]);
+  const ip = results[0].status === "fulfilled" ? results[0].value : "無法取得";
+  const people = results[1].status === "fulfilled" && Array.isArray(results[1].value) ? results[1].value : [];
+  const person = people.find((p) => p && String(p.id || "").trim().toUpperCase() === id);
+  await window.storage.set(key, JSON.stringify({ ...base, ip: ip, personName: (person && person.name) || id }), true);
+}
+
+function LoginAuditReport({ year, month, onBack }) {
+  const [rows, setRows] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [message, setMessage] = useState("");
+  const ym = `${year}-${String(month).padStart(2, "0")}`;
+
+  const loadRows = async () => {
+    setLoading(true);
+    setMessage("");
+    try {
+      const listRes = await window.storage.list(`${LOGIN_AUDIT_PREFIX}${ym}:`, true);
+      const keys = _optionalChain([listRes, 'optionalAccess', _audit3 => _audit3.keys]) || [];
+      const loaded = await runWithLimit(keys, 8, async (key) => {
+        try {
+          const res = await window.storage.get(key, true);
+          return res ? JSON.parse(res.value) : null;
+        } catch (e) { return null; }
+      });
+      setRows(loaded.filter(Boolean).sort((a, b) => Number(b.loggedAt || 0) - Number(a.loggedAt || 0)));
+    } catch (e) {
+      console.error("load login audit failed", e);
+      setRows([]);
+      setMessage("登入紀錄讀取失敗，請稍後再試。");
+    } finally {
+      setLoading(false);
+    }
+  };
+  useEffect(() => { loadRows(); }, [year, month]);
+
+  return React.createElement('div', { className: "min-h-screen flex flex-col", style: { background: C.cream } },
+    React.createElement(NavBar, { backLabel: "回表格", onBack: onBack }),
+    React.createElement('div', { className: "max-w-5xl w-full mx-auto px-4 py-5" },
+      React.createElement('div', { className: "mb-4 flex items-start justify-between gap-3" },
+        React.createElement('div', null,
+          React.createElement('div', { style: { fontFamily: "Inter", fontWeight: 800, fontSize: 20, color: C.ink } }, "表十・登入 IP 與時間"),
+          React.createElement('div', { className: "text-xs mt-1", style: { color: C.inkSoft, fontFamily: "Inter" } }, `${year}年${month}月・台北時間・僅記錄成功輸入帳密登入`)
+        ),
+        React.createElement('button', { onClick: loadRows, disabled: loading, className: "px-3 py-2 rounded-lg text-xs flex-shrink-0", style: { background: C.tableColor, color: "white", fontFamily: "Inter", fontWeight: 700, opacity: loading ? .6 : 1 } }, loading ? "讀取中…" : "重新整理")
+      ),
+      message && React.createElement('div', { className: "p-3 rounded-xl mb-4 text-sm", style: { background: "#FFF0EC", color: C.alert, border: `1px solid ${C.alert}55` } }, message),
+      React.createElement('div', { className: "p-3 rounded-xl mb-4", style: { background: C.paper, border: `1px solid ${C.line}` } },
+        React.createElement('span', { className: "text-xs", style: { color: C.inkSoft } }, "本月成功登入筆數　"),
+        React.createElement('span', { style: { fontWeight: 800, color: C.tableColor } }, rows.length)
+      ),
+      React.createElement('div', { className: "rounded-2xl overflow-auto", style: { background: C.paper, border: `1px solid ${C.line}` } },
+        React.createElement('table', { style: { width: "100%", minWidth: 720, borderCollapse: "collapse", fontSize: 12 } },
+          React.createElement('thead', null, React.createElement('tr', null,
+            ["日期", "登入時間", "帳號", "姓名", "身分", "登入 IP"].map((h) => React.createElement('th', { key: h, style: { padding: "10px 8px", borderBottom: `1px solid ${C.line}`, background: "#F3F0E7", textAlign: "center", whiteSpace: "nowrap" } }, h))
+          )),
+          React.createElement('tbody', null,
+            !loading && rows.length === 0
+              ? React.createElement('tr', null, React.createElement('td', { colSpan: 6, style: { padding: 24, textAlign: "center", color: C.inkSoft } }, "本月尚無登入紀錄"))
+              : rows.map((r, index) => React.createElement('tr', { key: r.id || `${r.loggedAt}-${index}` },
+                  React.createElement('td', { style: { padding: "9px 8px", borderBottom: `1px solid ${C.line}`, textAlign: "center", whiteSpace: "nowrap" } }, r.loginDate || taipeiLoginParts(r.loggedAt).date),
+                  React.createElement('td', { style: { padding: "9px 8px", borderBottom: `1px solid ${C.line}`, textAlign: "center", whiteSpace: "nowrap", fontFamily: "IBM Plex Mono" } }, r.loginTime || taipeiLoginParts(r.loggedAt).time),
+                  React.createElement('td', { style: { padding: "9px 8px", borderBottom: `1px solid ${C.line}`, textAlign: "center", fontWeight: 700 } }, r.personId || "—"),
+                  React.createElement('td', { style: { padding: "9px 8px", borderBottom: `1px solid ${C.line}`, textAlign: "center" } }, r.personName || r.personId || "—"),
+                  React.createElement('td', { style: { padding: "9px 8px", borderBottom: `1px solid ${C.line}`, textAlign: "center", whiteSpace: "nowrap" } }, r.roleLabel || ROLE_LABELS[r.role] || r.role || "—"),
+                  React.createElement('td', { style: { padding: "9px 8px", borderBottom: `1px solid ${C.line}`, textAlign: "center", fontFamily: "IBM Plex Mono", wordBreak: "break-all" } }, r.ip || "無法取得")
+                ))
+          )
+        )
+      ),
+      React.createElement('div', { className: "text-xs mt-3", style: { color: C.inkSoft, lineHeight: 1.6 } }, "IP 為登入當下對外連線位址；行動網路、公司網路或 VPN 可能多人共用或隨時變更。")
+    )
+  );
+}
+
 const REPORT_SLOTS = [
   { no: "一", label: "耗材匯總表", key: "materials", ready: true },
   { no: "二", label: "年度計畫表", key: "annual", ready: true },
@@ -6652,7 +6787,7 @@ const REPORT_SLOTS = [
   { no: "七", label: "尚未設計", key: null, ready: false },
   { no: "八", label: "尚未設計", key: null, ready: false },
   { no: "九", label: "尚未設計", key: null, ready: false },
-  { no: "十", label: "尚未設計", key: null, ready: false },
+  { no: "十", label: "登入 IP 與時間", key: "loginAudit", ready: true },
 ];
 
 // 耗材與報表主入口：年份資料夾 → 月份資料夾 → 10個表格選項（表一~表十）
@@ -6679,6 +6814,9 @@ function ReportsHub({ onBack, loggedInId, calendarRole }) {
   }
   if (openKey === "fertilizerUsage") {
     return React.createElement(FertilizerUsageReport, { year: yearSel, month: monthSel, onBack: () => setOpenKey(null),} );
+  }
+  if (openKey === "loginAudit") {
+    return React.createElement(LoginAuditReport, { year: yearSel, month: monthSel, onBack: () => setOpenKey(null),} );
   }
 
   return (
@@ -6731,6 +6869,10 @@ function ReportsHub({ onBack, loggedInId, calendarRole }) {
                 disabled: !slot.ready,
                 onClick: () => {
                   if (!slot.ready) return;
+                  if (slot.key === "loginAudit" && !/^[AB]/i.test(String(loggedInId || ""))) {
+                    window.alert("表十包含登入 IP，僅限 A／B 管理帳號查看。");
+                    return;
+                  }
                   // 表二與功能5共用同一個年度計畫模組、資料來源與PDF輸出，避免兩套內容不同步。
                   if (slot.key === "annual") {
                     openCalendarPortal(loggedInId, calendarRole);
@@ -10313,6 +10455,7 @@ function App() {
     setSessionState(next);
     if (remember) saveSession(next);
     else saveSession(null);
+    recordSuccessfulLogin(role, id).catch((e) => console.warn("record login audit failed", e));
   };
 
   const logout = () => {
