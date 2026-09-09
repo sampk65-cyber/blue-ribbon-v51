@@ -1,7 +1,7 @@
 name: Weather Hourly
 on:
   schedule:
-    - cron: "17 * * * *"
+    - cron: "47 * * * *"
       timezone: "Asia/Taipei"
   workflow_dispatch:
 permissions:
