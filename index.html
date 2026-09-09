@@ -519,7 +519,7 @@ const C = {
   tiffanyLight: "#B8ECE5",
   tiffanyText: "#2E8577",
 };
-const APP_VERSION = "V5.1+C8.10・全站氣候補寫修正版";
+const APP_VERSION = "V5.1+C8.9・每小時氣候紀錄穩定版";
 const FONT_LINK = "https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,600;9..144,700&family=Inter:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap";
 
 const WORK_ITEMS = [
@@ -568,52 +568,6 @@ const ENV_CWA = {
   apiBase: "https://opendata.cwa.gov.tw/api/v1/rest/datastore/O-A0001-001",
 };
 const ENV_ABNORMAL_OPTIONS = ["乾旱", "淹水", "悶熱", "寒冷", "高濕", "低照度", "其他"];
-
-// C8.10：氣候補寫改為全站常駐，不再綁在功能表9／EnvironmentMenu。
-// 網頁只要仍開啟，不論目前位於哪一個功能，都會定期呼叫後端。
-// 後端以 hourKey 寫入，同一小時重複呼叫只更新同一筆，不會產生重複資料。
-(function installWeatherHourlyHeartbeat() {
-  if (window.__weatherHourlyHeartbeatInstalled) return;
-  window.__weatherHourlyHeartbeatInstalled = true;
-
-  const INTERVAL_MS = 10 * 60 * 1000;
-  const MIN_RETRY_GAP_MS = 60 * 1000;
-  let lastAttemptAt = 0;
-
-  const notify = (detail) => {
-    window.__weatherHourlyHeartbeatStatus = detail;
-    try { window.dispatchEvent(new CustomEvent("weather-hourly-status", { detail })); } catch (_e) {}
-  };
-
-  const run = async (reason) => {
-    const now = Date.now();
-    if (now - lastAttemptAt < MIN_RETRY_GAP_MS) return;
-    lastAttemptAt = now;
-    try {
-      const res = await fetch(`/api/weather-hourly?source=${encodeURIComponent(reason || "site-wide")}&t=${now}`, { cache: "no-store" });
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      notify({ ok: true, at: Date.now(), reason: reason || "site-wide" });
-    } catch (error) {
-      notify({ ok: false, at: Date.now(), reason: reason || "site-wide", error: error && error.message ? error.message : String(error) });
-    }
-  };
-
-  run("page-load");
-  const timer = window.setInterval(() => run("site-wide-10min"), INTERVAL_MS);
-  const resume = () => { if (!document.hidden) run("resume"); };
-  window.addEventListener("focus", resume);
-  window.addEventListener("online", resume);
-  window.addEventListener("pageshow", resume);
-  document.addEventListener("visibilitychange", resume);
-  window.__weatherHourlyHeartbeatStop = () => {
-    window.clearInterval(timer);
-    window.removeEventListener("focus", resume);
-    window.removeEventListener("online", resume);
-    window.removeEventListener("pageshow", resume);
-    document.removeEventListener("visibilitychange", resume);
-    window.__weatherHourlyHeartbeatInstalled = false;
-  };
-})();
 
 function EnvironmentMenu({ onBack, role, loggedInId }) {
   const editable = ["designer", "founder", "manager"].includes(role);
@@ -825,18 +779,35 @@ function EnvironmentMenu({ onBack, role, loggedInId }) {
 
   useEffect(() => {
     let alive = true;
-    const updateStatus = async (event) => {
+    let timer = null;
+    const tick = async () => {
       if (!alive) return;
-      const detail = (event && event.detail) || window.__weatherHourlyHeartbeatStatus || {};
-      setAutoSaveStatus(detail.ok ? "全站氣候自動補寫已啟用" : "氣候補寫暫時失敗，恢復連線後會重試");
-      if (detail.ok) await loadOutdoorHistoryCount();
+      let serverSaved = false;
+      try {
+        const r = await fetch("/api/weather-hourly", { cache: "no-store" });
+        if (r.ok) {
+          serverSaved = true;
+          setAutoSaveStatus("伺服器每小時自動累積已啟用");
+          await loadOutdoorHistoryCount();
+        }
+      } catch (_e) {}
+      // 恢復 C8.2～C8.4 的穩定容錯：不論伺服器本次是否成功，
+      // 瀏覽器都以最新神岡觀測校正同一小時資料。
+      // Firestore key 固定為 environment:outdoor:hour:YYYY-MM-DDTHH，
+      // 因此每10分鐘重試仍然只會保留該小時1筆，不會增加重複筆數。
+      if (cwaKey) {
+        await fetchOutdoor(cwaKey, { quiet: true, source: "browser-auto" });
+      }
     };
-    window.addEventListener("weather-hourly-status", updateStatus);
-    updateStatus();
-    // 保留中央氣象署瀏覽器端容錯；進入本頁時立即校正當小時資料。
-    if (cwaKey) fetchOutdoor(cwaKey, { quiet: true, source: "browser-open" });
-    return () => { alive = false; window.removeEventListener("weather-hourly-status", updateStatus); };
+    tick();
+    // C8.2～C8.4：每10分鐘檢查／補寫同一小時固定 key，提升漏抓容錯。
+    timer = window.setInterval(tick, 10 * 60 * 1000);
+    return () => { alive = false; if (timer) window.clearInterval(timer); };
   }, [cwaKey]);
+
+  useEffect(() => {
+    if (cwaKey) fetchOutdoor(cwaKey, { source: "browser-open" });
+  }, []);
 
   const saveCwaKey=()=>{const token=cwaKey.trim();try{if(token)localStorage.setItem("blueRibbonCwaApiKey",token);else localStorage.removeItem("blueRibbonCwaApiKey");}catch(e){}setShowCwaKey(false);fetchOutdoor(token);};
 
@@ -1535,26 +1506,15 @@ function BackIsland({ onBack }) {
     const s = dragState.current;
     s.dragging = false;
     try { e.currentTarget.releasePointerCapture(e.pointerId); } catch (_) {}
-  };
-  const onPointerCancel = () => {
-    dragState.current.dragging = false;
-    dragState.current.moved = true;
-  };
-  const onClick = (e) => {
-    // Android Chrome 會在 pointerup 後補送 click；若先在 pointerup 切頁，
-    // click 可能落到下一頁同位置的溫室卡片，造成誤闖溫室或卡住。
-    e.preventDefault();
-    e.stopPropagation();
-    if (!dragState.current.moved && onBack) onBack();
+    if (!s.moved && onBack) onBack();
   };
 
   if (!onBack) return null;
   const positionStyle = pos ? { left: pos.x, top: pos.y } : { right: 16, bottom: 18 };
 
   return (
-    React.createElement('button', {
-      type: "button",
-      onPointerDown, onPointerMove, onPointerUp, onPointerCancel, onClick,
+    React.createElement('div', {
+      onPointerDown, onPointerMove, onPointerUp,
       className: "fixed flex items-center gap-2 rounded-full shadow-xl",
       title: "可拖曳；點一下回上一頁",
       style: {
@@ -1626,25 +1586,15 @@ function HomeIsland({ onHome }) {
     const s = dragState.current;
     s.dragging = false;
     try { e.currentTarget.releasePointerCapture(e.pointerId); } catch (_) {}
-  };
-  const onPointerCancel = () => {
-    dragState.current.dragging = false;
-    dragState.current.moved = true;
-  };
-  const onClick = (e) => {
-    // 導向只在 click 階段執行，避免 Android 的延遲 click 穿透到底下地圖。
-    e.preventDefault();
-    e.stopPropagation();
-    if (!dragState.current.moved && onHome) onHome();
+    if (!s.moved && onHome) onHome();
   };
 
   if (!onHome) return null;
   const positionStyle = pos ? { left: pos.x, top: pos.y } : { left: 16, bottom: 18 };
 
   return (
-    React.createElement('button', {
-      type: "button",
-      onPointerDown, onPointerMove, onPointerUp, onPointerCancel, onClick,
+    React.createElement('div', {
+      onPointerDown, onPointerMove, onPointerUp,
       className: "fixed flex items-center gap-2 rounded-full shadow-xl",
       title: "可拖曳；點一下回主畫面",
       style: {
@@ -2982,7 +2932,7 @@ function TreeHistory({ zone, onBack, role, loggedInId }) {
   const [rows,setRows] = useState([]);
   const [generated,setGenerated] = useState(false);
   const [editingNode,setEditingNode] = useState(null);
-  const [editForm,setEditForm] = useState({markDate:"",spacing:"",matureDate:"",note:""});
+  const [editForm,setEditForm] = useState({markDate:"",spacing:"",fruitStatus:"",fruitDiameter:"",matureDate:"",note:""});
   const [busy,setBusy] = useState(false);
   const [message,setMessage] = useState("");
   const years = Array.from({length:6},function(_,i){ return now.getFullYear()+i; });
@@ -2990,7 +2940,7 @@ function TreeHistory({ zone, onBack, role, loggedInId }) {
   const label = function(text,control){ return React.createElement("label",{className:"block"},React.createElement("div",{className:"text-xs mb-1",style:{fontFamily:"Inter",fontWeight:800,color:C.inkSoft}},text),control); };
   const pruneMd = function(){ return String(pruneDate || "").slice(5) || "未定"; };
   const tableKey = function(){ return "treeTable:"+zone.id+":"+v51Ym(year,month)+":"+point+":"+treeAge+":"+pruneMd(); };
-  const blankRows = function(count){ return Array.from({length:Number(count)},function(_,i){return {nodeNo:i+1,markDate:"",spacing:"",matureDate:"",note:""};}); };
+  const blankRows = function(count){ return Array.from({length:Number(count)},function(_,i){return {nodeNo:i+1,markDate:"",spacing:"",fruitStatus:"",fruitDiameter:"",matureDate:"",note:""};}); };
 
   useEffect(function(){ setGenerated(false);setRows([]);setEditingNode(null); },[zone.id,year,month,point,treeAge,pruneDate,nodeCount]);
 
@@ -3019,19 +2969,21 @@ function TreeHistory({ zone, onBack, role, loggedInId }) {
   const openRow = function(row){
     if(!generated)return;
     setEditingNode(row.nodeNo);
-    setEditForm({markDate:row.markDate||"",spacing:row.spacing==null?"":row.spacing,matureDate:row.matureDate||"",note:row.note||""});
+    setEditForm({markDate:row.markDate||"",spacing:row.spacing==null?"":row.spacing,fruitStatus:row.fruitStatus||"",fruitDiameter:row.fruitDiameter==null?"":row.fruitDiameter,matureDate:row.matureDate||"",note:row.note||""});
   };
   const saveRow = async function(){
     if(!editable||editingNode==null)return;
     if(editForm.spacing!==""&&Number(editForm.spacing)<0){setMessage("間距不可小於0。");return;}
+    const fruitDiameterValue=Number(editForm.fruitDiameter);
+    if(editForm.fruitStatus==="有果"&&editForm.fruitDiameter!==""&&(!Number.isFinite(fruitDiameterValue)||fruitDiameterValue<5||fruitDiameterValue>100)){setMessage("果直徑請輸入 5～100 mm。");return;}
     setBusy(true);
     try{
-      const next=rows.map(function(row){return row.nodeNo===editingNode?Object.assign({},row,{markDate:editForm.markDate||"",spacing:editForm.spacing===""?"":Number(editForm.spacing),matureDate:editForm.matureDate||"",note:String(editForm.note||"").trim()}):row;});
+      const next=rows.map(function(row){return row.nodeNo===editingNode?Object.assign({},row,{markDate:editForm.markDate||"",spacing:editForm.spacing===""?"":Number(editForm.spacing),fruitStatus:editForm.fruitStatus||"",fruitDiameter:editForm.fruitStatus==="有果"&&editForm.fruitDiameter!==""?fruitDiameterValue:"",matureDate:editForm.matureDate||"",note:String(editForm.note||"").trim()}):row;});
       await saveWholeTable(next);setRows(next);setEditingNode(null);setMessage("第"+editingNode+"節紀錄已儲存。");
     }catch(e){setMessage(v51FriendlyError(e));}
     finally{setBusy(false);}
   };
-  const filledCount=rows.filter(function(r){return r.markDate||r.spacing!==""||r.matureDate||r.note;}).length;
+  const filledCount=rows.filter(function(r){return r.markDate||r.spacing!==""||r.fruitStatus||r.fruitDiameter!==""||r.matureDate||r.note;}).length;
 
   const ensureTreeXlsx = async function(){
     if(window.XLSX)return window.XLSX;
@@ -3053,11 +3005,11 @@ function TreeHistory({ zone, onBack, role, loggedInId }) {
         ["溫室",zone.name,"年度",year+"年","月份",month+"月"],
         ["定位點",point,"樹齡",treeAge+"年","剪枝日",pruneMd()],
         [],
-        ["節數","標示日","間距(cm)","成熟日","備註"]
-      ].concat(rows.map(function(r){return ["第"+r.nodeNo+"節",r.markDate||"",r.spacing===""?"":r.spacing,r.matureDate||"",r.note||""];}));
+        ["節數","標示日","間距(cm)","有／無果","果直徑(mm)","成熟日","備註"]
+      ].concat(rows.map(function(r){return ["第"+r.nodeNo+"節",r.markDate||"",r.spacing===""?"":r.spacing,r.fruitStatus||"",r.fruitDiameter===""?"":r.fruitDiameter,r.matureDate||"",r.note||""];}));
       const ws=XLSX.utils.aoa_to_sheet(data);
-      ws["!cols"]=[{wch:12},{wch:14},{wch:12},{wch:14},{wch:28}];
-      ws["!merges"]=[XLSX.utils.decode_range("A1:E1")];
+      ws["!cols"]=[{wch:12},{wch:14},{wch:12},{wch:12},{wch:14},{wch:14},{wch:28}];
+      ws["!merges"]=[XLSX.utils.decode_range("A1:G1")];
       const wb=XLSX.utils.book_new();XLSX.utils.book_append_sheet(wb,ws,"節間紀錄");
       XLSX.writeFile(wb,"果樹履歷_"+zone.name+"_"+year+"-"+String(month).padStart(2,"0")+"_"+point+".xlsx",{compression:true});
     }catch(e){setMessage(v51FriendlyError(e));}
@@ -3098,14 +3050,16 @@ function TreeHistory({ zone, onBack, role, loggedInId }) {
               React.createElement("div",{className:"text-xs mt-2",style:{fontFamily:"Inter",color:C.inkSoft,lineHeight:1.7}},zone.name+"｜"+year+"年"+month+"月｜定位點 "+point+"｜樹齡 "+treeAge+"年｜剪枝 "+pruneMd()+"｜"+nodeCount+"節｜已填 "+filledCount+"節")
             ),
             React.createElement("div",{style:{overflowX:"auto"}},
-              React.createElement("table",{style:{width:"100%",minWidth:680,borderCollapse:"collapse",fontFamily:"Inter"}},
-                React.createElement("thead",null,React.createElement("tr",{style:{background:"rgba(238,245,241,.96)"}},["節數","標示日","間距","成熟日","備註"].map(function(h){return React.createElement("th",{key:h,style:{padding:"12px 9px",textAlign:"left",fontSize:13,color:C.ink,borderBottom:"1px solid "+C.line,whiteSpace:"nowrap"}},h);}))),
+              React.createElement("table",{style:{width:"100%",minWidth:900,borderCollapse:"collapse",fontFamily:"Inter"}},
+                React.createElement("thead",null,React.createElement("tr",{style:{background:"rgba(238,245,241,.96)"}},["節數","標示日","間距","有／無果","果直徑","成熟日","備註"].map(function(h){return React.createElement("th",{key:h,style:{padding:"12px 9px",textAlign:"left",fontSize:13,color:C.ink,borderBottom:"1px solid "+C.line,whiteSpace:"nowrap"}},h);}))),
                 React.createElement("tbody",null,rows.map(function(r){
-                  const filled=r.markDate||r.spacing!==""||r.matureDate||r.note;
+                  const filled=r.markDate||r.spacing!==""||r.fruitStatus||r.fruitDiameter!==""||r.matureDate||r.note;
                   return React.createElement("tr",{key:r.nodeNo,onClick:function(){openRow(r);},style:{cursor:editable?"pointer":"default",background:filled?"rgba(78,124,107,.06)":"transparent"}},
                     React.createElement("td",{style:Object.assign({},cellStyle,{fontWeight:900,color:C.tableColor,whiteSpace:"nowrap"})},"第"+r.nodeNo+"節"),
                     React.createElement("td",{style:Object.assign({},cellStyle,{whiteSpace:"nowrap"})},r.markDate||"點選輸入"),
                     React.createElement("td",{style:Object.assign({},cellStyle,{whiteSpace:"nowrap"})},r.spacing===""?"—":r.spacing+" cm"),
+                    React.createElement("td",{style:Object.assign({},cellStyle,{whiteSpace:"nowrap"})},r.fruitStatus||"—"),
+                    React.createElement("td",{style:Object.assign({},cellStyle,{whiteSpace:"nowrap"})},r.fruitDiameter===""||r.fruitDiameter==null?"—":r.fruitDiameter+" mm"),
                     React.createElement("td",{style:Object.assign({},cellStyle,{whiteSpace:"nowrap"})},r.matureDate||"—"),
                     React.createElement("td",{style:Object.assign({},cellStyle,{minWidth:160})},r.note||"—")
                   );
@@ -3123,6 +3077,15 @@ function TreeHistory({ zone, onBack, role, loggedInId }) {
         React.createElement("div",{className:"grid grid-cols-2 gap-3 mt-4"},
           label("標示日",React.createElement("input",{type:"date",value:editForm.markDate,onChange:function(e){setEditForm(Object.assign({},editForm,{markDate:e.target.value}));},style:v51InputStyle()})),
           label("間距（cm）",React.createElement("input",{type:"number",min:"0",step:"0.1",inputMode:"decimal",value:editForm.spacing,onChange:function(e){setEditForm(Object.assign({},editForm,{spacing:e.target.value}));},style:v51InputStyle()})),
+          React.createElement("div",{className:"block"},
+            React.createElement("div",{className:"text-xs mb-1",style:{fontFamily:"Inter",fontWeight:800,color:C.inkSoft}},"有／無果"),
+            React.createElement("div",{style:Object.assign({},v51InputStyle(),{display:"flex",alignItems:"center",gap:18})},
+              ["有果","無果"].map(function(option){return React.createElement("label",{key:option,style:{display:"flex",alignItems:"center",gap:6,fontFamily:"Inter",fontWeight:700,color:C.ink,cursor:"pointer"}},
+                React.createElement("input",{type:"radio",name:"fruit-status-"+editingNode,value:option,checked:editForm.fruitStatus===option,onChange:function(e){setEditForm(Object.assign({},editForm,{fruitStatus:e.target.value,fruitDiameter:e.target.value==="無果"?"":editForm.fruitDiameter}));}}),option
+              );})
+            )
+          ),
+          label("果直徑（5～100 mm）",React.createElement("input",{type:"number",min:"5",max:"100",step:"0.1",inputMode:"decimal",disabled:editForm.fruitStatus!=="有果",value:editForm.fruitDiameter,onChange:function(e){setEditForm(Object.assign({},editForm,{fruitDiameter:e.target.value}));},placeholder:editForm.fruitStatus==="有果"?"輸入 5～100":"請先勾選有果",style:Object.assign({},v51InputStyle(),{opacity:editForm.fruitStatus==="有果"?1:.55})})),
           label("成熟日",React.createElement("input",{type:"date",value:editForm.matureDate,onChange:function(e){setEditForm(Object.assign({},editForm,{matureDate:e.target.value}));},style:v51InputStyle()})),
           React.createElement("label",{className:"block"},React.createElement("div",{className:"text-xs mb-1",style:{fontFamily:"Inter",fontWeight:800,color:C.inkSoft}},"備註"),React.createElement("input",{value:editForm.note,onChange:function(e){setEditForm(Object.assign({},editForm,{note:e.target.value}));},placeholder:"生長狀態或其他說明",style:v51InputStyle()}))
         ),
@@ -10059,6 +10022,26 @@ function AppMain({ initialRole, initialId, onLogoutToSplash }) {
     return menuIndex === 1 ? "designer" : "manager";
   };
 
+  // 功能表6獨立驗證「閱覽／修改」開關，未授權時不允許進入。
+  const photoAccess = () => {
+    if (role === "designer" || role === "founder") return { view: true, edit: true };
+    const p = currentPersonPerm;
+    if (!p || p.status !== "active") return { view: false, edit: false };
+    const item = (p.menuPerms && p.menuPerms[5]) || {};
+    const edit = p.tier === "修改" || !!item.edit;
+    const view = edit || p.tier === "閱覽" || !!item.view;
+    return { view: view, edit: edit };
+  };
+  const openPhotos = (openFn) => {
+    const access = photoAccess();
+    if (!access.view) {
+      window.alert("目前帳號尚未開啟功能表6「照片影像資料庫」的閱覽權限。");
+      return;
+    }
+    openFn();
+  };
+  const photoRole = () => photoAccess().edit ? "manager" : "guest";
+
   const ATT_PREFIX = 'attendance:';
   const checkAttendanceAbnormalOnLogin = async (personId) => {
     if (!personId) return;
@@ -10163,9 +10146,6 @@ function AppMain({ initialRole, initialId, onLogoutToSplash }) {
   };
   const backToMap = () => {
     setZone(null);
-    setView("menu");
-    setEnteringZone(null);
-    setEntryFading(false);
     setGlobalReport(false);
     setGlobalCalendar(false);
     setGlobalFolders(false);
@@ -10243,7 +10223,7 @@ function AppMain({ initialRole, initialId, onLogoutToSplash }) {
           onOpenReport: () => setGlobalReport(true),
           onOpenCalendar: () => openCalendarPortal(loggedInId, roleForMenu(4)),
           onOpenFolders: () => setGlobalFolders(true),
-          onOpenPhotos: () => setGlobalPhotos(true),
+          onOpenPhotos: () => openPhotos(() => setGlobalPhotos(true)),
           onOpenTrees: () => setGlobalTrees(true),
           onOpenPersonnel: () => setGlobalPersonnel(true),
           onOpenPermissions: () => setGlobalPermissions(true),
@@ -10261,7 +10241,7 @@ function AppMain({ initialRole, initialId, onLogoutToSplash }) {
       , globalReport && React.createElement(ReportsHub, { onBack: backToMap, loggedInId: loggedInId, calendarRole: roleForMenu(4),} )
       , globalCalendar && React.createElement(MasterCalendar, { onBack: backToMap, role: roleForMenu(4),} )
       , globalFolders && React.createElement(ZoneWorkFolders, { onBack: backToMap, role: roleForMenu(3), loggedInId: loggedInId,} )
-      , globalPhotos && React.createElement(FeatureZonePortal, { type: "photos", onBack: backToMap, role: roleForMenu(5), loggedInId: loggedInId,} )
+      , globalPhotos && React.createElement(FeatureZonePortal, { type: "photos", onBack: backToMap, role: photoRole(), loggedInId: loggedInId,} )
       , globalTrees && React.createElement(FeatureZonePortal, { type: "trees", onBack: backToMap, role: roleForMenu(7), loggedInId: loggedInId,} )
       , globalPersonnel && React.createElement(PersonnelMenu, { onBack: backToMap, role: roleForMenu(0), onChanged: refreshPendingCount,} )
       , globalPermissions && React.createElement(PermissionsMenu, { onBack: backToMap, role: roleForMenu(1), onChanged: async () => { await refreshPendingCount(); await loadCurrentPersonPerm(loggedInId); },} )
@@ -10276,7 +10256,7 @@ function AppMain({ initialRole, initialId, onLogoutToSplash }) {
           onOpenReport: () => setView("report"),
           onOpenCalendar: () => openCalendarPortal(loggedInId, role),
           onOpenFolders: () => setView("folders"),
-          onOpenPhotos: () => setView("photos"),
+          onOpenPhotos: () => openPhotos(() => setView("photos")),
           onOpenTrees: () => setView("trees"),
           onOpenPersonnel: () => setView("personnel"),
           onOpenPermissions: () => setView("permissions"),
@@ -10298,7 +10278,7 @@ function AppMain({ initialRole, initialId, onLogoutToSplash }) {
       , zone && view === "report" && React.createElement(ReportsHub, { onBack: backToFunction, loggedInId: loggedInId, calendarRole: roleForMenu(4),} )
       , zone && view === "calendar" && React.createElement(MasterCalendar, { onBack: backToFunction, role: roleForMenu(4),} )
       , zone && view === "folders" && React.createElement(ZoneWorkFolders, { onBack: backToFunction, role: roleForMenu(3), loggedInId: loggedInId,} )
-      , zone && view === "photos" && React.createElement(PhotoLibrary, { zone: zone, onBack: backToFunction, role: roleForMenu(5), loggedInId: loggedInId,} )
+      , zone && view === "photos" && React.createElement(PhotoLibrary, { zone: zone, onBack: backToFunction, role: photoRole(), loggedInId: loggedInId,} )
       , zone && view === "trees" && React.createElement(TreeHistory, { zone: zone, onBack: backToFunction, role: roleForMenu(7), loggedInId: loggedInId,} )
       , zone && view === "personnel" && React.createElement(PersonnelMenu, { onBack: backToFunction, role: roleForMenu(0), onChanged: refreshPendingCount,} )
       , zone && view === "permissions" && React.createElement(PermissionsMenu, { onBack: backToFunction, role: roleForMenu(1), onChanged: async () => { await refreshPendingCount(); await loadCurrentPersonPerm(loggedInId); },} )
