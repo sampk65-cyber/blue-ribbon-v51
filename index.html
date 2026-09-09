@@ -519,7 +519,7 @@ const C = {
   tiffanyLight: "#B8ECE5",
   tiffanyText: "#2E8577",
 };
-const APP_VERSION = "V5.1+C8.9・每小時氣候紀錄穩定版";
+const APP_VERSION = "V5.1+C8.10・全站氣候補寫修正版";
 const FONT_LINK = "https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,600;9..144,700&family=Inter:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap";
 
 const WORK_ITEMS = [
@@ -568,6 +568,52 @@ const ENV_CWA = {
   apiBase: "https://opendata.cwa.gov.tw/api/v1/rest/datastore/O-A0001-001",
 };
 const ENV_ABNORMAL_OPTIONS = ["乾旱", "淹水", "悶熱", "寒冷", "高濕", "低照度", "其他"];
+
+// C8.10：氣候補寫改為全站常駐，不再綁在功能表9／EnvironmentMenu。
+// 網頁只要仍開啟，不論目前位於哪一個功能，都會定期呼叫後端。
+// 後端以 hourKey 寫入，同一小時重複呼叫只更新同一筆，不會產生重複資料。
+(function installWeatherHourlyHeartbeat() {
+  if (window.__weatherHourlyHeartbeatInstalled) return;
+  window.__weatherHourlyHeartbeatInstalled = true;
+
+  const INTERVAL_MS = 10 * 60 * 1000;
+  const MIN_RETRY_GAP_MS = 60 * 1000;
+  let lastAttemptAt = 0;
+
+  const notify = (detail) => {
+    window.__weatherHourlyHeartbeatStatus = detail;
+    try { window.dispatchEvent(new CustomEvent("weather-hourly-status", { detail })); } catch (_e) {}
+  };
+
+  const run = async (reason) => {
+    const now = Date.now();
+    if (now - lastAttemptAt < MIN_RETRY_GAP_MS) return;
+    lastAttemptAt = now;
+    try {
+      const res = await fetch(`/api/weather-hourly?source=${encodeURIComponent(reason || "site-wide")}&t=${now}`, { cache: "no-store" });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      notify({ ok: true, at: Date.now(), reason: reason || "site-wide" });
+    } catch (error) {
+      notify({ ok: false, at: Date.now(), reason: reason || "site-wide", error: error && error.message ? error.message : String(error) });
+    }
+  };
+
+  run("page-load");
+  const timer = window.setInterval(() => run("site-wide-10min"), INTERVAL_MS);
+  const resume = () => { if (!document.hidden) run("resume"); };
+  window.addEventListener("focus", resume);
+  window.addEventListener("online", resume);
+  window.addEventListener("pageshow", resume);
+  document.addEventListener("visibilitychange", resume);
+  window.__weatherHourlyHeartbeatStop = () => {
+    window.clearInterval(timer);
+    window.removeEventListener("focus", resume);
+    window.removeEventListener("online", resume);
+    window.removeEventListener("pageshow", resume);
+    document.removeEventListener("visibilitychange", resume);
+    window.__weatherHourlyHeartbeatInstalled = false;
+  };
+})();
 
 function EnvironmentMenu({ onBack, role, loggedInId }) {
   const editable = ["designer", "founder", "manager"].includes(role);
@@ -779,35 +825,18 @@ function EnvironmentMenu({ onBack, role, loggedInId }) {
 
   useEffect(() => {
     let alive = true;
-    let timer = null;
-    const tick = async () => {
+    const updateStatus = async (event) => {
       if (!alive) return;
-      let serverSaved = false;
-      try {
-        const r = await fetch("/api/weather-hourly", { cache: "no-store" });
-        if (r.ok) {
-          serverSaved = true;
-          setAutoSaveStatus("伺服器每小時自動累積已啟用");
-          await loadOutdoorHistoryCount();
-        }
-      } catch (_e) {}
-      // 恢復 C8.2～C8.4 的穩定容錯：不論伺服器本次是否成功，
-      // 瀏覽器都以最新神岡觀測校正同一小時資料。
-      // Firestore key 固定為 environment:outdoor:hour:YYYY-MM-DDTHH，
-      // 因此每10分鐘重試仍然只會保留該小時1筆，不會增加重複筆數。
-      if (cwaKey) {
-        await fetchOutdoor(cwaKey, { quiet: true, source: "browser-auto" });
-      }
+      const detail = (event && event.detail) || window.__weatherHourlyHeartbeatStatus || {};
+      setAutoSaveStatus(detail.ok ? "全站氣候自動補寫已啟用" : "氣候補寫暫時失敗，恢復連線後會重試");
+      if (detail.ok) await loadOutdoorHistoryCount();
     };
-    tick();
-    // C8.2～C8.4：每10分鐘檢查／補寫同一小時固定 key，提升漏抓容錯。
-    timer = window.setInterval(tick, 10 * 60 * 1000);
-    return () => { alive = false; if (timer) window.clearInterval(timer); };
+    window.addEventListener("weather-hourly-status", updateStatus);
+    updateStatus();
+    // 保留中央氣象署瀏覽器端容錯；進入本頁時立即校正當小時資料。
+    if (cwaKey) fetchOutdoor(cwaKey, { quiet: true, source: "browser-open" });
+    return () => { alive = false; window.removeEventListener("weather-hourly-status", updateStatus); };
   }, [cwaKey]);
-
-  useEffect(() => {
-    if (cwaKey) fetchOutdoor(cwaKey, { source: "browser-open" });
-  }, []);
 
   const saveCwaKey=()=>{const token=cwaKey.trim();try{if(token)localStorage.setItem("blueRibbonCwaApiKey",token);else localStorage.removeItem("blueRibbonCwaApiKey");}catch(e){}setShowCwaKey(false);fetchOutdoor(token);};
 
@@ -1506,15 +1535,26 @@ function BackIsland({ onBack }) {
     const s = dragState.current;
     s.dragging = false;
     try { e.currentTarget.releasePointerCapture(e.pointerId); } catch (_) {}
-    if (!s.moved && onBack) onBack();
+  };
+  const onPointerCancel = () => {
+    dragState.current.dragging = false;
+    dragState.current.moved = true;
+  };
+  const onClick = (e) => {
+    // Android Chrome 會在 pointerup 後補送 click；若先在 pointerup 切頁，
+    // click 可能落到下一頁同位置的溫室卡片，造成誤闖溫室或卡住。
+    e.preventDefault();
+    e.stopPropagation();
+    if (!dragState.current.moved && onBack) onBack();
   };
 
   if (!onBack) return null;
   const positionStyle = pos ? { left: pos.x, top: pos.y } : { right: 16, bottom: 18 };
 
   return (
-    React.createElement('div', {
-      onPointerDown, onPointerMove, onPointerUp,
+    React.createElement('button', {
+      type: "button",
+      onPointerDown, onPointerMove, onPointerUp, onPointerCancel, onClick,
       className: "fixed flex items-center gap-2 rounded-full shadow-xl",
       title: "可拖曳；點一下回上一頁",
       style: {
@@ -1586,15 +1626,25 @@ function HomeIsland({ onHome }) {
     const s = dragState.current;
     s.dragging = false;
     try { e.currentTarget.releasePointerCapture(e.pointerId); } catch (_) {}
-    if (!s.moved && onHome) onHome();
+  };
+  const onPointerCancel = () => {
+    dragState.current.dragging = false;
+    dragState.current.moved = true;
+  };
+  const onClick = (e) => {
+    // 導向只在 click 階段執行，避免 Android 的延遲 click 穿透到底下地圖。
+    e.preventDefault();
+    e.stopPropagation();
+    if (!dragState.current.moved && onHome) onHome();
   };
 
   if (!onHome) return null;
   const positionStyle = pos ? { left: pos.x, top: pos.y } : { left: 16, bottom: 18 };
 
   return (
-    React.createElement('div', {
-      onPointerDown, onPointerMove, onPointerUp,
+    React.createElement('button', {
+      type: "button",
+      onPointerDown, onPointerMove, onPointerUp, onPointerCancel, onClick,
       className: "fixed flex items-center gap-2 rounded-full shadow-xl",
       title: "可拖曳；點一下回主畫面",
       style: {
@@ -10113,6 +10163,9 @@ function AppMain({ initialRole, initialId, onLogoutToSplash }) {
   };
   const backToMap = () => {
     setZone(null);
+    setView("menu");
+    setEnteringZone(null);
+    setEntryFading(false);
     setGlobalReport(false);
     setGlobalCalendar(false);
     setGlobalFolders(false);
