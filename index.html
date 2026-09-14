@@ -3000,22 +3000,26 @@ function TreeHistory({ zone, onBack, role, loggedInId }) {
   const select = function(value,onChange,children){ return React.createElement("select",{value:value,onChange:onChange,style:v51InputStyle()},children); };
   const label = function(text,control){ return React.createElement("label",{className:"block"},React.createElement("div",{className:"text-xs mb-1",style:{fontFamily:"Inter",fontWeight:800,color:C.inkSoft}},text),control); };
   const ownerId = String(loggedInId || "").trim();
+  const isABSupervisor = /^[AB]/i.test(ownerId);
   const ownerToken = encodeURIComponent(ownerId);
   const personalPrefix = "treeTableUser:"+ownerToken+":";
   const pruneMd = function(){ return String(pruneDate || "").slice(5) || "未定"; };
   const tableKey = function(){ return personalPrefix+zone.id+":"+v51Ym(year,month)+":"+point+":"+treeAge+":"+pruneMd(); };
   const legacyTableKey = function(){ return "treeTable:"+zone.id+":"+v51Ym(year,month)+":"+point+":"+treeAge+":"+pruneMd(); };
   const blankRows = function(count){ return Array.from({length:Number(count)},function(_,i){return {nodeNo:i+1,markDate:"",spacing:"",fruitStatus:"",fruitDiameter:"",matureDate:"",note:""};}); };
+  const recordMatchesSelection = function(rec){
+    return !!rec && rec.zoneId===zone.id && Number(rec.year)===Number(year) && Number(rec.month)===Number(month) && String(rec.point)===String(point) && Number(rec.treeAge)===Number(treeAge) && String(rec.pruneDate||"")===String(pruneDate||"");
+  };
 
   const loadSavedRecords = async function(){
     if(!ownerId){setSavedRecords([]);return;}
     setRecordsBusy(true);
     try{
-      const list=await window.storage.list(personalPrefix);
+      const list=await window.storage.list("treeTableUser:");
       const loaded=await Promise.all((list.keys||[]).map(async function(key){
         try{
           const parsed=v51ParseStored(await window.storage.get(key));
-          if(!parsed||parsed.ownerId!==ownerId||parsed.zoneId!==zone.id)return null;
+          if(!parsed||parsed.zoneId!==zone.id)return null;
           return Object.assign({},parsed,{_storageKey:key});
         }catch(e){return null;}
       }));
@@ -3027,6 +3031,8 @@ function TreeHistory({ zone, onBack, role, loggedInId }) {
   useEffect(function(){ loadSavedRecords(); },[zone.id,ownerId]);
   useEffect(function(){
     if(openedRecordKey&&openedRecordKey===tableKey())return;
+    const opened=savedRecords.find(function(rec){return rec._storageKey===openedRecordKey;});
+    if(openedRecordKey&&recordMatchesSelection(opened))return;
     setOpenedRecordKey("");setGenerated(false);setRows([]);setEditingNode(null);
   },[zone.id,year,month,point,treeAge,pruneDate,nodeCount,ownerId]);
 
@@ -3036,7 +3042,12 @@ function TreeHistory({ zone, onBack, role, loggedInId }) {
     try{
       const key=tableKey();
       let saved=v51ParseStored(await window.storage.get(key));
+      let savedKey=key;
       let migrated=false;
+      if(!saved){
+        const shared=savedRecords.find(recordMatchesSelection);
+        if(shared){saved=shared;savedKey=shared._storageKey;}
+      }
       if(!saved){
         const legacy=v51ParseStored(await window.storage.get(legacyTableKey()));
         if(legacy&&(legacy.ownerId===ownerId||legacy.updatedBy===ownerId)){
@@ -3051,8 +3062,8 @@ function TreeHistory({ zone, onBack, role, loggedInId }) {
           const found=saved.rows.find(function(x){return Number(x.nodeNo)===row.nodeNo;});
           return found?Object.assign(row,found):row;
         });
-        setNodeCount(savedCount);setRows(next);setOpenedRecordKey(key);
-        setMessage(migrated?"已找回舊紀錄並轉入個人雲端紀錄。":"已讀取這組條件的雲端節間紀錄表。");
+        setNodeCount(savedCount);setRows(next);setOpenedRecordKey(savedKey);
+        setMessage(migrated?"已找回舊紀錄並轉入共用履歷。":"已讀取這組條件的雲端節間紀錄表（建立者 "+String(saved.ownerId||"-")+"）。");
         if(migrated)await loadSavedRecords();
       }else{
         setOpenedRecordKey("");setRows(blankRows(nodeCount));setMessage("已產生第1節至第"+nodeCount+"節表格；請點選一列並按「儲存此節」，才會寫入雲端。");
@@ -3063,19 +3074,21 @@ function TreeHistory({ zone, onBack, role, loggedInId }) {
   };
   const saveWholeTable = async function(nextRows){
     if(!ownerId)throw new Error("請先登入個人帳號");
-    const key=tableKey();
-    const current=savedRecords.find(function(rec){return rec._storageKey===key;});
+    const opened=savedRecords.find(function(rec){return rec._storageKey===openedRecordKey;});
+    const current=recordMatchesSelection(opened)?opened:null;
+    const key=current?current._storageKey:tableKey();
+    const targetOwnerId=current&&current.ownerId?String(current.ownerId):ownerId;
     const stamp=Date.now();
-    const data={ownerId:ownerId,zoneId:zone.id,zoneName:zone.name,year:Number(year),month:Number(month),point:point,treeAge:Number(treeAge),pruneDate:pruneDate,nodeCount:Number(nodeCount),rows:nextRows,createdAt:Number(current&&current.createdAt||stamp),updatedAt:stamp,updatedBy:ownerId};
+    const data={ownerId:targetOwnerId,zoneId:zone.id,zoneName:zone.name,year:Number(year),month:Number(month),point:point,treeAge:Number(treeAge),pruneDate:pruneDate,nodeCount:Number(nodeCount),rows:nextRows,createdAt:Number(current&&current.createdAt||stamp),updatedAt:stamp,updatedBy:ownerId};
     await window.storage.set(key,JSON.stringify(data));
     setOpenedRecordKey(key);
     return data;
   };
   const openSavedRecord = function(rec){
-    if(!rec||rec.ownerId!==ownerId)return;
+    if(!rec||rec.zoneId!==zone.id)return;
     setYear(Number(rec.year));setMonth(Number(rec.month));setPoint(String(rec.point));setTreeAge(Number(rec.treeAge));setPruneDate(rec.pruneDate||v51Today());setNodeCount(Math.max(1,Math.min(30,Number(rec.nodeCount)||(rec.rows||[]).length||1)));
     setRows(Array.isArray(rec.rows)?rec.rows.map(function(row){return Object.assign({},row);}):[]);
-    setOpenedRecordKey(rec._storageKey);setEditingNode(null);setGenerated(true);setMessage("已開啟雲端紀錄，可點選任一節修改後再次儲存。");
+    setOpenedRecordKey(rec._storageKey);setEditingNode(null);setGenerated(true);setMessage("已開啟建立者 "+String(rec.ownerId||"-")+" 的雲端紀錄"+(editable?"，可依功能表8修改權限繼續編輯。":"；目前帳號僅有閱覽權限。"));
   };
   const openRow = function(row){
     if(!generated)return;
@@ -3090,7 +3103,7 @@ function TreeHistory({ zone, onBack, role, loggedInId }) {
     setBusy(true);
     try{
       const next=rows.map(function(row){return row.nodeNo===editingNode?Object.assign({},row,{markDate:editForm.markDate||"",spacing:editForm.spacing===""?"":Number(editForm.spacing),fruitStatus:editForm.fruitStatus||"",fruitDiameter:editForm.fruitStatus==="有果"&&editForm.fruitDiameter!==""?fruitDiameterValue:"",matureDate:editForm.matureDate||"",note:String(editForm.note||"").trim()}):row;});
-      await saveWholeTable(next);setRows(next);setEditingNode(null);setMessage("第"+editingNode+"節紀錄已儲存到個人雲端。");await loadSavedRecords();
+      await saveWholeTable(next);setRows(next);setEditingNode(null);setMessage("第"+editingNode+"節紀錄已依功能表8權限儲存到雲端。");await loadSavedRecords();
     }catch(e){setMessage(v51FriendlyError(e));}
     finally{setBusy(false);}
   };
@@ -3098,7 +3111,7 @@ function TreeHistory({ zone, onBack, role, loggedInId }) {
   const visibleSavedRecords=savedRecords.filter(function(rec){
     const q=searchText.trim().toLowerCase();
     if(!q)return true;
-    return [rec.zoneName,rec.year,rec.month,rec.point,rec.treeAge,rec.pruneDate].join(" ").toLowerCase().includes(q);
+    return [rec.zoneName,rec.year,rec.month,rec.point,rec.treeAge,rec.pruneDate,rec.ownerId,rec.updatedBy].join(" ").toLowerCase().includes(q);
   });
 
   const ensureTreeXlsx = async function(){
@@ -3148,7 +3161,7 @@ function TreeHistory({ zone, onBack, role, loggedInId }) {
           React.createElement("div",{className:"flex items-center justify-between gap-3"},
             React.createElement("div",null,
               React.createElement("div",{style:{fontFamily:"Inter",fontWeight:900,fontSize:18,color:C.ink}},"已保存紀錄"),
-              React.createElement("div",{className:"text-xs mt-1",style:{fontFamily:"Inter",color:C.inkSoft}},ownerId?"帳號 "+ownerId+"・本區個人雲端紀錄":"請先登入個人帳號")
+              React.createElement("div",{className:"text-xs mt-1",style:{fontFamily:"Inter",color:C.inkSoft}},ownerId?(isABSupervisor?"AB 全局總覽・本區全部帳號紀錄":"依功能表8權限・本區全部履歷"):"請先登入個人帳號")
             ),
             ownerId&&React.createElement("button",{onClick:loadSavedRecords,disabled:recordsBusy,style:{padding:"8px 11px",borderRadius:10,border:"1px solid "+C.line,background:C.cream,color:C.ink,fontFamily:"Inter",fontWeight:800,fontSize:12,opacity:recordsBusy ? .55 : 1}},recordsBusy?"讀取中…":"重新整理")
           ),
@@ -3163,7 +3176,8 @@ function TreeHistory({ zone, onBack, role, loggedInId }) {
             return React.createElement("button",{key:rec._storageKey,onClick:function(){openSavedRecord(rec);},className:"w-full text-left rounded-xl p-3",style:{background:openedRecordKey===rec._storageKey?"rgba(78,124,107,.12)":C.cream,border:"1px solid "+(openedRecordKey===rec._storageKey?C.tableColor:C.line),color:C.ink}},
               React.createElement("div",{style:{fontFamily:"Inter",fontWeight:900,fontSize:14}},rec.year+"年"+rec.month+"月｜定位點 "+rec.point+"｜樹齡 "+rec.treeAge+"年"),
               React.createElement("div",{className:"text-xs mt-1",style:{fontFamily:"Inter",color:C.inkSoft,lineHeight:1.5}},"剪枝 "+String(rec.pruneDate||"未定").slice(5)+"｜已填 "+count+"節"+(updated?"｜更新 "+updated:"")),
-              React.createElement("div",{className:"text-xs mt-2",style:{fontFamily:"Inter",fontWeight:900,color:C.tableColor}},"開啟／繼續編輯")
+              React.createElement("div",{className:"text-xs mt-1",style:{fontFamily:"Inter",color:C.inkSoft,lineHeight:1.5}},"建立者 "+String(rec.ownerId||"-")+"｜更新者 "+String(rec.updatedBy||"-")),
+              React.createElement("div",{className:"text-xs mt-2",style:{fontFamily:"Inter",fontWeight:900,color:C.tableColor}},editable?"開啟／繼續編輯":"開啟閱覽")
             );
           }))
         ),
@@ -10322,6 +10336,26 @@ function AppMain({ initialRole, initialId, onLogoutToSplash }) {
   };
   const photoRole = () => photoAccess().edit ? "manager" : "guest";
 
+  // 功能表8：A/B級帳號可縱觀並修改全部履歷；其他帳號完全依個別閱覽／修改權限。
+  const treeAccess = () => {
+    if (/^[AB]/i.test(String(loggedInId || "").trim())) return { view: true, edit: true };
+    const p = currentPersonPerm;
+    if (!p || p.status !== "active") return { view: false, edit: false };
+    const hasItem = !!(p.menuPerms && Object.prototype.hasOwnProperty.call(p.menuPerms, 7));
+    const item = hasItem ? (p.menuPerms[7] || {}) : {};
+    const edit = hasItem ? !!item.edit : p.tier === "修改";
+    const view = edit || (hasItem ? !!item.view : p.tier === "閱覽");
+    return { view: view, edit: edit };
+  };
+  const openTrees = (openFn) => {
+    if (!treeAccess().view) {
+      window.alert("目前帳號尚未開啟功能表8「果樹履歷」的閱覽權限。");
+      return;
+    }
+    openFn();
+  };
+  const treeRole = () => treeAccess().edit ? "manager" : "guest";
+
   const ATT_PREFIX = 'attendance:';
   const checkAttendanceAbnormalOnLogin = async (personId) => {
     if (!personId) return;
@@ -10545,7 +10579,7 @@ function AppMain({ initialRole, initialId, onLogoutToSplash }) {
           onOpenCalendar: () => openCalendarPortal(loggedInId, roleForMenu(4)),
           onOpenFolders: () => openGlobalView("folders"),
           onOpenPhotos: () => openPhotos(() => openGlobalView("photos")),
-          onOpenTrees: () => openGlobalView("trees"),
+          onOpenTrees: () => openTrees(() => openGlobalView("trees")),
           onOpenPersonnel: () => openGlobalView("personnel"),
           onOpenPermissions: () => openGlobalView("permissions"),
           onOpenYield: () => openYieldPortal(loggedInId, roleForMenu(2)),
@@ -10562,7 +10596,7 @@ function AppMain({ initialRole, initialId, onLogoutToSplash }) {
       , globalView === "report" && React.createElement(ReportsHub, { onBack: backToMap, loggedInId: loggedInId, calendarRole: roleForMenu(4),} )
       , globalView === "folders" && React.createElement(ZoneWorkFolders, { onBack: backToMap, role: roleForMenu(3), loggedInId: loggedInId,} )
       , globalView === "photos" && React.createElement(FeatureZonePortal, { type: "photos", onBack: backToMap, role: photoRole(), loggedInId: loggedInId,} )
-      , globalView === "trees" && React.createElement(FeatureZonePortal, { type: "trees", onBack: backToMap, role: roleForMenu(7), loggedInId: loggedInId,} )
+      , globalView === "trees" && React.createElement(FeatureZonePortal, { type: "trees", onBack: backToMap, role: treeRole(), loggedInId: loggedInId,} )
       , globalView === "personnel" && React.createElement(PersonnelMenu, { onBack: backToMap, role: roleForMenu(0), onChanged: refreshPendingCount,} )
       , globalView === "permissions" && React.createElement(PermissionsMenu, { onBack: backToMap, role: roleForMenu(1), onChanged: async () => { await refreshPendingCount(); await loadCurrentPersonPerm(loggedInId); },} )
       , globalView === "environment" && React.createElement(EnvironmentMenu, { onBack: backToMap, role: roleForMenu(8), loggedInId: loggedInId,} )
@@ -10577,7 +10611,7 @@ function AppMain({ initialRole, initialId, onLogoutToSplash }) {
           onOpenCalendar: () => openGlobalEmbed(() => openCalendarPortal(loggedInId, role)),
           onOpenFolders: () => openGlobalView("folders"),
           onOpenPhotos: () => openPhotos(() => openGlobalView("photos")),
-          onOpenTrees: () => openGlobalView("trees"),
+          onOpenTrees: () => openTrees(() => openGlobalView("trees")),
           onOpenPersonnel: () => openGlobalView("personnel"),
           onOpenPermissions: () => openGlobalView("permissions"),
           onOpenYield: () => openGlobalEmbed(() => openYieldPortal(loggedInId, role)),
@@ -10600,7 +10634,7 @@ function AppMain({ initialRole, initialId, onLogoutToSplash }) {
       , zone && view === "calendar" && React.createElement(MasterCalendar, { onBack: backToMap, role: roleForMenu(4),} )
       , zone && view === "folders" && React.createElement(ZoneWorkFolders, { onBack: backToMap, role: roleForMenu(3), loggedInId: loggedInId,} )
       , zone && view === "photos" && React.createElement(PhotoLibrary, { zone: zone, onBack: backToMap, role: photoRole(), loggedInId: loggedInId,} )
-      , zone && view === "trees" && React.createElement(TreeHistory, { zone: zone, onBack: backToMap, role: roleForMenu(7), loggedInId: loggedInId,} )
+      , zone && view === "trees" && React.createElement(TreeHistory, { zone: zone, onBack: backToMap, role: treeRole(), loggedInId: loggedInId,} )
       , zone && view === "personnel" && React.createElement(PersonnelMenu, { onBack: backToMap, role: roleForMenu(0), onChanged: refreshPendingCount,} )
       , zone && view === "permissions" && React.createElement(PermissionsMenu, { onBack: backToMap, role: roleForMenu(1), onChanged: async () => { await refreshPendingCount(); await loadCurrentPersonPerm(loggedInId); },} )
       , zone && view === "environment" && React.createElement(EnvironmentMenu, { onBack: backToMap, role: roleForMenu(8), loggedInId: loggedInId,} )
