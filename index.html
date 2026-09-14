@@ -2737,6 +2737,27 @@ async function v51CompressPhoto(file) {
   } finally { URL.revokeObjectURL(url); }
 }
 
+function v51IsPhotoFile(file, fromCamera) {
+  if (!file || !Number(file.size || 0)) return false;
+  const type = String(file.type || "").toLowerCase();
+  const name = String(file.name || "").toLowerCase();
+  return type.startsWith("image/") || /\.(jpe?g|png|webp|gif|heic|heif|bmp)$/i.test(name) || (fromCamera && !type);
+}
+
+async function v51PreparePhoto(file) {
+  try {
+    return {blob:await v51CompressPhoto(file), contentType:"image/jpeg", extension:"jpg"};
+  } catch (compressError) {
+    // 某些 Android 相機輸出 HEIC 或不帶 MIME；瀏覽器不能壓縮時仍以上傳原檔為備援。
+    const type = String(file.type || "").toLowerCase();
+    const matched = String(file.name || "").match(/\.([a-zA-Z0-9]+)$/);
+    let extension = matched ? matched[1].toLowerCase() : "jpg";
+    if (extension === "jpeg") extension = "jpg";
+    if (!/^(jpg|png|webp|gif|heic|heif|bmp)$/.test(extension)) extension = "jpg";
+    return {blob:file, contentType:type.startsWith("image/") ? type : "image/jpeg", extension:extension};
+  }
+}
+
 function PhotoLibrary({ zone, onBack, role, loggedInId }) {
   const now = new Date();
   const editable = v51CanEdit(role);
@@ -2784,30 +2805,54 @@ function PhotoLibrary({ zone, onBack, role, loggedInId }) {
   useEffect(function() { loadAllCounts(); }, [zone.id]);
   useEffect(function() { if (year && month) loadMonth(year, month); }, [year, month, zone.id]);
 
-  const uploadFiles = async function(files) {
-    if (!editable || !files || !files.length || !year || !month) return;
-    const imageFiles = Array.from(files).filter(function(file){ return String(file.type || "").startsWith("image/"); });
+  const uploadFiles = async function(files, source) {
+    const selectedFiles = Array.from(files || []);
+    const fromCamera = source === "camera";
+    if (!editable || !selectedFiles.length || !year || !month) return;
+    const imageFiles = selectedFiles.filter(function(file){ return v51IsPhotoFile(file, fromCamera); });
     if (!imageFiles.length) { setMessage("請選擇照片檔案。"); return; }
-    setBusy(true); setMessage("正在壓縮並上傳 " + imageFiles.length + " 張照片…"); setUploadProgress({});
+    setBusy(true); setMessage(fromCamera ? "照片拍攝完成，正在直接儲存…" : "正在壓縮並上傳 " + imageFiles.length + " 張照片…"); setUploadProgress({});
     try {
-      await window.firebaseReady;
+      if (!window.__firebaseStorage) throw new Error("Firebase Storage 尚未載入，請重新整理後再試。");
+      try { await window.firebaseReady; }
+      catch (authError) {
+        if (!window.__firebaseAuth) throw authError;
+        await window.__firebaseAuth.signInAnonymously();
+      }
+      if (window.__firebaseAuth && !window.__firebaseAuth.currentUser) await window.__firebaseAuth.signInAnonymously();
       const uploadOne = async function(file, fileIndex) {
-        const blob = await v51CompressPhoto(file);
+        const prepared = await v51PreparePhoto(file);
         const id = Date.now().toString(36) + Math.random().toString(36).slice(2,8);
         const ym = v51Ym(year, month);
         const safeName = String(file.name || "photo.jpg").replace(/[^a-zA-Z0-9._-]/g, "_");
-        const path = "greenhousePhotos/" + zone.id + "/" + ym + "/" + id + "_" + safeName.replace(/\.[^.]+$/, "") + ".jpg";
+        const path = "greenhousePhotos/" + zone.id + "/" + ym + "/" + id + "_" + safeName.replace(/\.[^.]+$/, "") + "." + prepared.extension;
         const ref = window.__firebaseStorage.ref(path);
-        const task = ref.put(blob, {contentType:"image/jpeg"});
+        const task = ref.put(prepared.blob, {contentType:prepared.contentType});
         await new Promise(function(resolve, reject) {
+          let settled = false;
+          const finish = function(callback, value) {
+            if (settled) return;
+            settled = true;
+            clearTimeout(timer);
+            callback(value);
+          };
+          const timer = setTimeout(function() {
+            try { task.cancel(); } catch (e) {}
+            finish(reject, new Error("照片上傳逾時，請確認網路後重試。"));
+          }, 120000);
           task.on("state_changed", function(snapshot) {
             const percent = snapshot.totalBytes ? Math.round(snapshot.bytesTransferred / snapshot.totalBytes * 100) : 0;
             setUploadProgress(function(prev) { const next = Object.assign({}, prev); next[fileIndex] = percent; return next; });
-          }, reject, resolve);
+          }, function(error) { finish(reject, error); }, function() { finish(resolve); });
         });
         const url = await ref.getDownloadURL();
         const meta = {id:id, zoneId:zone.id, zoneName:zone.name, ym:ym, recordDate:recordDate, note:note.trim(), url:url, path:path, fileName:file.name || "photo.jpg", uploadedAt:Date.now(), uploaderId:loggedInId || ""};
-        await window.storage.set("photoMeta:" + zone.id + ":" + ym + ":" + id, JSON.stringify(meta));
+        try {
+          await window.storage.set("photoMeta:" + zone.id + ":" + ym + ":" + id, JSON.stringify(meta));
+        } catch (metaError) {
+          try { await ref.delete(); } catch (cleanupError) { console.warn("photo rollback delete", cleanupError); }
+          throw metaError;
+        }
       };
       let nextIndex = 0;
       const worker = async function() {
@@ -2818,13 +2863,25 @@ function PhotoLibrary({ zone, onBack, role, loggedInId }) {
       };
       await Promise.all(Array.from({length:Math.min(2, imageFiles.length)}, worker));
       setNote("");
-      if (cameraRef.current) cameraRef.current.value = "";
-      if (galleryRef.current) galleryRef.current.value = "";
       await loadMonth(year, month);
       await loadAllCounts();
-      setMessage("照片已儲存到「" + zone.name + "／" + year + "年／" + month + "月」。");
-    } catch (e) { setMessage(v51FriendlyError(e)); }
-    finally { setBusy(false); setUploadProgress({}); }
+      setMessage((fromCamera ? "拍攝照片已直接儲存到「" : "照片已儲存到「") + zone.name + "／" + year + "年／" + month + "月」。");
+    } catch (e) { setMessage("照片未儲存：" + v51FriendlyError(e)); }
+    finally {
+      if (cameraRef.current) cameraRef.current.value = "";
+      if (galleryRef.current) galleryRef.current.value = "";
+      setBusy(false); setUploadProgress({});
+    }
+  };
+  const openCamera = function() {
+    if (!cameraRef.current || busy) return;
+    cameraRef.current.value = "";
+    cameraRef.current.click();
+  };
+  const openGallery = function() {
+    if (!galleryRef.current || busy) return;
+    galleryRef.current.value = "";
+    galleryRef.current.click();
   };
   const removePhoto = async function(rec) {
     if (!editable || !confirm("確定刪除這張照片？刪除後無法復原。")) return;
@@ -2880,11 +2937,11 @@ function PhotoLibrary({ zone, onBack, role, loggedInId }) {
               React.createElement("input",{type:"date",value:recordDate,onChange:function(e){setRecordDate(e.target.value);},style:v51InputStyle()}),
               React.createElement("input",{value:note,onChange:function(e){setNote(e.target.value);},placeholder:"照片備註（可不填）",style:v51InputStyle()})
             ),
-            React.createElement("input",{ref:cameraRef,type:"file",accept:"image/*",capture:"environment",onChange:function(e){uploadFiles(e.target.files);},disabled:busy,style:{display:"none"}}),
-            React.createElement("input",{ref:galleryRef,type:"file",accept:"image/*",multiple:true,onChange:function(e){uploadFiles(e.target.files);},disabled:busy,style:{display:"none"}}),
+            React.createElement("input",{ref:cameraRef,type:"file",accept:"image/*",capture:"environment",onChange:function(e){const files=Array.from(e.target.files||[]);e.target.value="";uploadFiles(files,"camera");},disabled:busy,style:{display:"none"}}),
+            React.createElement("input",{ref:galleryRef,type:"file",accept:"image/*",multiple:true,onChange:function(e){const files=Array.from(e.target.files||[]);e.target.value="";uploadFiles(files,"gallery");},disabled:busy,style:{display:"none"}}),
             React.createElement("div",{className:"grid grid-cols-2 gap-2 mt-3"},
-              React.createElement("button",{onClick:function(){cameraRef.current && cameraRef.current.click();},disabled:busy,style:v51PrimaryStyle(busy)},"📷 直接拍照"),
-              React.createElement("button",{onClick:function(){galleryRef.current && galleryRef.current.click();},disabled:busy,style:v51PrimaryStyle(busy)},"🖼️ 從相簿選取")
+              React.createElement("button",{onClick:openCamera,disabled:busy,style:v51PrimaryStyle(busy)},"📷 直接拍照並儲存"),
+              React.createElement("button",{onClick:openGallery,disabled:busy,style:v51PrimaryStyle(busy)},"🖼️ 從相簿選取")
             ),
             busy && React.createElement("div",{className:"mt-3 text-xs",style:{fontFamily:"Inter",color:C.inkSoft}},
               Object.keys(uploadProgress).length ? "上傳進度：" + Object.values(uploadProgress).join("%／") + "%" : "正在準備照片…"
