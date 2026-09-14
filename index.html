@@ -2935,36 +2935,90 @@ function TreeHistory({ zone, onBack, role, loggedInId }) {
   const [editForm,setEditForm] = useState({markDate:"",spacing:"",fruitStatus:"",fruitDiameter:"",matureDate:"",note:""});
   const [busy,setBusy] = useState(false);
   const [message,setMessage] = useState("");
+  const [savedRecords,setSavedRecords] = useState([]);
+  const [recordsBusy,setRecordsBusy] = useState(false);
+  const [searchText,setSearchText] = useState("");
+  const [openedRecordKey,setOpenedRecordKey] = useState("");
   const years = Array.from({length:6},function(_,i){ return now.getFullYear()+i; });
   const select = function(value,onChange,children){ return React.createElement("select",{value:value,onChange:onChange,style:v51InputStyle()},children); };
   const label = function(text,control){ return React.createElement("label",{className:"block"},React.createElement("div",{className:"text-xs mb-1",style:{fontFamily:"Inter",fontWeight:800,color:C.inkSoft}},text),control); };
+  const ownerId = String(loggedInId || "").trim();
+  const ownerToken = encodeURIComponent(ownerId);
+  const personalPrefix = "treeTableUser:"+ownerToken+":";
   const pruneMd = function(){ return String(pruneDate || "").slice(5) || "未定"; };
-  const tableKey = function(){ return "treeTable:"+zone.id+":"+v51Ym(year,month)+":"+point+":"+treeAge+":"+pruneMd(); };
+  const tableKey = function(){ return personalPrefix+zone.id+":"+v51Ym(year,month)+":"+point+":"+treeAge+":"+pruneMd(); };
+  const legacyTableKey = function(){ return "treeTable:"+zone.id+":"+v51Ym(year,month)+":"+point+":"+treeAge+":"+pruneMd(); };
   const blankRows = function(count){ return Array.from({length:Number(count)},function(_,i){return {nodeNo:i+1,markDate:"",spacing:"",fruitStatus:"",fruitDiameter:"",matureDate:"",note:""};}); };
 
-  useEffect(function(){ setGenerated(false);setRows([]);setEditingNode(null); },[zone.id,year,month,point,treeAge,pruneDate,nodeCount]);
+  const loadSavedRecords = async function(){
+    if(!ownerId){setSavedRecords([]);return;}
+    setRecordsBusy(true);
+    try{
+      const list=await window.storage.list(personalPrefix);
+      const loaded=await Promise.all((list.keys||[]).map(async function(key){
+        try{
+          const parsed=v51ParseStored(await window.storage.get(key));
+          if(!parsed||parsed.ownerId!==ownerId||parsed.zoneId!==zone.id)return null;
+          return Object.assign({},parsed,{_storageKey:key});
+        }catch(e){return null;}
+      }));
+      setSavedRecords(loaded.filter(Boolean).sort(function(a,b){return Number(b.updatedAt||0)-Number(a.updatedAt||0);}));
+    }catch(e){setMessage(v51FriendlyError(e));}
+    finally{setRecordsBusy(false);}
+  };
+
+  useEffect(function(){ loadSavedRecords(); },[zone.id,ownerId]);
+  useEffect(function(){
+    if(openedRecordKey&&openedRecordKey===tableKey())return;
+    setOpenedRecordKey("");setGenerated(false);setRows([]);setEditingNode(null);
+  },[zone.id,year,month,point,treeAge,pruneDate,nodeCount,ownerId]);
 
   const generateTable = async function(){
+    if(!ownerId){setMessage("請先登入個人帳號，才能讀取或儲存果樹履歷。");return;}
     setBusy(true);setMessage("");
     try{
-      const res=await window.storage.get(tableKey());
-      const saved=v51ParseStored(res);
+      const key=tableKey();
+      let saved=v51ParseStored(await window.storage.get(key));
+      let migrated=false;
+      if(!saved){
+        const legacy=v51ParseStored(await window.storage.get(legacyTableKey()));
+        if(legacy&&(legacy.ownerId===ownerId||legacy.updatedBy===ownerId)){
+          saved=Object.assign({},legacy,{ownerId:ownerId,updatedBy:ownerId,updatedAt:Number(legacy.updatedAt||Date.now()),createdAt:Number(legacy.createdAt||legacy.updatedAt||Date.now())});
+          await window.storage.set(key,JSON.stringify(saved));
+          migrated=true;
+        }
+      }
       if(saved&&Array.isArray(saved.rows)){
-        const next=blankRows(nodeCount).map(function(row){
+        const savedCount=Math.max(1,Math.min(30,Number(saved.nodeCount)||saved.rows.length||nodeCount));
+        const next=blankRows(savedCount).map(function(row){
           const found=saved.rows.find(function(x){return Number(x.nodeNo)===row.nodeNo;});
           return found?Object.assign(row,found):row;
         });
-        setRows(next);setMessage("已讀取這組條件的節間紀錄表。");
+        setNodeCount(savedCount);setRows(next);setOpenedRecordKey(key);
+        setMessage(migrated?"已找回舊紀錄並轉入個人雲端紀錄。":"已讀取這組條件的雲端節間紀錄表。");
+        if(migrated)await loadSavedRecords();
       }else{
-        setRows(blankRows(nodeCount));setMessage("已產生第1節至第"+nodeCount+"節表格，請點選任一列輸入紀錄。");
+        setOpenedRecordKey("");setRows(blankRows(nodeCount));setMessage("已產生第1節至第"+nodeCount+"節表格；請點選一列並按「儲存此節」，才會寫入雲端。");
       }
       setGenerated(true);
     }catch(e){setMessage(v51FriendlyError(e));}
     finally{setBusy(false);}
   };
   const saveWholeTable = async function(nextRows){
-    const data={zoneId:zone.id,zoneName:zone.name,year:Number(year),month:Number(month),point:point,treeAge:Number(treeAge),pruneDate:pruneDate,nodeCount:Number(nodeCount),rows:nextRows,updatedAt:Date.now(),updatedBy:loggedInId||""};
-    await window.storage.set(tableKey(),JSON.stringify(data));
+    if(!ownerId)throw new Error("請先登入個人帳號");
+    const key=tableKey();
+    const current=savedRecords.find(function(rec){return rec._storageKey===key;});
+    const stamp=Date.now();
+    const data={ownerId:ownerId,zoneId:zone.id,zoneName:zone.name,year:Number(year),month:Number(month),point:point,treeAge:Number(treeAge),pruneDate:pruneDate,nodeCount:Number(nodeCount),rows:nextRows,createdAt:Number(current&&current.createdAt||stamp),updatedAt:stamp,updatedBy:ownerId};
+    await window.storage.set(key,JSON.stringify(data));
+    setOpenedRecordKey(key);
+    return data;
+  };
+  const openSavedRecord = function(rec){
+    if(!rec||rec.ownerId!==ownerId)return;
+    setYear(Number(rec.year));setMonth(Number(rec.month));setPoint(String(rec.point));setTreeAge(Number(rec.treeAge));setPruneDate(rec.pruneDate||v51Today());setNodeCount(Math.max(1,Math.min(30,Number(rec.nodeCount)||(rec.rows||[]).length||1)));
+    setRows(Array.isArray(rec.rows)?rec.rows.map(function(row){return Object.assign({},row);}):[]);
+    setOpenedRecordKey(rec._storageKey);setEditingNode(null);setGenerated(true);setMessage("已開啟雲端紀錄，可點選任一節修改後再次儲存。");
   };
   const openRow = function(row){
     if(!generated)return;
@@ -2979,11 +3033,16 @@ function TreeHistory({ zone, onBack, role, loggedInId }) {
     setBusy(true);
     try{
       const next=rows.map(function(row){return row.nodeNo===editingNode?Object.assign({},row,{markDate:editForm.markDate||"",spacing:editForm.spacing===""?"":Number(editForm.spacing),fruitStatus:editForm.fruitStatus||"",fruitDiameter:editForm.fruitStatus==="有果"&&editForm.fruitDiameter!==""?fruitDiameterValue:"",matureDate:editForm.matureDate||"",note:String(editForm.note||"").trim()}):row;});
-      await saveWholeTable(next);setRows(next);setEditingNode(null);setMessage("第"+editingNode+"節紀錄已儲存。");
+      await saveWholeTable(next);setRows(next);setEditingNode(null);setMessage("第"+editingNode+"節紀錄已儲存到個人雲端。");await loadSavedRecords();
     }catch(e){setMessage(v51FriendlyError(e));}
     finally{setBusy(false);}
   };
   const filledCount=rows.filter(function(r){return r.markDate||r.spacing!==""||r.fruitStatus||r.fruitDiameter!==""||r.matureDate||r.note;}).length;
+  const visibleSavedRecords=savedRecords.filter(function(rec){
+    const q=searchText.trim().toLowerCase();
+    if(!q)return true;
+    return [rec.zoneName,rec.year,rec.month,rec.point,rec.treeAge,rec.pruneDate].join(" ").toLowerCase().includes(q);
+  });
 
   const ensureTreeXlsx = async function(){
     if(window.XLSX)return window.XLSX;
@@ -3028,6 +3087,29 @@ function TreeHistory({ zone, onBack, role, loggedInId }) {
           React.createElement("div",{className:"mt-1 text-sm",style:{fontFamily:"Inter",color:C.inkSoft}},zone.name+"・先設定條件，再產生可點選的節間表格")
         ),
         message&&React.createElement("div",{className:"rounded-xl p-3 mb-4 text-sm no-print",style:{background:"rgba(238,245,241,.94)",border:"1px solid "+C.tableColor+"55",color:C.ink,fontFamily:"Inter",lineHeight:1.55}},message),
+        React.createElement("section",{className:"rounded-2xl p-4 mb-5 no-print",style:{background:"rgba(255,253,248,.93)",border:"1px solid "+C.line}},
+          React.createElement("div",{className:"flex items-center justify-between gap-3"},
+            React.createElement("div",null,
+              React.createElement("div",{style:{fontFamily:"Inter",fontWeight:900,fontSize:18,color:C.ink}},"已保存紀錄"),
+              React.createElement("div",{className:"text-xs mt-1",style:{fontFamily:"Inter",color:C.inkSoft}},ownerId?"帳號 "+ownerId+"・本區個人雲端紀錄":"請先登入個人帳號")
+            ),
+            ownerId&&React.createElement("button",{onClick:loadSavedRecords,disabled:recordsBusy,style:{padding:"8px 11px",borderRadius:10,border:"1px solid "+C.line,background:C.cream,color:C.ink,fontFamily:"Inter",fontWeight:800,fontSize:12,opacity:recordsBusy ? .55 : 1}},recordsBusy?"讀取中…":"重新整理")
+          ),
+          ownerId&&React.createElement("input",{value:searchText,onChange:function(e){setSearchText(e.target.value);},placeholder:"搜尋年度、月份、定位點、樹齡或剪枝日",style:Object.assign({},v51InputStyle(),{marginTop:12,width:"100%"})}),
+          !ownerId&&React.createElement("div",{className:"text-sm mt-3",style:{fontFamily:"Inter",color:C.inkSoft}},"未登入時不顯示、也不能寫入果樹履歷。"),
+          ownerId&&recordsBusy&&React.createElement("div",{className:"text-sm mt-3",style:{fontFamily:"Inter",color:C.inkSoft}},"正在讀取雲端紀錄…"),
+          ownerId&&!recordsBusy&&savedRecords.length===0&&React.createElement("div",{className:"text-sm mt-3",style:{fontFamily:"Inter",color:C.inkSoft}},"本區尚無已保存紀錄。完成一節資料後按「儲存此節」即可建立。"),
+          ownerId&&!recordsBusy&&savedRecords.length>0&&visibleSavedRecords.length===0&&React.createElement("div",{className:"text-sm mt-3",style:{fontFamily:"Inter",color:C.inkSoft}},"找不到符合條件的紀錄。"),
+          ownerId&&!recordsBusy&&visibleSavedRecords.length>0&&React.createElement("div",{className:"grid gap-2 mt-3"},visibleSavedRecords.map(function(rec){
+            const count=(rec.rows||[]).filter(function(r){return r.markDate||r.spacing!==""||r.fruitStatus||r.fruitDiameter!==""||r.matureDate||r.note;}).length;
+            const updated=rec.updatedAt?new Date(Number(rec.updatedAt)).toLocaleString("zh-TW",{hour12:false}):"";
+            return React.createElement("button",{key:rec._storageKey,onClick:function(){openSavedRecord(rec);},className:"w-full text-left rounded-xl p-3",style:{background:openedRecordKey===rec._storageKey?"rgba(78,124,107,.12)":C.cream,border:"1px solid "+(openedRecordKey===rec._storageKey?C.tableColor:C.line),color:C.ink}},
+              React.createElement("div",{style:{fontFamily:"Inter",fontWeight:900,fontSize:14}},rec.year+"年"+rec.month+"月｜定位點 "+rec.point+"｜樹齡 "+rec.treeAge+"年"),
+              React.createElement("div",{className:"text-xs mt-1",style:{fontFamily:"Inter",color:C.inkSoft,lineHeight:1.5}},"剪枝 "+String(rec.pruneDate||"未定").slice(5)+"｜已填 "+count+"節"+(updated?"｜更新 "+updated:"")),
+              React.createElement("div",{className:"text-xs mt-2",style:{fontFamily:"Inter",fontWeight:900,color:C.tableColor}},"開啟／繼續編輯")
+            );
+          }))
+        ),
         React.createElement("section",{className:"rounded-2xl p-4 mb-5 no-print",style:{background:"rgba(255,253,248,.93)",border:"1px solid "+C.line}},
           React.createElement("div",{className:"grid grid-cols-2 md:grid-cols-3 gap-3"},
             label("年度",select(year,function(e){setYear(Number(e.target.value));},years.map(function(y){return React.createElement("option",{key:y,value:y},y+"年");}))),
@@ -10127,6 +10209,7 @@ function AppMain({ initialRole, initialId, onLogoutToSplash }) {
   const [zone, setZone] = useState(null);
   const [enteringZone, setEnteringZone] = useState(null);
   const [entryFading, setEntryFading] = useState(false);
+  const zoneEntryTimers = useRef([]);
   const [view, setView] = useState("menu"); // menu | function | floorplan | report | calendar | folders | photos | trees | personnel | permissions
   const [role, setRole] = useState(initialRole || "guest");
   const [loggedInId, setLoggedInId] = useState(initialId || null);
@@ -10241,10 +10324,20 @@ function AppMain({ initialRole, initialId, onLogoutToSplash }) {
   useEffect(() => { refreshPendingCount(); }, []);
   useEffect(() => { if (loggedInId) loadCurrentPersonPerm(loggedInId); }, [loggedInId]);
 
-  const handleLogin = (r, id) => { setRole(r); setLoggedInId(id); loadCurrentPersonPerm(id); };
-  const handleLogout = () => {
+  const cancelZoneEntry = () => {
+    zoneEntryTimers.current.forEach((timerId) => window.clearTimeout(timerId));
+    zoneEntryTimers.current = [];
     setEnteringZone(null);
     setEntryFading(false);
+  };
+  useEffect(() => () => {
+    zoneEntryTimers.current.forEach((timerId) => window.clearTimeout(timerId));
+    zoneEntryTimers.current = [];
+  }, []);
+
+  const handleLogin = (r, id) => { setRole(r); setLoggedInId(id); loadCurrentPersonPerm(id); };
+  const handleLogout = () => {
+    cancelZoneEntry();
     setZone(null);
     setView("menu");
     setGlobalView(null);
@@ -10255,11 +10348,18 @@ function AppMain({ initialRole, initialId, onLogoutToSplash }) {
   };
   const openGlobalView = (nextView) => {
     // 全域入口永遠以主畫面為上一層，不保留任何溫室路由。
-    setEnteringZone(null);
-    setEntryFading(false);
+    cancelZoneEntry();
     setZone(null);
     setView("menu");
     setGlobalView(nextView);
+  };
+  const openGlobalEmbed = (openFn) => {
+    // 行事曆／產量為既有嵌入層；先清除溫室底頁，關閉嵌入層後只能回主畫面。
+    cancelZoneEntry();
+    setZone(null);
+    setView("menu");
+    setGlobalView(null);
+    openFn();
   };
   const openZoneView = (nextView) => {
     // 溫室內功能只能存在於目前溫室之下，不與全域頁面重疊。
@@ -10281,6 +10381,7 @@ function AppMain({ initialRole, initialId, onLogoutToSplash }) {
     } catch (e) { console.warn("語音播報不可用", e); }
   };
   const enterZone = (z) => {
+    cancelZoneEntry();
     speakZoneEntry(z);
     setGlobalView(null);
 
@@ -10293,22 +10394,23 @@ function AppMain({ initialRole, initialId, onLogoutToSplash }) {
 
     setEnteringZone(z);
     setEntryFading(false);
-    window.setTimeout(() => {
+    const revealTimer = window.setTimeout(() => {
       // 先把底層切到五期功能，再讓遮罩淡出；避免淡出末端閃回主頁。
       setZone(z);
       setView("menu");
       setEntryFading(true);
     }, 2200);
-    window.setTimeout(() => {
+    const finishTimer = window.setTimeout(() => {
       setEnteringZone(null);
       setEntryFading(false);
+      zoneEntryTimers.current = [];
     }, 3000);
+    zoneEntryTimers.current = [revealTimer, finishTimer];
   };
   const backToMap = () => {
     closeEmbedLayer("yieldEmbedLayer", "yieldEmbedFrame");
     closeEmbedLayer("calendarEmbedLayer", "calendarEmbedFrame");
-    setEnteringZone(null);
-    setEntryFading(false);
+    cancelZoneEntry();
     setZone(null);
     setView("menu");
     setGlobalView(null);
@@ -10414,21 +10516,21 @@ function AppMain({ initialRole, initialId, onLogoutToSplash }) {
         React.createElement(FunctionMenu, {
           zone: zone,
           onBack: backToMenu,
-          onOpenReport: () => openZoneView("report"),
-          onOpenCalendar: () => openCalendarPortal(loggedInId, role),
-          onOpenFolders: () => openZoneView("folders"),
-          onOpenPhotos: () => openPhotos(() => openZoneView("photos")),
-          onOpenTrees: () => openZoneView("trees"),
-          onOpenPersonnel: () => openZoneView("personnel"),
-          onOpenPermissions: () => openZoneView("permissions"),
-          onOpenYield: () => openYieldPortal(loggedInId, role),
-          onOpenEnvironment: () => openZoneView("environment"),
-          onOpenAttendance: () => prepareAttendanceOnOpen(() => openZoneView("attendance")),
+          onOpenReport: () => openGlobalView("report"),
+          onOpenCalendar: () => openGlobalEmbed(() => openCalendarPortal(loggedInId, role)),
+          onOpenFolders: () => openGlobalView("folders"),
+          onOpenPhotos: () => openPhotos(() => openGlobalView("photos")),
+          onOpenTrees: () => openGlobalView("trees"),
+          onOpenPersonnel: () => openGlobalView("personnel"),
+          onOpenPermissions: () => openGlobalView("permissions"),
+          onOpenYield: () => openGlobalEmbed(() => openYieldPortal(loggedInId, role)),
+          onOpenEnvironment: () => openGlobalView("environment"),
+          onOpenAttendance: () => prepareAttendanceOnOpen(() => openGlobalView("attendance")),
           pendingPermCount: pendingPermCount,}
         )
       )
       , zone && view === "floorplan" && (
-        React.createElement(FloorPlan, { zone: zone, onBack: backToMenu, role: roleForMenu(3), onCycleRole: cycleRole, loggedInId: loggedInId, onGoReport: () => openZoneView("folders"),} )
+        React.createElement(FloorPlan, { zone: zone, onBack: backToMenu, role: roleForMenu(3), onCycleRole: cycleRole, loggedInId: loggedInId, onGoReport: () => openGlobalView("folders"),} )
       )
       , zone && view === "spray" && (
         React.createElement(SprayWorksheet, { zone: zone, onBack: backToMenu, role: roleForMenu(6),} )
@@ -10436,15 +10538,16 @@ function AppMain({ initialRole, initialId, onLogoutToSplash }) {
       , zone && view === "workmonth" && (
         React.createElement(WorkMonthForm, { zone: zone, onBack: backToMenu, role: roleForMenu(3),} )
       )
-      , zone && view === "report" && React.createElement(ReportsHub, { onBack: backToFunction, loggedInId: loggedInId, calendarRole: roleForMenu(4),} )
-      , zone && view === "calendar" && React.createElement(MasterCalendar, { onBack: backToFunction, role: roleForMenu(4),} )
-      , zone && view === "folders" && React.createElement(ZoneWorkFolders, { onBack: backToFunction, role: roleForMenu(3), loggedInId: loggedInId,} )
-      , zone && view === "photos" && React.createElement(PhotoLibrary, { zone: zone, onBack: backToFunction, role: photoRole(), loggedInId: loggedInId,} )
-      , zone && view === "trees" && React.createElement(TreeHistory, { zone: zone, onBack: backToFunction, role: roleForMenu(7), loggedInId: loggedInId,} )
-      , zone && view === "personnel" && React.createElement(PersonnelMenu, { onBack: backToFunction, role: roleForMenu(0), onChanged: refreshPendingCount,} )
-      , zone && view === "permissions" && React.createElement(PermissionsMenu, { onBack: backToFunction, role: roleForMenu(1), onChanged: async () => { await refreshPendingCount(); await loadCurrentPersonPerm(loggedInId); },} )
-      , zone && view === "environment" && React.createElement(EnvironmentMenu, { onBack: backToFunction, role: roleForMenu(8), loggedInId: loggedInId,} )
-      , zone && view === "attendance" && React.createElement(AttendanceMenu, { onBack: backToFunction, role: roleForMenu(9), loggedInId: loggedInId,} )
+      , zone && view === "report" && React.createElement(ReportsHub, { onBack: backToMap, loggedInId: loggedInId, calendarRole: roleForMenu(4),} )
+      // 舊版殘留的溫室內共用路由只作安全兜底；若被舊狀態觸發，返回主畫面而非任何溫室。
+      , zone && view === "calendar" && React.createElement(MasterCalendar, { onBack: backToMap, role: roleForMenu(4),} )
+      , zone && view === "folders" && React.createElement(ZoneWorkFolders, { onBack: backToMap, role: roleForMenu(3), loggedInId: loggedInId,} )
+      , zone && view === "photos" && React.createElement(PhotoLibrary, { zone: zone, onBack: backToMap, role: photoRole(), loggedInId: loggedInId,} )
+      , zone && view === "trees" && React.createElement(TreeHistory, { zone: zone, onBack: backToMap, role: roleForMenu(7), loggedInId: loggedInId,} )
+      , zone && view === "personnel" && React.createElement(PersonnelMenu, { onBack: backToMap, role: roleForMenu(0), onChanged: refreshPendingCount,} )
+      , zone && view === "permissions" && React.createElement(PermissionsMenu, { onBack: backToMap, role: roleForMenu(1), onChanged: async () => { await refreshPendingCount(); await loadCurrentPersonPerm(loggedInId); },} )
+      , zone && view === "environment" && React.createElement(EnvironmentMenu, { onBack: backToMap, role: roleForMenu(8), loggedInId: loggedInId,} )
+      , zone && view === "attendance" && React.createElement(AttendanceMenu, { onBack: backToMap, role: roleForMenu(9), loggedInId: loggedInId,} )
     )
   );
 }
