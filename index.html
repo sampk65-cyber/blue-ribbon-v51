@@ -519,7 +519,7 @@ const C = {
   tiffanyLight: "#B8ECE5",
   tiffanyText: "#2E8577",
 };
-const APP_VERSION = "V5.1+C8.9・每小時氣候紀錄穩定版";
+const APP_VERSION = "V5.C9.3・功能3層次返回修正版";
 const FONT_LINK = "https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,600;9..144,700&family=Inter:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap";
 
 const WORK_ITEMS = [
@@ -10213,7 +10213,7 @@ function openYieldPortal(loggedInId, role) {
     layer.id = "yieldEmbedLayer";
     layer.style.cssText = "position:fixed;inset:0;z-index:99999;background:#F7F3EA;display:flex;flex-direction:column;";
     layer.innerHTML = '<div style="flex:0 0 auto;display:flex;align-items:center;gap:10px;padding:10px 12px;background:#5B2A45;color:#fff;font-family:Inter,sans-serif;font-weight:700;font-size:14px;">' +
-      '<span>完全體 V5.C9.2・功能3 產能</span></div>' +
+      '<span>完全體 V5.C9.3・功能3 產能</span></div>' +
       '<iframe id="yieldEmbedFrame" title="產能" style="flex:1;width:100%;border:0;background:#fff;"></iframe>';
     document.body.appendChild(layer);
   }
@@ -10222,24 +10222,37 @@ function openYieldPortal(loggedInId, role) {
   layer.style.display = "flex";
   document.getElementById("yieldEmbedFrame").srcdoc = html;
   mountEmbedChrome("yieldEmbedLayer", function () {
-    // C9.2 功能3層次返回：產能輸入/分析 -> 功能3入口 -> 完全體上一層。
+    // C9.3 功能3層次返回：分析子圖表 -> 產能分析資料夾 -> 完全體作業分區。
+    // 功能3歡迎頁不再作為返回層，避免「回上一頁」誤跳主頁。
     var frame = document.getElementById("yieldEmbedFrame");
     try {
       var d = frame && frame.contentDocument;
       var w = frame && frame.contentWindow;
-      var yieldView = d && d.getElementById("yieldView");
-      var homeStage = d && d.getElementById("homeStage");
-      var inYield = yieldView && !yieldView.classList.contains("hidden");
-      var inHome = homeStage && !homeStage.classList.contains("hidden");
-      if (inYield && w && typeof w.goTo === "function") {
-        w.goTo("home");
-        return;
-      }
-      if (inHome) {
-        closeEmbedLayer("yieldEmbedLayer", "yieldEmbedFrame");
-        return;
+      if (d) {
+        // 任何分析資料夾子頁（含 #2 每15天曲線）先退回「產能分析」資料夾清單。
+        var folderIds = ["folder1View","folder2View","folder3View","folder4View","folder5View"];
+        var inFolder = folderIds.some(function(id){
+          var el = d.getElementById(id);
+          return el && !el.classList.contains("hidden");
+        });
+        if (inFolder) {
+          if (w && typeof w.showFolderGrid === "function") w.showFolderGrid();
+          else {
+            var back = d.querySelector('[data-folderback]');
+            if (back) back.click();
+          }
+          return;
+        }
+        // 若舊歡迎頁因任何狀態被顯示，直接回產能業務頁，不把它當一層。
+        var homeStage = d.getElementById("homeStage");
+        var yieldView = d.getElementById("yieldView");
+        if (homeStage && !homeStage.classList.contains("hidden") && w && typeof w.goTo === "function") {
+          w.goTo("yield");
+          return;
+        }
       }
     } catch (e) { console.warn("yield hierarchical back", e); }
+    // 功能3頂層再按回上一頁，才退出功能3回完全體作業分區。
     closeEmbedLayer("yieldEmbedLayer", "yieldEmbedFrame");
   });
 }
