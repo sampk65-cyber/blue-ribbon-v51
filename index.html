@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-<title>完全體 V5.C9.8・藍帶無花果</title>
+<title>完全體 V5.1C8.4・藍帶無花果</title>
 <meta name="apple-mobile-web-app-capable" content="yes" />
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
 <meta name="apple-mobile-web-app-title" content="藍帶無花果" />
@@ -205,11 +205,6 @@ ul, ol { margin: 0; padding: 0; list-style: none; }
   @media (max-width: 640px) {
     .back-float { right: 16px !important; bottom: 18px !important; min-height: 54px !important; font-size: 17px !important; }
   }
-
-  .cell-work-open .global-home-island, .cell-work-open .global-back-island { display: none !important; }
-  .cell-work-scroll { -webkit-overflow-scrolling: touch; overscroll-behavior: contain; touch-action: pan-y; scroll-padding-bottom: 110px; }
-  .cell-confirm-float { -webkit-tap-highlight-color: transparent; touch-action: manipulation; }
-
 </style>
 </head>
 <body>
@@ -524,7 +519,7 @@ const C = {
   tiffanyLight: "#B8ECE5",
   tiffanyText: "#2E8577",
 };
-const APP_VERSION = "V5.C9.9・導航刪除修正";
+const APP_VERSION = "V5.C9.4・功能3導覽定版";
 const FONT_LINK = "https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,600;9..144,700&family=Inter:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap";
 
 const WORK_ITEMS = [
@@ -1520,7 +1515,7 @@ function BackIsland({ onBack }) {
   return (
     React.createElement('div', {
       onPointerDown, onPointerMove, onPointerUp,
-      className: "global-back-island fixed flex items-center gap-2 rounded-full shadow-xl",
+      className: "fixed flex items-center gap-2 rounded-full shadow-xl",
       title: "可拖曳；點一下回上一頁",
       style: {
         zIndex: 9998, ...positionStyle,
@@ -1600,7 +1595,7 @@ function HomeIsland({ onHome }) {
   return (
     React.createElement('div', {
       onPointerDown, onPointerMove, onPointerUp,
-      className: "global-home-island fixed flex items-center gap-2 rounded-full shadow-xl",
+      className: "fixed flex items-center gap-2 rounded-full shadow-xl",
       title: "可拖曳；點一下回主畫面",
       style: {
         zIndex: 9997, ...positionStyle,
@@ -5475,31 +5470,7 @@ function PrintLog({ refreshKey }) {
   );
 }
 
-function CellWorkTable({ zone, cellId, role, onClose, ym, loggedInId, onGoReport, onHome }) {
-  const workScrollRef = useRef(null);
-  const keepInputVisible = (el) => {
-    const reveal = () => {
-      try { el && el.scrollIntoView({ block: "center", inline: "nearest", behavior: "smooth" }); } catch (_) {}
-      const sc = workScrollRef.current;
-      if (sc) sc.scrollTo({ top: sc.scrollHeight, behavior: "smooth" });
-    };
-    window.setTimeout(reveal, 80);
-    window.setTimeout(reveal, 320); // iOS 軟鍵盤展開後再校正一次
-  };
-  // 效能減法：連續點選 6–8 時只保留最後一次自動捲動；不改資料、輸入或導航邏輯。
-  const workScrollTimerRef = useRef(null);
-  const scrollWorkBottom = () => {
-    if (workScrollTimerRef.current) window.clearTimeout(workScrollTimerRef.current);
-    workScrollTimerRef.current = window.setTimeout(() => {
-      workScrollTimerRef.current = null;
-      const sc = workScrollRef.current;
-      if (sc) sc.scrollTo({ top: sc.scrollHeight, behavior: "smooth" });
-    }, 60);
-  };
-  useEffect(() => {
-    document.body.classList.add("cell-work-open");
-    return () => document.body.classList.remove("cell-work-open");
-  }, []);
+function CellWorkTable({ zone, cellId, role, onClose, ym, loggedInId, onGoReport }) {
   const editable = role === "designer" || role === "manager" || role === "founder";
   const isUser = role === "user" || role === "founder";
   const shape = FLOOR_SHAPES[zone.id];
@@ -5519,10 +5490,6 @@ function CellWorkTable({ zone, cellId, role, onClose, ym, loggedInId, onGoReport
     progress: {}, confirmedBy: {}, confirmedTotals: {}, confirmHistory: [],
   };
   const [zoneData, setZoneData] = useState(blankZone);
-  // 6/7/8 快速連點保護：同步保存最新本機狀態，避免 React 尚未重繪時下一次點擊讀到舊值。
-  // 僅作為狀態鏡像；既有儲存、輸入、確認與導航流程不變。
-  const zoneDataRef = useRef(blankZone);
-  useEffect(() => { zoneDataRef.current = zoneData; }, [zoneData]);
   const [status, setStatus] = useState("loading");
   const [saveStatus, setSaveStatus] = useState("idle"); // idle | saving | saved | error
   const [saveError, setSaveError] = useState("");
@@ -5540,11 +5507,8 @@ function CellWorkTable({ zone, cellId, role, onClose, ym, loggedInId, onGoReport
       }
       try {
         const zres = await window.storage.get(zoneKey, true); // 整區共用，shared=true
-        const loadedZone = zres ? { ...blankZone, ...JSON.parse(zres.value) } : blankZone;
-        zoneDataRef.current = loadedZone;
-        setZoneData(loadedZone);
+        setZoneData(zres ? { ...blankZone, ...JSON.parse(zres.value) } : blankZone);
       } catch (e16) {
-        zoneDataRef.current = blankZone;
         setZoneData(blankZone);
       }
       setStatus("ready");
@@ -5576,7 +5540,6 @@ function CellWorkTable({ zone, cellId, role, onClose, ym, loggedInId, onGoReport
       });
   };
   const persistZone = (next) => {
-    zoneDataRef.current = next;
     setZoneData(next);
     runZoneWrite(next);
   };
@@ -5657,16 +5620,15 @@ function CellWorkTable({ zone, cellId, role, onClose, ym, loggedInId, onGoReport
 
   const toggleMulti67 = (itemId, opt) => {
     if (!editable) return;
-    const base = zoneDataRef.current;
     const key = itemId === 6 ? "multi6" : "multi7";
-    const cur = selected67From(base, itemId);
+    const cur = selected67(itemId);
     const arr = cur.includes(opt) ? cur.filter((x) => x !== opt) : [...cur, opt];
     persistZone({
-      ...base,
+      ...zoneData,
       [key]: arr,
-      checks: { ...base.checks, [itemId]: arr[0] || null },
-      pending: { ...base.pending, [itemId]: arr.length > 0 },
-      timestamps: { ...base.timestamps, [itemId]: { ...base.timestamps[itemId], changedAt: nowStamp() } },
+      checks: { ...zoneData.checks, [itemId]: arr[0] || null },
+      pending: { ...zoneData.pending, [itemId]: arr.length > 0 },
+      timestamps: { ...zoneData.timestamps, [itemId]: { ...zoneData.timestamps[itemId], changedAt: nowStamp() } },
     });
   };
 
@@ -5695,7 +5657,6 @@ function CellWorkTable({ zone, cellId, role, onClose, ym, loggedInId, onGoReport
 
   const zoneDebounceRef = useRef({});
   const persistZoneDebounced = (next, delayMs = 500) => {
-    zoneDataRef.current = next;
     setZoneData(next); // 畫面立即更新，不等儲存完成
     setSaveStatus("saving");
     clearTimeout(zoneDebounceRef.current.timer);
@@ -5713,10 +5674,8 @@ function CellWorkTable({ zone, cellId, role, onClose, ym, loggedInId, onGoReport
   // 表格8：所有成分皆為扁平多選
   const toggleMulti8Main = (opt) => {
     if (!editable) return;
-    const base = zoneDataRef.current;
-    const current = Array.isArray(base.multi8Main) ? base.multi8Main : [];
-    const arr = current.includes(opt) ? current.filter((x) => x !== opt) : [...current, opt];
-    persistZone({ ...base, multi8Main: arr, pending: { ...base.pending, 8: arr.length > 0 }, timestamps: { ...base.timestamps, 8: { ...base.timestamps[8], changedAt: nowStamp() } } });
+    const arr = zoneData.multi8Main.includes(opt) ? zoneData.multi8Main.filter((x) => x !== opt) : [...zoneData.multi8Main, opt];
+    persistZone({ ...zoneData, multi8Main: arr, pending: { ...zoneData.pending, 8: arr.length > 0 }, timestamps: { ...zoneData.timestamps, 8: { ...zoneData.timestamps[8], changedAt: nowStamp() } } });
   };
   const setExtra8 = (opt, value) => {
     if (!editable) return;
@@ -6061,7 +6020,6 @@ function CellWorkTable({ zone, cellId, role, onClose, ym, loggedInId, onGoReport
         type: "number", disabled: !editable, placeholder: "公斤",
         value: _nullishCoalesce(_optionalChain([zoneData, 'access', _103 => _103.extra8, 'optionalAccess', _104 => _104[opt]]), () => ( "")),
         onChange: (e) => setExtra8(opt, e.target.value),
-        onFocus: (e) => keepInputVisible(e.currentTarget),
         className: "text-xs px-1.5 py-1 rounded"   ,
         style: { width: wide ? 48 : 44, border: `1px solid ${C.line}`, fontFamily: "IBM Plex Mono" },}
       )
@@ -6082,19 +6040,21 @@ function CellWorkTable({ zone, cellId, role, onClose, ym, loggedInId, onGoReport
           , React.createElement('span', { style: { fontFamily: "Inter", fontWeight: 700, fontSize: 16, color: C.ink, minWidth: 0 }, className: "truncate",}
             , zone.name, " · "  , cellId
           )
-          , React.createElement('div', { className: "flex items-center gap-2 flex-shrink-0 no-print" },
-            onHome && React.createElement('button', {
-              onClick: onHome,
-              className: "flex items-center justify-center gap-1 rounded-full",
-              style: { minHeight: 40, padding: "0 12px", background: "#81D8D0", color: C.ink, fontFamily: "Inter", fontWeight: 800, fontSize: 13, border: "2px solid white", boxShadow: "0 2px 6px rgba(0,0,0,.14)", textAlign: "center", touchAction: "manipulation" },
-              'aria-label': "回主頁",
-            }, React.createElement(Home, { size: 15, color: C.ink }), "主頁"),
-            React.createElement('button', {
-              onClick: onClose,
-              className: "flex items-center justify-center gap-1 rounded-full",
-              style: { minHeight: 40, padding: "0 12px", background: "#C94F67", color: "white", fontFamily: "Inter", fontWeight: 800, fontSize: 13, border: "2px solid white", boxShadow: "0 2px 6px rgba(0,0,0,.18)", textAlign: "center", touchAction: "manipulation" },
-              'aria-label': "回上一頁",
-            }, React.createElement(ArrowLeft, { size: 16, color: "white" }), "回上一頁")
+          , React.createElement('button', {
+            onClick: onClose,
+            className: "flex items-center justify-center gap-1 rounded-full flex-shrink-0 no-print",
+            style: {
+              minHeight: 40, padding: "0 14px",
+              background: "#C94F67", color: "white",
+              fontFamily: "Inter", fontWeight: 800, fontSize: 13,
+              border: "2px solid white",
+              boxShadow: "0 2px 6px rgba(0,0,0,.18)",
+              textAlign: "center",
+            },
+            'aria-label': "回上一頁",
+          }
+            , React.createElement(ArrowLeft, { size: 16, color: "white" })
+            , "回上一頁"
           )
         )
         , React.createElement('div', { className: "flex items-center gap-2 flex-wrap"   ,}
@@ -6115,6 +6075,11 @@ function CellWorkTable({ zone, cellId, role, onClose, ym, loggedInId, onGoReport
               , React.createElement(Users, { size: 13,} ), " " , _optionalChain([data, 'access', _113 => _113.recipientIds, 'optionalAccess', _114 => _114.length]) ? `受文 ${data.recipientIds.length} 人` : "設定送出對象"
             )
           )
+          , editable && React.createElement('button', {
+              onClick: confirmAssignmentSave,
+              className: "flex items-center gap-1 px-3 py-1.5 rounded-lg text-xs flex-shrink-0",
+              style: { background: "#D94F3D", color: "white", border: "2px solid #B63426", fontFamily: "Inter", fontWeight: 900, boxShadow: "0 2px 6px rgba(217,79,61,.25)" }
+            }, React.createElement(Check, { size: 14 }), " 確認")
           , saveStatus === "saving" && (
             React.createElement('span', { className: "text-xs flex-shrink-0" , style: { color: C.inkSoft, fontFamily: "Inter" },}, "儲存中…")
           )
@@ -6264,7 +6229,7 @@ function CellWorkTable({ zone, cellId, role, onClose, ym, loggedInId, onGoReport
         , React.createElement('div', { className: "px-1 pb-1.5 text-xs no-print"   , style: { color: C.inkSoft, fontFamily: "Inter" },}, "1-5為本格獨立資料；"
           , React.createElement('span', { style: { color: C.tableColor, fontWeight: 700 },}, "6-8（補水／施肥／其他資材）為溫室全區共用"), "，在任一格填寫，全區其他格同步顯示、不用逐格輸入"
         )
-        , React.createElement('div', { ref: workScrollRef, className: "cell-work-scroll flex-1 min-h-0 overflow-y-auto rounded-lg print-area"    , style: { border: `1px solid ${C.line}`, paddingBottom: editable ? 86 : 0 },}
+        , React.createElement('div', { className: "flex-1 min-h-0 overflow-y-auto rounded-lg print-area"    , style: { border: `1px solid ${C.line}` },}
           , React.createElement('div', { className: "flex items-center text-xs sticky top-0"    , style: { height: 28, background: C.cream, fontFamily: "Inter", fontWeight: 700, color: C.inkSoft, zIndex: 1 },}
             , React.createElement('div', { className: "flex-1 px-3" ,}, "工項")
             , React.createElement('div', { className: "px-3", style: { width: 190 },}, "內容")
@@ -6322,7 +6287,7 @@ function CellWorkTable({ zone, cellId, role, onClose, ym, loggedInId, onGoReport
                         return React.createElement('div', { key: opt, className: "flex items-center gap-1" },
                           React.createElement('button', {
                             disabled: !editable,
-                            onClick: () => { toggleMulti67(item.id, opt); scrollWorkBottom(); },
+                            onClick: () => toggleMulti67(item.id, opt),
                             className: "px-1.5 py-1 rounded text-xs",
                             style: { background: selected ? C.tableColor : C.cream, color: selected ? "white" : C.inkSoft, border: `1px solid ${selected ? "transparent" : C.line}`, fontFamily: "Inter", fontWeight: 700 }
                           }, opt === "金旺" ? "金旺特" : opt),
@@ -6330,7 +6295,6 @@ function CellWorkTable({ zone, cellId, role, onClose, ym, loggedInId, onGoReport
                             type: "number", disabled: !editable, placeholder: unit,
                             value: qty67(item.id, opt),
                             onChange: (e) => setQty67(item.id, opt, e.target.value),
-                            onFocus: (e) => keepInputVisible(e.currentTarget),
                             className: "text-xs px-1.5 py-1 rounded",
                             style: { width: 48, border: `1px solid ${C.line}`, fontFamily: "IBM Plex Mono" }
                           }),
@@ -6345,7 +6309,7 @@ function CellWorkTable({ zone, cellId, role, onClose, ym, loggedInId, onGoReport
                         , item.options.map((opt) => {
                           const selected = zoneData.multi8Main.includes(opt);
                           return (
-                            React.createElement('button', { key: opt, disabled: !editable, onClick: () => { toggleMulti8Main(opt); scrollWorkBottom(); },
+                            React.createElement('button', { key: opt, disabled: !editable, onClick: () => toggleMulti8Main(opt),
                               className: "flex items-center gap-1 px-1.5 py-1 rounded text-xs"      ,
                               style: { background: selected ? C.tableColor : C.cream, color: selected ? "white" : C.inkSoft, border: `1px solid ${selected ? "transparent" : C.line}`, fontFamily: "Inter", fontWeight: 600, cursor: editable ? "pointer" : "default" },}
                               , opt
@@ -6394,13 +6358,6 @@ function CellWorkTable({ zone, cellId, role, onClose, ym, loggedInId, onGoReport
 
         )
       )
-
-      , editable && React.createElement('button', {
-          onClick: confirmAssignmentSave,
-          className: "cell-confirm-float fixed no-print flex items-center justify-center gap-2 rounded-full",
-          style: { right: 18, bottom: "calc(18px + env(safe-area-inset-bottom, 0px))", zIndex: 39, minHeight: 40, padding: "0 12px", background: "#2E5FA3", color: "white", border: "2px solid white", fontFamily: "Inter", fontWeight: 800, fontSize: 13, boxShadow: "0 2px 6px rgba(0,0,0,.18)", textAlign: "center", touchAction: "manipulation" },
-          'aria-label': "資料輸入並前往回報",
-        }, React.createElement(Check, { size: 15, color: "white" }), "資料輸入")
 
       , showApply && (
         React.createElement('div', { className: "fixed inset-0 z-40 flex items-end"    , style: { background: "rgba(43,33,25,0.5)" }, onClick: () => setShowApply(false),}
@@ -9361,16 +9318,7 @@ function ZoneWorkFolders({ onBack, role, loggedInId }) {
 
   const doDelete = async () => {
     const { zoneId, cellId, ym } = deleteTarget;
-    // 刪除指定工作時，若這已是該分區該月份最後一筆格位紀錄，
-    // 同步移除 6-8 全區共用指定，避免 zonework 的 pending 殘留造成分區持續閃燈。
-    // 直接使用目前已載入的 records 判斷，不新增 storage.list 掃描。
-    const deletingLastRecord = records.filter((r) => r.cellId !== cellId).length === 0;
-    try {
-      await window.storage.delete(`worklog:${zoneId}:${cellId}:${ym}`);
-      if (deletingLastRecord) {
-        try { await window.storage.delete(`zonework:${zoneId}:${ym}`, true); } catch (zoneErr) { console.error(zoneErr); }
-      }
-    } catch (e) { console.error(e); }
+    try { await window.storage.delete(`worklog:${zoneId}:${cellId}:${ym}`); } catch (e) { console.error(e); }
     setDeleteTarget(null);
     scan();
   };
@@ -9384,8 +9332,8 @@ function ZoneWorkFolders({ onBack, role, loggedInId }) {
 
   return (
     React.createElement('div', { className: "min-h-screen flex flex-col"  , style: { background: C.cream },}
-      // 此模組沿用全域「主畫面」島；返回只保留一顆浮動「回上一頁」，避免同頁重複導航。
-      , React.createElement(BackIsland, {
+      , React.createElement(NavBar, {
+        backLabel: monthSel ? `${yearSel}年` : yearSel ? `${zoneObj(zoneSel).name}` : zoneSel ? "分區工項提示" : "回功能表",
         onBack: () => { if (monthSel) setMonthSel(null); else if (yearSel) setYearSel(null); else if (zoneSel) setZoneSel(null); else onBack(); },}
       )
       , React.createElement('div', { className: "px-4 py-3" , style: { borderBottom: `1px solid ${C.line}` },}
@@ -9552,7 +9500,7 @@ function ZoneWorkFolders({ onBack, role, loggedInId }) {
         )
       )
 
-      , React.createElement('div', { className: "px-4 py-2 text-xs text-center"   , style: { color: C.inkSoft, fontFamily: "Inter", paddingBottom: "calc(88px + env(safe-area-inset-bottom, 0px))" },}, "平面圖工項表格儲存時即依「儲存當下的年月」自動歸入該區該月資料夾；此畫面僅供檢視，如需編輯請回平面圖操作"
+      , React.createElement('div', { className: "px-4 py-2 text-xs text-center"   , style: { color: C.inkSoft, fontFamily: "Inter" },}, "平面圖工項表格儲存時即依「儲存當下的年月」自動歸入該區該月資料夾；此畫面僅供檢視，如需編輯請回平面圖操作"
 
       )
 
@@ -9626,7 +9574,7 @@ function ZoneWorkFolders({ onBack, role, loggedInId }) {
     )
   );
 }
-function FloorPlan({ zone, onBack, role, onCycleRole, loggedInId, onGoReport, onHome }) {
+function FloorPlan({ zone, onBack, role, onCycleRole, loggedInId, onGoReport }) {
   const shape = FLOOR_SHAPES[zone.id];
   const [activeCell, setActiveCell] = useState(null);
   const [zoom, setZoom] = useState(1);
@@ -9789,7 +9737,7 @@ function FloorPlan({ zone, onBack, role, onCycleRole, loggedInId, onGoReport, on
       )
 
       , activeCell && (
-        React.createElement(CellWorkTable, { zone: zone, cellId: activeCell, role: role, onClose: closeCell, loggedInId: loggedInId, onGoReport: onGoReport, onHome: onHome,} )
+        React.createElement(CellWorkTable, { zone: zone, cellId: activeCell, role: role, onClose: closeCell, loggedInId: loggedInId, onGoReport: onGoReport,} )
       )
     )
   );
@@ -10700,7 +10648,7 @@ function AppMain({ initialRole, initialId, onLogoutToSplash }) {
         )
       )
       , zone && view === "floorplan" && (
-        React.createElement(FloorPlan, { zone: zone, onBack: backToMenu, role: roleForMenu(3), onCycleRole: cycleRole, loggedInId: loggedInId, onGoReport: () => openGlobalView("folders"), onHome: backToMap,} )
+        React.createElement(FloorPlan, { zone: zone, onBack: backToMenu, role: roleForMenu(3), onCycleRole: cycleRole, loggedInId: loggedInId, onGoReport: () => openGlobalView("folders"),} )
       )
       , zone && view === "spray" && (
         React.createElement(SprayWorksheet, { zone: zone, onBack: backToMenu, role: roleForMenu(6),} )
