@@ -3,18 +3,12 @@
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-<title>完全體 V5.C10.2・藍帶無花果</title>
+<title>完全體 V5.C9.8・藍帶無花果</title>
 <meta name="apple-mobile-web-app-capable" content="yes" />
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
 <meta name="apple-mobile-web-app-title" content="藍帶無花果" />
 <meta name="mobile-web-app-capable" content="yes" />
 <meta name="format-detection" content="telephone=no" />
-<meta name="theme-color" content="#f8f4ea" />
-<meta name="application-name" content="藍帶無花果" />
-<link rel="manifest" href="./manifest.webmanifest" />
-<link rel="apple-touch-icon" sizes="180x180" href="./apple-touch-icon.png" />
-<link rel="icon" type="image/png" sizes="192x192" href="./icon-192.png" />
-<link rel="icon" type="image/png" sizes="512x512" href="./icon-512.png" />
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,600;9..144,700&family=Inter:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap" />
 <script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.3.1/umd/react.production.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.3.1/umd/react-dom.production.min.js"></script>
@@ -530,7 +524,7 @@ const C = {
   tiffanyLight: "#B8ECE5",
   tiffanyText: "#2E8577",
 };
-const APP_VERSION = "V5.C10.2・PWA安裝版";
+const APP_VERSION = "V5.C9.15・三擊快捷熱區修正・留言鎖定";
 const FONT_LINK = "https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,600;9..144,700&family=Inter:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap";
 
 const WORK_ITEMS = [
@@ -1197,11 +1191,35 @@ function BackupPanel({ onClose }) {
   );
 }
 
-function MapLogin({ onEnter, onOpenReport, onOpenCalendar, onOpenFolders, onOpenPhotos, onOpenTrees, onOpenPersonnel, onOpenPermissions, onOpenYield, onOpenEnvironment, onOpenAttendance, pendingPermCount, role, loggedInId, onLogin, onLogout }) {
+function MapLogin({ onEnter, onOpenReport, onOpenCalendar, onOpenFolders, onOpenPhotos, onOpenTrees, onOpenPersonnel, onOpenPermissions, onOpenYield, onOpenEnvironment, onOpenAttendance, onBossTable, onIpadReport, pendingPermCount, role, loggedInId, onLogin, onLogout }) {
   const groups = [...new Set(ZONES.filter((z) => z.group).map((z) => z.group))];
   const [zoom, setZoom] = useState(1);
   const [showGlobalMenu, setShowGlobalMenu] = useState(false);
   const [showBackup, setShowBackup] = useState(false);
+  const [bossShortcutOpen, setBossShortcutOpen] = useState(false);
+  const [ipadShortcutOpen, setIpadShortcutOpen] = useState(false);
+  const shortcutTapRef = useRef({ boss: { count: 0, timer: null }, ipad: { count: 0, timer: null } });
+  const shortcutAutoCloseRef = useRef(null);
+  const shortcutTripleTap = (kind, e) => {
+    if (e) { e.preventDefault(); e.stopPropagation(); }
+    const slot = shortcutTapRef.current[kind];
+    window.clearTimeout(slot.timer);
+    slot.count += 1;
+    if (slot.count >= 3) {
+      slot.count = 0;
+      slot.timer = null;
+      if (kind === "boss") { setIpadShortcutOpen(false); setBossShortcutOpen(true); }
+      else { setBossShortcutOpen(false); setIpadShortcutOpen(true); }
+      window.clearTimeout(shortcutAutoCloseRef.current);
+      shortcutAutoCloseRef.current = window.setTimeout(() => { setBossShortcutOpen(false); setIpadShortcutOpen(false); }, 3000);
+      return;
+    }
+    slot.timer = window.setTimeout(() => { slot.count = 0; slot.timer = null; }, 900);
+  };
+  useEffect(() => () => {
+    ["boss","ipad"].forEach((k) => window.clearTimeout(shortcutTapRef.current[k].timer));
+    window.clearTimeout(shortcutAutoCloseRef.current);
+  }, []);
   const [homeNow, setHomeNow] = useState(() => new Date());
 
   useEffect(() => {
@@ -1340,6 +1358,14 @@ function MapLogin({ onEnter, onOpenReport, onOpenCalendar, onOpenFolders, onOpen
           50% { text-shadow: 0 0 5px rgba(255,126,72,.95), 0 0 14px rgba(255,90,54,.55); }
         }
         .home-solar-route { animation: solarInfoGlow 2.6s ease-in-out infinite; }
+        @keyframes bossStarTwinkle { 0%,100%{opacity:.45;transform:scale(.82) rotate(0deg);text-shadow:0 0 5px #fff,0 0 12px #ffd34d} 50%{opacity:1;transform:scale(1.35) rotate(20deg);text-shadow:0 0 10px #fff,0 0 22px #ffd34d,0 0 38px #ff9f1a} }
+        .boss-logo-star { animation: bossStarTwinkle 1.25s ease-in-out infinite; }
+        .ipad-report-shortcut { display:none; }
+        @media (min-width: 700px) { .ipad-report-shortcut { display:flex; } }
+        @keyframes appleSoftGlow { 0%,100%{opacity:.82;transform:scale(.96);filter:drop-shadow(0 0 5px #fff) drop-shadow(0 0 13px #19bfff)} 50%{opacity:1;transform:scale(1.10);filter:drop-shadow(0 0 10px #fff) drop-shadow(0 0 24px #00a8ff) drop-shadow(0 0 42px #0077ff)} }
+        .apple-soft-glow { animation: appleSoftGlow 1.25s ease-in-out infinite; }
+        @keyframes shortcutHoldRing { from{transform:rotate(-90deg)} to{transform:rotate(270deg)} }
+        @keyframes shortcutPulse { 0%,100%{transform:scale(.96)} 50%{transform:scale(1.05)} }
       `)
       /* 主頁整體縮放控制 */
       , React.createElement('div', { className: "fixed top-3 right-3 z-20 flex items-center gap-1 rounded-xl shadow-md p-1"         , style: { background: C.paper, border: `1px solid ${C.line}` },}
@@ -1355,7 +1381,7 @@ function MapLogin({ onEnter, onOpenReport, onOpenCalendar, onOpenFolders, onOpen
         )
       )
 
-      , React.createElement('div', { className: "flex flex-col items-center"  , style: { transform: `scale(${zoom})`, transformOrigin: "top center", transition: "transform .15s ease" },}
+      , React.createElement('div', { className: "flex flex-col items-center"  , style: { transform: (bossShortcutOpen || ipadShortcutOpen) ? "none" : `scale(${zoom})`, transformOrigin: "top center", transition: "transform .15s ease" },}
         , React.createElement('div', { className: "w-full max-w-md px-5 pt-8 pb-4 text-center"     ,}
           , React.createElement('div', { className: "text-sm uppercase mb-1"  , style: { color: C.brandBlue, fontFamily: "Inter", fontWeight: 700, letterSpacing: "0.2em" },}, "藍帶無花果 · Blue Ribbon Fig"
 
@@ -1397,6 +1423,32 @@ function MapLogin({ onEnter, onOpenReport, onOpenCalendar, onOpenFolders, onOpen
 
         , React.createElement('div', { className: "relative w-full max-w-md mx-4 rounded-2xl overflow-hidden shadow-lg"      , style: { border: `1px solid ${C.line}` },}
           , React.createElement(IllustratedMap, null )
+          /* 老闆隱藏捷徑：連點三下，僅直達功能7既有表一／表三 */
+          , React.createElement('button', {
+              type:'button', onClick:(e)=>shortcutTripleTap('boss',e), onContextMenu:(e)=>e.preventDefault(), 'aria-label':'功能7表一表三三擊快捷入口',
+              style:{position:'absolute',left:'2.5%',top:'2.5%',width:'24%',height:'13%',zIndex:18,background:'transparent',border:'none',padding:0,cursor:'pointer',touchAction:'manipulation'}
+            }, React.createElement('span',{className:'boss-logo-star',style:{position:'absolute',right:3,top:1,color:'#FFF7B0',fontSize:18,lineHeight:1}},'✦'))
+          /* 照片中人物手持 iPad 隱藏回報捷徑：透明熱區連點三下，沿用既有工作回報 */
+          , React.createElement('button', {
+              type:'button', onClick:(e)=>shortcutTripleTap('ipad',e), onContextMenu:(e)=>e.preventDefault(), 'aria-label':'照片中手持iPad工作回報三擊捷徑',
+              style:{position:'absolute',left:'76%',top:'67%',zIndex:28,width:'18%',height:'22%',background:'transparent',border:'none',padding:0,cursor:'pointer',touchAction:'manipulation'}
+            })
+          , bossShortcutOpen && React.createElement('div',{
+              style:{position:'fixed',inset:0,zIndex:70,background:'rgba(0,14,18,.68)',backdropFilter:'blur(5px)'}, onClick:()=>setBossShortcutOpen(false)
+            }, React.createElement('div',{onClick:(e)=>e.stopPropagation(),style:{position:'absolute',left:'34%',top:'50%',transform:'translate(-50%,-50%) scale(.5)',transformOrigin:'center center',width:'clamp(280px,30vw,360px)',padding:'18px 16px',borderRadius:24,background:'linear-gradient(145deg,rgba(6,35,34,.97),rgba(8,20,30,.97))',border:'2px solid #ffd34d',boxShadow:'0 0 12px #fff3,0 0 30px #ffbf24,0 0 70px rgba(255,157,0,.48)'}},
+              React.createElement('div',{style:{textAlign:'center',color:'#ffe27a',fontSize:20,fontWeight:900,marginBottom:14,textShadow:'0 0 12px #ffb300'}},'功能7'),
+              React.createElement('div',{style:{display:'grid',gridTemplateColumns:'1fr 1fr',gap:12}},
+                React.createElement('button',{onClick:()=>{setBossShortcutOpen(false);onBossTable&&onBossTable('materials');},style:{minHeight:116,borderRadius:18,border:'2px solid #4fffb0',background:'rgba(0,90,63,.36)',color:'white',boxShadow:'0 0 16px rgba(79,255,176,.75),inset 0 0 20px rgba(79,255,176,.14)',fontWeight:900,fontSize:21,display:'flex',flexDirection:'column',alignItems:'center',justifyContent:'center',textAlign:'center'}},'表一',React.createElement('div',{style:{fontSize:13,marginTop:8,fontWeight:700,textAlign:'center'}},'耗材匯總表')),
+                React.createElement('button',{onClick:()=>{setBossShortcutOpen(false);onBossTable&&onBossTable('zoneMaterials');},style:{minHeight:116,borderRadius:18,border:'2px solid #9b7cff',background:'rgba(58,40,120,.38)',color:'white',boxShadow:'0 0 16px rgba(155,124,255,.78),inset 0 0 20px rgba(155,124,255,.15)',fontWeight:900,fontSize:21,display:'flex',flexDirection:'column',alignItems:'center',justifyContent:'center',textAlign:'center'}},'表三',React.createElement('div',{style:{fontSize:13,marginTop:8,fontWeight:700,textAlign:'center'}},'分區耗材統計'))
+              ), React.createElement('div',{style:{textAlign:'center',marginTop:14,color:'rgba(255,255,255,.88)',fontWeight:800,fontSize:13}},'好土、好果、好生活')
+            ))
+          , ipadShortcutOpen && React.createElement('div',{
+              style:{position:'fixed',inset:0,zIndex:70,background:'rgba(0,14,25,.70)',backdropFilter:'blur(5px)'}, onClick:()=>setIpadShortcutOpen(false)
+            }, React.createElement('div',{onClick:(e)=>e.stopPropagation(),style:{position:'absolute',left:'66%',top:'50%',transform:'translate(-50%,-50%) scale(.5)',transformOrigin:'center center',width:'clamp(300px,32vw,390px)',padding:'18px 16px',borderRadius:24,background:'linear-gradient(145deg,rgba(3,35,50,.98),rgba(5,20,35,.98))',border:'2px solid #48ddff',boxShadow:'0 0 14px #fff3,0 0 34px #18bfff,0 0 75px rgba(0,119,255,.52)'}},
+              React.createElement('div',{style:{textAlign:'center',color:'#dff9ff',fontSize:20,fontWeight:900,marginBottom:14}},'選擇溫室'),
+              React.createElement('div',{style:{display:'grid',gridTemplateColumns:'1fr 1fr',gap:10}}, ['p1','p2','zone3','south4','north4','zone5'].map((id)=>ZONES.find((z)=>z.id===id)).filter(Boolean).map((z)=>React.createElement('button',{key:z.id,onClick:()=>{setIpadShortcutOpen(false);onIpadReport&&onIpadReport(z);},style:{minHeight:58,padding:'10px 8px',borderRadius:14,border:'1.5px solid #4ee8ff',background:'rgba(0,86,108,.28)',color:'white',fontSize:18,fontWeight:900,boxShadow:'0 0 12px rgba(78,232,255,.35)',display:'flex',alignItems:'center',justifyContent:'center',textAlign:'center'}},z.short||z.name))),
+              React.createElement('div',{style:{textAlign:'center',marginTop:14,color:'rgba(220,249,255,.88)',fontWeight:800,fontSize:13}},'好土、好果、好生活')
+            ))
           , React.createElement('div', { className: "absolute inset-0" ,}
             , ZONES.map((z) => (
               React.createElement(ZonePin, { key: z.id, zone: z, onClick: onEnter, pending: !!pendingZones[z.id],} )
@@ -5684,19 +5736,18 @@ function CellWorkTable({ zone, cellId, role, onClose, ym, loggedInId, onGoReport
   const setQty67 = (itemId, opt, value) => {
     if (!editable) return;
     const key = itemId === 6 ? "multi6" : "multi7";
-    const base = zoneDataRef.current;
-    const cur = selected67From(base, itemId);
+    const cur = selected67(itemId);
     const arr = (value !== "" && !cur.includes(opt)) ? [...cur, opt] : cur;
     const field = itemId === 6 ? (opt === "噴灌" ? "minutes" : "tons") : opt;
-    const nextExtra = { ...(base.extra[itemId] || {}), [field]: value };
+    const nextExtra = { ...(zoneData.extra[itemId] || {}), [field]: value };
     if (itemId === 7 && arr.length === 1 && arr[0] === opt) nextExtra.bags = value; // 舊資料相容
     persistZoneDebounced({
-      ...base,
+      ...zoneData,
       [key]: arr,
-      checks: { ...base.checks, [itemId]: arr[0] || null },
-      extra: { ...base.extra, [itemId]: nextExtra },
-      pending: { ...base.pending, [itemId]: arr.length > 0 },
-      timestamps: { ...base.timestamps, [itemId]: { ...base.timestamps[itemId], changedAt: nowStamp() } },
+      checks: { ...zoneData.checks, [itemId]: arr[0] || null },
+      extra: { ...zoneData.extra, [itemId]: nextExtra },
+      pending: { ...zoneData.pending, [itemId]: arr.length > 0 },
+      timestamps: { ...zoneData.timestamps, [itemId]: { ...zoneData.timestamps[itemId], changedAt: nowStamp() } },
     });
   };
 
@@ -5711,13 +5762,11 @@ function CellWorkTable({ zone, cellId, role, onClose, ym, loggedInId, onGoReport
 
   const setExtra = (itemId, field, value) => {
     if (!editable) return;
-    const base = zoneDataRef.current;
-    persistZoneDebounced({ ...base, extra: { ...base.extra, [itemId]: { ...(base.extra[itemId] || {}), [field]: value } } });
+    persistZoneDebounced({ ...zoneData, extra: { ...zoneData.extra, [itemId]: { ...zoneData.extra[itemId], [field]: value } } });
   };
   const clearExtra = (itemId, field) => {
     if (!editable) return;
-    const base = zoneDataRef.current;
-    persistZone({ ...base, extra: { ...base.extra, [itemId]: { ...(base.extra[itemId] || {}), [field]: "" } } });
+    persistZone({ ...zoneData, extra: { ...zoneData.extra, [itemId]: { ...zoneData.extra[itemId], [field]: "" } } });
   };
   // 表格8：所有成分皆為扁平多選
   const toggleMulti8Main = (opt) => {
@@ -5729,8 +5778,7 @@ function CellWorkTable({ zone, cellId, role, onClose, ym, loggedInId, onGoReport
   };
   const setExtra8 = (opt, value) => {
     if (!editable) return;
-    const base = zoneDataRef.current;
-    persistZoneDebounced({ ...base, extra8: { ...base.extra8, [opt]: value } });
+    persistZoneDebounced({ ...zoneData, extra8: { ...zoneData.extra8, [opt]: value } });
   };
   // 使用者確認回報 → 記錄「這位受文者」對這個項目回報的進度(1~5)，因為現場常常無法一次做完；
   // 呼應級別欄「數字越大越緊急」的邏輯，這裡改成「數字越小完成度越高」：1＝完成（解除待確認），2~5＝仍在處理中、數字越大代表越初期
@@ -5918,9 +5966,8 @@ function CellWorkTable({ zone, cellId, role, onClose, ym, loggedInId, onGoReport
 
   // 6/7是使用量（不是完成度），確認時直接輸入實際用了多少，回報即等於累加確認，不用選1~5進度
   const reportQtyItem = (itemId, personId, qtyMap) => {
-    const base = zoneDataRef.current;
-    const selected = selected67From(base, itemId);
-    const totals = { ...(base.confirmedTotals || {}) };
+    const selected = selected67(itemId);
+    const totals = { ...(zoneData.confirmedTotals || {}) };
     const historyEntries = [];
     selected.forEach((opt) => {
       const raw = (qtyMap && typeof qtyMap === "object") ? qtyMap[opt] : qtyMap;
@@ -5931,18 +5978,18 @@ function CellWorkTable({ zone, cellId, role, onClose, ym, loggedInId, onGoReport
       }
     });
     if (historyEntries.length === 0) return;
-    const already = (base.confirmedBy && base.confirmedBy[itemId]) || [];
+    const already = (zoneData.confirmedBy && zoneData.confirmedBy[itemId]) || [];
     const nextConfirmedBy = already.includes(personId) ? already : [...already, personId];
     let next = {
-      ...base,
+      ...zoneData,
       confirmedTotals: totals,
       [itemId === 6 ? "multi6" : "multi7"]: [],
-      checks: { ...base.checks, [itemId]: null },
-      extra: { ...base.extra, [itemId]: {} },
-      progress: { ...base.progress, [itemId]: 1 },
-      confirmedBy: { ...base.confirmedBy, [itemId]: nextConfirmedBy },
-      pending: { ...base.pending, [itemId]: false },
-      timestamps: { ...base.timestamps, [itemId]: { ...base.timestamps[itemId], ackAt: nowStamp() } },
+      checks: { ...zoneData.checks, [itemId]: null },
+      extra: { ...zoneData.extra, [itemId]: {} },
+      progress: { ...zoneData.progress, [itemId]: 1 },
+      confirmedBy: { ...zoneData.confirmedBy, [itemId]: nextConfirmedBy },
+      pending: { ...zoneData.pending, [itemId]: false },
+      timestamps: { ...zoneData.timestamps, [itemId]: { ...zoneData.timestamps[itemId], ackAt: nowStamp() } },
     };
     next = appendHistory(next, historyEntries);
     persistZone(next);
@@ -5951,10 +5998,9 @@ function CellWorkTable({ zone, cellId, role, onClose, ym, loggedInId, onGoReport
 
   // 8可能同時勾選多種資材，各自輸入用量、各自累加
   const reportQty8Item = (personId, qtyMap) => {
-    const base = zoneDataRef.current;
-    const already = _optionalChain([base, 'access', _84 => _84.confirmedBy, 'optionalAccess', _85 => _85[8]]) || [];
+    const already = _optionalChain([zoneData, 'access', _84 => _84.confirmedBy, 'optionalAccess', _85 => _85[8]]) || [];
     const nextConfirmedBy = already.includes(personId) ? already : [...already, personId];
-    const totals = { ...(base.confirmedTotals || {}) };
+    const totals = { ...(zoneData.confirmedTotals || {}) };
     const historyEntries = [];
     Object.entries(qtyMap).forEach(([material, val]) => {
       const n = parseFloat(val);
@@ -5966,14 +6012,14 @@ function CellWorkTable({ zone, cellId, role, onClose, ym, loggedInId, onGoReport
     if (historyEntries.length === 0) return;
     // 回報後清空 8 的選項與數量，避免與 confirmedTotals 重複加總
     let next = {
-      ...base,
+      ...zoneData,
       confirmedTotals: totals,
-      progress: { ...base.progress, 8: 1 },
-      confirmedBy: { ...base.confirmedBy, 8: nextConfirmedBy },
-      pending: { ...base.pending, 8: false },
+      progress: { ...zoneData.progress, 8: 1 },
+      confirmedBy: { ...zoneData.confirmedBy, 8: nextConfirmedBy },
+      pending: { ...zoneData.pending, 8: false },
       multi8Main: [],
       extra8: {},
-      timestamps: { ...base.timestamps, 8: { ...base.timestamps[8], ackAt: nowStamp() } },
+      timestamps: { ...zoneData.timestamps, 8: { ...zoneData.timestamps[8], ackAt: nowStamp() } },
     };
     next = appendHistory(next, historyEntries);
     persistZone(next);
@@ -6999,23 +7045,25 @@ const REPORT_SLOTS = [
 ];
 
 // 耗材與報表主入口：年份資料夾 → 月份資料夾 → 10個表格選項（表一~表十）
-function ReportsHub({ onBack, loggedInId, calendarRole }) {
+function ReportsHub({ onBack, loggedInId, calendarRole, shortcutKey = null }) {
   const now = new Date();
+  // 捷徑只指定要開哪一張表；年份／月份仍沿用功能7原本的選擇流程。
+  // 避免捷徑自行預設年月，確保表三收到的 year/month 與95版正常入口完全一致。
   const [yearSel, setYearSel] = useState(null);
   const [monthSel, setMonthSel] = useState(null);
   const [openKey, setOpenKey] = useState(null); // 表一～表五
 
   if (openKey === "materials") {
-    return React.createElement(MonthlyReport, { year: yearSel, month: monthSel, onBack: () => setOpenKey(null),} );
+    return React.createElement(MonthlyReport, { year: yearSel, month: monthSel, onBack: () => shortcutKey ? onBack() : setOpenKey(null),} );
   }
   if (openKey === "annual") {
     return React.createElement(AnnualPlan, { onClose: () => setOpenKey(null),} );
   }
   if (openKey === "zoneMaterials") {
-    return React.createElement(ZoneMaterialsReport, { year: yearSel, month: monthSel, onBack: () => setOpenKey(null),} );
+    return React.createElement(ZoneMaterialsReport, { year: yearSel, month: monthSel, onBack: () => shortcutKey ? onBack() : setOpenKey(null),} );
   }
   if (openKey === "noticeBoard") {
-    return React.createElement(NoticeBoardArchive, { year: yearSel, month: monthSel, onBack: () => setOpenKey(null),} );
+    return React.createElement(NoticeBoardArchive, { year: yearSel, month: monthSel, loggedInId: loggedInId, onBack: () => setOpenKey(null),} );
   }
   if (openKey === "climateData") {
     return React.createElement(ClimateDataReport, { year: yearSel, month: monthSel, onBack: () => setOpenKey(null),} );
@@ -7055,7 +7103,7 @@ function ReportsHub({ onBack, loggedInId, calendarRole }) {
       ) : !monthSel ? (
         React.createElement('div', { className: "grid grid-cols-3 gap-3 p-4"   ,}
           , FOLDER_MONTHS.map((m) => (
-            React.createElement('button', { key: m, onClick: () => setMonthSel(m),
+            React.createElement('button', { key: m, onClick: () => { setMonthSel(m); if (shortcutKey) setOpenKey(shortcutKey); },
               className: "rounded-xl p-3 flex flex-col items-center gap-1"     ,
               style: {
                 background: m === now.getMonth() + 1 && yearSel === now.getFullYear() ? `${C.tableColor}14` : C.paper,
@@ -7741,7 +7789,7 @@ function ClimateDataReport({ year, month, onBack }) {
 
 
 // 功能表7・表四：留言版內容（月彙整）
-function NoticeBoardArchive({ year, month, onBack }) {
+function NoticeBoardArchive({ year, month, onBack, loggedInId }) {
   const [rows, setRows] = useState([]);
   const [loading, setLoading] = useState(true);
   const ym = `${year}-${String(month).padStart(2, "0")}`;
@@ -7761,6 +7809,7 @@ function NoticeBoardArchive({ year, month, onBack }) {
             if (!res) return null;
             const n = JSON.parse(res.value);
             if (monthKeyOf(n.postedAt) !== ym) return null;
+            if (!loggedInId || !(n.senderId === loggedInId || (n.recipientIds || []).includes(loggedInId))) return null;
             return { key: k, ...n };
           } catch (_e) { return null; }
         });
@@ -7939,9 +7988,7 @@ function ZoneMaterialsReport({ year, month, onBack }) {
       if (res) {
         const zdata = JSON.parse(res.value);
 
-        // 表三救回：逐筆讀取所有 confirmHistory；confirmedTotals 僅作舊資料逐資材 fallback。
-        // 競態保護只保護輸入狀態，不得把歷史紀錄縮成最後一筆。
-        const historyRows = new Set();
+        // 表三原則：只有「回報確認」才算數，且回報必有時間 → 月曆與彙總都只認 confirmHistory
         (zdata.confirmHistory || []).forEach((h) => {
           if (!h || !h.rowKey) return;
           const qty = parseFloat(h.qty);
@@ -7949,7 +7996,6 @@ function ZoneMaterialsReport({ year, month, onBack }) {
           const d = dayFromStamp(h.at);
           // 有回報時間才入格；無時間的歷史不入（正常流程回報都會帶 at）
           if (d == null) return;
-          historyRows.add(h.rowKey);
           pushDay(d, {
             rowKey: h.rowKey,
             qty,
@@ -7961,12 +8007,6 @@ function ZoneMaterialsReport({ year, month, onBack }) {
           if (nextTotals[h.rowKey] !== undefined) {
             nextTotals[h.rowKey] = (nextTotals[h.rowKey] || 0) + qty;
           }
-        });
-        // 舊月份可能只有 confirmedTotals；只補該資材完全沒有逐筆 history 的情況，避免重複計算。
-        Object.entries(zdata.confirmedTotals || {}).forEach(([rowKey, raw]) => {
-          if (historyRows.has(rowKey) || nextTotals[rowKey] === undefined) return;
-          const qty = parseFloat(raw);
-          if (!isNaN(qty) && qty > 0) nextTotals[rowKey] = qty;
         });
       }
       setTotals(nextTotals);
@@ -8828,12 +8868,14 @@ function ZoneNoticeBoard({ role, loggedInId }) {
           return { key: k, ...JSON.parse(res.value) };
         } catch (e24) { return null; }
       });
-      const list = results.filter(Boolean).sort((a, b) => (a.postedAt < b.postedAt ? 1 : -1));
+      const list = results.filter(Boolean)
+        .filter((n) => !!loggedInId && (n.senderId === loggedInId || (n.recipientIds || []).includes(loggedInId)))
+        .sort((a, b) => (a.postedAt < b.postedAt ? 1 : -1));
       setNotices(list);
     } catch (e25) { setNotices([]); }
     setLoading(false);
   };
-  useEffect(() => { load(); }, []);
+  useEffect(() => { setNotices([]); setSelectedKey(null); load(); }, [loggedInId]);
 
   const selected = notices.find((n) => n.key === selectedKey) || null;
   const isNoticeUnread = (n) => !!(n && !isFullyReadNotice(n));
@@ -8886,12 +8928,13 @@ function ZoneNoticeBoard({ role, loggedInId }) {
   };
 
   const submitNotice = async () => {
-    if (!senderId || recipientIds.length === 0 || !text.trim()) return;
+    if (!loggedInId || recipientIds.length === 0 || !text.trim()) return;
     setSending(true);
-    const sender = people.find((p) => p.id === senderId);
+    const actualSenderId = loggedInId;
+    const sender = people.find((p) => p.id === actualSenderId);
     const payload = {
-      senderId,
-      senderName: _optionalChain([sender, 'optionalAccess', _218 => _218.name]) || senderId,
+      senderId: actualSenderId,
+      senderName: _optionalChain([sender, 'optionalAccess', _218 => _218.name]) || actualSenderId,
       text: text.trim(),
       recipientIds,
       recipientNames: Object.fromEntries(recipientIds.map((id) => [id, _optionalChain([people, 'access', _219 => _219.find, 'call', _220 => _220((p) => p.id === id), 'optionalAccess', _221 => _221.name]) || id])),
@@ -8909,12 +8952,13 @@ function ZoneNoticeBoard({ role, loggedInId }) {
   };
 
   const markRead = async () => {
-    if (!readerPick || !selected) return;
-    if ((selected.readBy || []).includes(readerPick)) { setModal(null); return; }
+    if (!loggedInId || !selected || !(selected.recipientIds || []).includes(loggedInId)) return;
+    const actualReaderId = loggedInId;
+    if ((selected.readBy || []).includes(actualReaderId)) { setModal(null); return; }
     setMarking(true);
     const stamp = nowStamp();
-    const nextReadBy = [...(selected.readBy || []), readerPick];
-    const nextReadAt = { ...(selected.readAt || {}), [readerPick]: stamp };
+    const nextReadBy = [...(selected.readBy || []), actualReaderId];
+    const nextReadAt = { ...(selected.readAt || {}), [actualReaderId]: stamp };
     const allRead = (selected.recipientIds || []).length > 0 &&
       (selected.recipientIds || []).every((id) => nextReadBy.includes(id));
     const updated = {
@@ -9202,11 +9246,11 @@ function ZoneNoticeBoard({ role, loggedInId }) {
   );
 }
 
-function ZoneWorkFolders({ onBack, role, loggedInId }) {
+function ZoneWorkFolders({ onBack, role, loggedInId, initialZoneId = null }) {
   const [loading, setLoading] = useState(true);
   const [index, setIndex] = useState({}); // index[zoneId][year][month] = [{cellId, ym, latest}]
   const [pendingByZone, setPendingByZone] = useState({}); // { [zoneId]: 待確認格數 }，用於在資料夾根畫面明顯提示
-  const [zoneSel, setZoneSel] = useState(null);
+  const [zoneSel, setZoneSel] = useState(() => initialZoneId || null);
   const [yearSel, setYearSel] = useState(null);
   const [monthSel, setMonthSel] = useState(null);
   const [openCell, setOpenCell] = useState(null); // { zone, cellId, ym }
@@ -10386,6 +10430,7 @@ function AppMain({ initialRole, initialId, onLogoutToSplash }) {
   const [loggedInId, setLoggedInId] = useState(initialId || null);
   // 導覽修正：全域功能改為單一路由，避免多個布林開關殘留而疊出錯誤頁面。
   const [globalView, setGlobalView] = useState(null);
+  const [reportShortcutZone, setReportShortcutZone] = useState(null);
   const [pendingPermCount, setPendingPermCount] = useState(0);
   const [currentPersonPerm, setCurrentPersonPerm] = useState(null);
 
@@ -10685,6 +10730,8 @@ function AppMain({ initialRole, initialId, onLogoutToSplash }) {
           onOpenYield: () => openYieldPortal(loggedInId, roleForMenu(2)),
           onOpenEnvironment: () => openGlobalView("environment"),
           onOpenAttendance: () => prepareAttendanceOnOpen(() => openGlobalView("attendance")),
+          onBossTable: (key) => openGlobalView(key === "materials" ? "report1" : "report3"),
+          onIpadReport: (z) => { setReportShortcutZone(z.id); openGlobalView("folders"); },
           pendingPermCount: pendingPermCount,
           role: role,
           loggedInId: loggedInId,
@@ -10694,7 +10741,9 @@ function AppMain({ initialRole, initialId, onLogoutToSplash }) {
       )
 
       , globalView === "report" && React.createElement(ReportsHub, { onBack: backToMap, loggedInId: loggedInId, calendarRole: roleForMenu(4),} )
-      , globalView === "folders" && React.createElement(ZoneWorkFolders, { onBack: backToMap, role: roleForMenu(3), loggedInId: loggedInId,} )
+      , globalView === "report1" && React.createElement(ReportsHub, { onBack: backToMap, loggedInId: loggedInId, calendarRole: roleForMenu(4), shortcutKey:"materials",} )
+      , globalView === "report3" && React.createElement(ReportsHub, { onBack: backToMap, loggedInId: loggedInId, calendarRole: roleForMenu(4), shortcutKey:"zoneMaterials",} )
+      , globalView === "folders" && React.createElement(ZoneWorkFolders, { onBack: () => { setReportShortcutZone(null); backToMap(); }, role: roleForMenu(3), loggedInId: loggedInId, initialZoneId: reportShortcutZone,} )
       , globalView === "photos" && React.createElement(FeatureZonePortal, { type: "photos", onBack: backToMap, role: photoRole(), loggedInId: loggedInId,} )
       , globalView === "trees" && React.createElement(FeatureZonePortal, { type: "trees", onBack: backToMap, role: treeRole(), loggedInId: loggedInId,} )
       , globalView === "personnel" && React.createElement(PersonnelMenu, { onBack: backToMap, role: roleForMenu(0), onChanged: refreshPendingCount,} )
@@ -10826,16 +10875,6 @@ const root = ReactDOM.createRoot(rootEl);
 root.render(React.createElement(App, null ));
 
 window.__farmAppMounted = true;
-</script>
-
-<script id="pwa-service-worker-registration">
-if ('serviceWorker' in navigator) {
-  window.addEventListener('load', function () {
-    navigator.serviceWorker.register('./service-worker.js', { scope: './' }).catch(function (err) {
-      console.warn('PWA service worker registration failed:', err);
-    });
-  });
-}
 </script>
 </body>
 </html>
