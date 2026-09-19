@@ -9391,7 +9391,17 @@ function ZoneWorkFolders({ onBack, role, loggedInId, initialZoneId = null, initi
           const allPending = { ...(data.pending || {}), ...(zw.pending || {}) };
           const allProgress = { ...(data.progress || {}), ...(zw.progress || {}) };
           const pendingKeys = Object.keys(allPending).filter((k) => isRealPendingKey(k, allPending[k]));
-          const everTouched = Object.keys(allProgress).length > 0 || (data.confirmedTotals && Object.keys(data.confirmedTotals).length > 0) || (zw.confirmedTotals && Object.keys(zw.confirmedTotals).length > 0);
+          // 功能表4歷史恢復：完成回報可能已清掉目前工作欄位，
+          // 判讀「已完成」時同時認既有 confirmHistory / ackAt；只讀，不改任何儲存資料。
+          const hasConfirmedHistory =
+            (Array.isArray(data.confirmHistory) && data.confirmHistory.length > 0) ||
+            (Array.isArray(zw.confirmHistory) && zw.confirmHistory.length > 0) ||
+            Object.values(data.timestamps || {}).some((t) => t && t.ackAt) ||
+            Object.values(zw.timestamps || {}).some((t) => t && t.ackAt);
+          const everTouched = Object.keys(allProgress).length > 0 ||
+            (data.confirmedTotals && Object.keys(data.confirmedTotals).length > 0) ||
+            (zw.confirmedTotals && Object.keys(zw.confirmedTotals).length > 0) ||
+            hasConfirmedHistory;
           if (pendingKeys.length === 0) {
             status = everTouched ? "done" : "none";
           } else {
