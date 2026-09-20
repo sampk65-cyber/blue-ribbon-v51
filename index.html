@@ -524,7 +524,7 @@ const C = {
   tiffanyLight: "#B8ECE5",
   tiffanyText: "#2E8577",
 };
-const APP_VERSION = 'V5.1.C61';
+const APP_VERSION = 'V5.1.C63';
 const FONT_LINK = "https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,600;9..144,700&family=Inter:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap";
 
 const WORK_ITEMS = [
@@ -6096,7 +6096,7 @@ function CellWorkTable({ zone, cellId, role, onClose, ym, workDate, loggedInId, 
       const n = parseFloat(val);
       if (!isNaN(n) && n > 0) {
         totals[material] = (totals[material] || 0) + n;
-        historyEntries.push({ itemId: 8, itemName: itemNameOf(8), rowKey: material, qty: n, personId, personName: personNameOf(confirmerPeople, personId), at: eventStampFor(zoneData, itemId, workDate) });
+        historyEntries.push({ itemId: 8, itemName: itemNameOf(8), rowKey: material, qty: n, personId, personName: personNameOf(confirmerPeople, personId), at: eventStampFor(zoneData, 8, workDate) });
       }
     });
     if (historyEntries.length === 0) return;
@@ -9812,6 +9812,7 @@ function ZoneWorkFolders({ onBack, role, loggedInId, initialZoneId = null }) {
 
                     , React.createElement('div', { className: "flex items-center gap-1.5"  ,}
                       , React.createElement('div', { style: { fontFamily: "IBM Plex Mono", fontSize: 11, color: C.tableColor },}, fileNameOf(zoneSel, yearSel, monthSel, i))
+                      , rec.latest && React.createElement('div', { className: "text-xs", style: { color: C.inkSoft, fontFamily: "IBM Plex Mono", marginLeft: 4 },}, rec.latest)
                       , statusLabel && (
                         React.createElement('span', { className: "px-1.5 py-0.5 rounded-full"  , style: { background: `${statusColor}18`, color: statusColor, fontFamily: "Inter", fontWeight: 700, fontSize: 9.5 },}
                           , statusLabel
@@ -9819,7 +9820,6 @@ function ZoneWorkFolders({ onBack, role, loggedInId, initialZoneId = null }) {
                       )
                     )
                     , React.createElement('div', { style: { fontFamily: "Inter", fontWeight: 600, fontSize: 14, color: C.ink },}, rec.cellId)
-                    , React.createElement('div', { className: "text-xs", style: { color: C.inkSoft, fontFamily: "IBM Plex Mono" },}, rec.latest)
                   )
                   , !exportMode && !rec.historyEventId && (role === "designer" || role === "manager" || role === "founder") && (
                     React.createElement('button', {
