@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-<title>完全體 V5.C9.8・藍帶無花果</title>
+<title>完全體 V5.1.C54・藍帶無花果</title>
 <meta name="apple-mobile-web-app-capable" content="yes" />
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
 <meta name="apple-mobile-web-app-title" content="藍帶無花果" />
@@ -5538,7 +5538,7 @@ function PrintLog({ refreshKey }) {
   );
 }
 
-function CellWorkTable({ zone, cellId, role, onClose, ym, workDate, loggedInId, onGoReport, onHome, showOriginalHistory = false }) {
+function CellWorkTable({ zone, cellId, role, onClose, ym, workDate, loggedInId, onGoReport, onHome, showOriginalHistory = false, historyDate = null }) {
   const workScrollRef = useRef(null);
   const keepInputVisible = (el) => {
     const reveal = () => {
@@ -5946,8 +5946,14 @@ function CellWorkTable({ zone, cellId, role, onClose, ym, workDate, loggedInId, 
   const [showHistory, setShowHistory] = useState(false);
   // 僅功能4：本格歷史限定原 worklog 的1–5；整區6–8在原表各自工項下呈現。
   // 此處只讀，不回填目前欄位、不改原紀錄、不補日期。
+  const historyDayOf = (stamp) => {
+    if (!stamp) return "";
+    const raw = String(stamp).trim().split(" ")[0].split("T")[0];
+    return raw.replace(/\//g, "-");
+  };
+  const sameHistoryDate = (h) => !historyDate || historyDayOf(h && h.at) === historyDate;
   const cellDisplayHistory = showOriginalHistory
-    ? (Array.isArray(data.confirmHistory) ? data.confirmHistory : []).filter((h) => h && [1, 2, 3, 4, 5].includes(Number(h.itemId)))
+    ? (Array.isArray(data.confirmHistory) ? data.confirmHistory : []).filter((h) => h && [1, 2, 3, 4, 5].includes(Number(h.itemId)) && sameHistoryDate(h))
     : (data.confirmHistory || []);
   const [confirmerPick, setConfirmerPick] = useState(null);
   const [showPersonSwitch, setShowPersonSwitch] = useState(false); // 是否要切換成別人來確認(預設用登入身分，不用每次都選)
@@ -6342,7 +6348,7 @@ function CellWorkTable({ zone, cellId, role, onClose, ym, workDate, loggedInId, 
           , WORK_ITEMS.map((item, idx) => {
             const src = item.id <= 5 ? data : zoneData; // 1-5是每格各自資料，6-8是整區共用資料
             const originalHistory = showOriginalHistory && Array.isArray(src.confirmHistory)
-              ? src.confirmHistory.filter((h) => h && Number(h.itemId) === item.id)
+              ? src.confirmHistory.filter((h) => h && Number(h.itemId) === item.id && sameHistoryDate(h))
                   .sort((a, b) => String(a.at || "").localeCompare(String(b.at || "")))
               : [];
             const isPending = isPendingReal(item.id); // 跟頂部待確認計數用同一套判斷，兩邊永遠一致
@@ -9409,8 +9415,10 @@ function ZoneWorkFolders({ onBack, role, loggedInId, initialZoneId = null }) {
         let latest = ""; // 缺少原時間就留白；資料夾年月不是紀錄日期。
         let status = "none"; // none=無指定工作 | assigned=已指定未回應 | partial=回報中未全部完成 | done=全部確認完成
         let historySummary = "";
+        let dataForHistory = null;
         try {
           const data = JSON.parse(res.value);
+          dataForHistory = data;
           Object.values(data.timestamps || {}).forEach((t) => {
             if (_optionalChain([t, 'optionalAccess', _267 => _267.changedAt]) && (!latest || t.changedAt > latest)) latest = t.changedAt;
           });
@@ -9442,7 +9450,25 @@ function ZoneWorkFolders({ onBack, role, loggedInId, initialZoneId = null }) {
         if (!idx[zoneId]) idx[zoneId] = {};
         if (!idx[zoneId][y]) idx[zoneId][y] = {};
         if (!idx[zoneId][y][m]) idx[zoneId][y][m] = [];
-        idx[zoneId][y][m].push({ cellId, ym, latest, status, historySummary });
+        // 功能4：同一月份內依 confirmHistory 原始日期拆成獨立紀錄；Firebase key 完全不變。
+        const historyDays = {};
+        (dataForHistory && Array.isArray(dataForHistory.confirmHistory) ? dataForHistory.confirmHistory : []).forEach((h) => {
+          if (!h || !h.at) return;
+          const day = String(h.at).trim().split(" ")[0].split("T")[0].replace(/\//g, "-");
+          if (!day || !day.startsWith(`${ym}-`)) return;
+          if (!historyDays[day] || String(h.at) > historyDays[day]) historyDays[day] = String(h.at);
+        });
+        const days = Object.keys(historyDays).sort();
+        days.forEach((historyDate) => {
+          idx[zoneId][y][m].push({ cellId, ym, historyDate, latest: historyDays[historyDate], status: "done", historySummary });
+        });
+        // 尚未完成的本輪指定仍需顯示，但不得與同日已完成紀錄重複建立卡片。
+        const currentDay = latest ? String(latest).trim().split(" ")[0].split("T")[0].replace(/\//g, "-") : "";
+        if ((status === "assigned" || status === "partial") && (!currentDay || !historyDays[currentDay])) {
+          idx[zoneId][y][m].push({ cellId, ym, historyDate: currentDay || null, latest, status, historySummary });
+        } else if (days.length === 0) {
+          idx[zoneId][y][m].push({ cellId, ym, historyDate: currentDay || null, latest, status, historySummary });
+        }
       }
     } catch (e) { console.error(e); }
     Object.values(idx).forEach((byYear) => {
@@ -9539,7 +9565,7 @@ function ZoneWorkFolders({ onBack, role, loggedInId, initialZoneId = null }) {
 
   // 指令3：從報表資料夾點進去，一律唯讀（強制 role="user"），不論實際身分；固定讀取該筆記錄所屬的月份
   if (openCell) {
-    return React.createElement(CellWorkTable, { zone: openCell.zone, cellId: openCell.cellId, ym: openCell.ym, role: "user", onClose: () => setOpenCell(null), loggedInId: loggedInId, showOriginalHistory: true,} );
+    return React.createElement(CellWorkTable, { zone: openCell.zone, cellId: openCell.cellId, ym: openCell.ym, role: "user", onClose: () => setOpenCell(null), loggedInId: loggedInId, showOriginalHistory: true, historyDate: openCell.historyDate || null,} );
   }
 
   const records = (_optionalChain([index, 'access', _279 => _279[zoneSel], 'optionalAccess', _280 => _280[yearSel], 'optionalAccess', _281 => _281[monthSel]])) || [];
@@ -9657,7 +9683,7 @@ function ZoneWorkFolders({ onBack, role, loggedInId, initialZoneId = null }) {
               const borderColor = exportMode && checked ? C.tableColor : statusColor;
               return (
                 React.createElement('div', {
-                  key: rec.cellId,
+                  key: `${rec.cellId}:${rec.historyDate || rec.ym}`,
                   className: "flex items-center justify-between p-3.5 rounded-xl"    ,
                   style: { background: exportMode && checked ? `${C.tableColor}14` : C.paper, border: `1.5px solid ${borderColor}` },}
 
@@ -9671,7 +9697,7 @@ function ZoneWorkFolders({ onBack, role, loggedInId, initialZoneId = null }) {
                     )
                   )
                   , React.createElement('button', {
-                    onClick: () => (exportMode ? toggleExportSelect(rec.cellId) : setOpenCell({ zone: zoneObj(zoneSel), cellId: rec.cellId, ym: rec.ym })),
+                    onClick: () => (exportMode ? toggleExportSelect(rec.cellId) : setOpenCell({ zone: zoneObj(zoneSel), cellId: rec.cellId, ym: rec.ym, historyDate: rec.historyDate || null })),
                     className: "flex-1 text-left" ,}
 
                     , React.createElement('div', { className: "flex items-center gap-1.5"  ,}
