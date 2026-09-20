@@ -524,7 +524,7 @@ const C = {
   tiffanyLight: "#B8ECE5",
   tiffanyText: "#2E8577",
 };
-const APP_VERSION = '完全體V5.1.C53';
+const APP_VERSION = 'V5.1.C52';
 const FONT_LINK = "https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,600;9..144,700&family=Inter:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap";
 
 const WORK_ITEMS = [
@@ -5538,7 +5538,7 @@ function PrintLog({ refreshKey }) {
   );
 }
 
-function CellWorkTable({ zone, cellId, role, onClose, ym, workDate, loggedInId, onGoReport, onHome }) {
+function CellWorkTable({ zone, cellId, role, onClose, ym, workDate, loggedInId, onGoReport, onHome, showOriginalHistory = false }) {
   const workScrollRef = useRef(null);
   const keepInputVisible = (el) => {
     const reveal = () => {
@@ -5944,6 +5944,11 @@ function CellWorkTable({ zone, cellId, role, onClose, ym, workDate, loggedInId, 
   // 進度確認小面板：受文者選自己是誰(限受文名單內) + 選1~5進度，兩者皆選才能送出
   const [confirmItemId, setConfirmItemId] = useState(null);
   const [showHistory, setShowHistory] = useState(false);
+  // 僅功能4：本格歷史限定原 worklog 的1–5；整區6–8在原表各自工項下呈現。
+  // 此處只讀，不回填目前欄位、不改原紀錄、不補日期。
+  const cellDisplayHistory = showOriginalHistory
+    ? (Array.isArray(data.confirmHistory) ? data.confirmHistory : []).filter((h) => h && [1, 2, 3, 4, 5].includes(Number(h.itemId)))
+    : (data.confirmHistory || []);
   const [confirmerPick, setConfirmerPick] = useState(null);
   const [showPersonSwitch, setShowPersonSwitch] = useState(false); // 是否要切換成別人來確認(預設用登入身分，不用每次都選)
   const [confirmerPeople, setConfirmerPeople] = useState([]);
@@ -6221,14 +6226,14 @@ function CellWorkTable({ zone, cellId, role, onClose, ym, workDate, loggedInId, 
       )
 
       , (() => {
-        const combinedHistory = [...(data.confirmHistory || [])];
+        const combinedHistory = [...cellDisplayHistory];
         return combinedHistory.length > 0 && (
           React.createElement('div', { className: "px-4 pt-2 flex-shrink-0"  ,}
             , React.createElement('button', {
               onClick: () => setShowHistory(true),
               className: "px-2.5 py-1.5 rounded-lg text-xs"   ,
               style: { background: `${C.inkSoft}18`, color: C.inkSoft, fontFamily: "Inter", fontWeight: 700 },}
-, "📋 歷史紀錄（"
+, showOriginalHistory ? "📋 本格歷史紀錄（" : "📋 歷史紀錄（"
                , combinedHistory.length, "筆）"
             )
           )
@@ -6336,6 +6341,10 @@ function CellWorkTable({ zone, cellId, role, onClose, ym, workDate, loggedInId, 
           )
           , WORK_ITEMS.map((item, idx) => {
             const src = item.id <= 5 ? data : zoneData; // 1-5是每格各自資料，6-8是整區共用資料
+            const originalHistory = showOriginalHistory && Array.isArray(src.confirmHistory)
+              ? src.confirmHistory.filter((h) => h && Number(h.itemId) === item.id)
+                  .sort((a, b) => String(a.at || "").localeCompare(String(b.at || "")))
+              : [];
             const isPending = isPendingReal(item.id); // 跟頂部待確認計數用同一套判斷，兩邊永遠一致
             const itemProgress = _optionalChain([src, 'access', _124 => _124.progress, 'optionalAccess', _125 => _125[item.id]]) || 0;
             const inProgress = isPending && itemProgress > 1; // 已有人回報過、但還沒做完(進度>1) → 用另一色區分於「完全未處理」
@@ -6345,7 +6354,7 @@ function CellWorkTable({ zone, cellId, role, onClose, ym, workDate, loggedInId, 
             return (
               React.createElement('div', {
                 key: item.id,
-                className: "flex items-start" ,
+                className: showOriginalHistory ? "flex items-start flex-wrap" : "flex items-start" ,
                 style: {
                   borderTop: `1px solid ${C.line}`,
                   background: inProgress ? "#D4A01718" : isPending ? `${C.alert}14` : (idx % 2 === 0 ? C.paper : "#FBF8F2"),
@@ -6354,6 +6363,7 @@ function CellWorkTable({ zone, cellId, role, onClose, ym, workDate, loggedInId, 
                 , React.createElement('div', { className: "flex-1 px-3 py-2 flex items-center gap-1.5 text-sm"      , style: { fontFamily: "Inter", color: C.ink, fontWeight: 500, minHeight: 40 },}
                   , isPending && React.createElement('span', { style: { width: 6, height: 6, borderRadius: 999, background: inProgress ? "#D4A017" : C.alert, display: "inline-block", flexShrink: 0 },} )
                   , item.id, ".", item.name
+                  , showOriginalHistory && item.id >= 6 && React.createElement('span', { className: "text-xs", style: { color: C.inkSoft, fontWeight: 400 },}, "（整區共用）")
                 )
 
                 , React.createElement('div', { className: "flex items-center gap-1 flex-wrap py-1.5"    , style: { width: 190 },}
@@ -6450,6 +6460,22 @@ function CellWorkTable({ zone, cellId, role, onClose, ym, workDate, loggedInId, 
                   )
                   , _optionalChain([ts, 'optionalAccess', _150 => _150.changedAt]) && React.createElement('span', { style: { fontSize: 9, color: C.inkSoft, fontFamily: "IBM Plex Mono" },}, ts.changedAt)
                 )
+                , originalHistory.length > 0 && React.createElement('div', {
+                    className: "w-full px-3 pb-2 flex flex-col gap-2",
+                    style: { width: "100%", flexBasis: "100%", fontFamily: "Inter" },
+                  }, originalHistory.map((h, historyIndex) => React.createElement('div', {
+                    key: historyIndex, className: "p-3 rounded-xl", style: { background: C.cream },
+                  },
+                    React.createElement('div', { className: "text-xs mb-0.5", style: { color: C.inkSoft },},
+                      h.at ?? "", h.personName ? " · " : "", h.personName ?? ""
+                    ),
+                    React.createElement('div', { style: { fontWeight: 600, fontSize: 13, color: C.ink },},
+                      h.itemName ?? "",
+                      h.rowKey != null && h.rowKey !== "" && React.createElement('span', { style: { color: C.tableColor },}, "・", h.rowKey, h.qty != null && h.qty !== "" ? " " : "", h.qty ?? ""),
+                      h.level != null && h.level !== "" && React.createElement('span', null, "・等級", h.level),
+                      h.progress != null && h.progress !== "" && React.createElement('span', { style: { color: h.progress === 1 ? C.tableColor : "#D4A017" },}, "・進度", h.progress)
+                    )
+                  )))
               )
             );
           })
@@ -6663,7 +6689,7 @@ function CellWorkTable({ zone, cellId, role, onClose, ym, workDate, loggedInId, 
               , React.createElement('button', { onClick: () => setShowHistory(false),}, React.createElement(X, { size: 18, color: C.inkSoft,} ))
             )
             , React.createElement('div', { className: "overflow-y-auto flex-1 min-h-0 flex flex-col gap-2"     ,}
-              , [...(data.confirmHistory || [])]
+              , [...cellDisplayHistory]
                 .sort((a, b) => (a.at < b.at ? 1 : -1))
                 .map((h, i) => (
                 React.createElement('div', { key: i, className: "p-3 rounded-xl" , style: { background: C.cream },}
@@ -6675,7 +6701,7 @@ function CellWorkTable({ zone, cellId, role, onClose, ym, workDate, loggedInId, 
                   )
                 )
               ))
-              , (data.confirmHistory || []).length === 0 && (zoneData.confirmHistory || []).length === 0 && (
+              , cellDisplayHistory.length === 0 && (showOriginalHistory || (zoneData.confirmHistory || []).length === 0) && (
                 React.createElement('div', { className: "text-center py-8 text-sm"  , style: { color: C.inkSoft, fontFamily: "Inter" },}, "尚無歷史紀錄")
               )
             )
@@ -9379,10 +9405,9 @@ function ZoneWorkFolders({ onBack, role, loggedInId, initialZoneId = null }) {
         const y = parseInt(yStr, 10);
         const m = parseInt(mStr, 10);
         if (!y || !m) continue;
-        let latest = ym;
+        let latest = ""; // 缺少原時間就留白；資料夾年月不是紀錄日期。
         let status = "none"; // none=無指定工作 | assigned=已指定未回應 | partial=回報中未全部完成 | done=全部確認完成
         let historySummary = "";
-        let historyRows = []; // 該格 worklog.confirmHistory 原筆（原時間、原內容），不摘要不截斷
         try {
           const data = JSON.parse(res.value);
           Object.values(data.timestamps || {}).forEach((t) => {
@@ -9394,9 +9419,6 @@ function ZoneWorkFolders({ onBack, role, loggedInId, initialZoneId = null }) {
           }
           // 合併本格1-5的pending/progress，跟該分區同一年月的6-8 zonework資料
           const zw = zoneWorkMap[`${zoneId}:${ym}`] || {};
-          historyRows = (Array.isArray(data.confirmHistory) ? data.confirmHistory : [])
-            .filter((h) => h && h.at)
-            .map((h) => ({ at: h.at, text: formatHistoryEntry(h), who: h.personName || "" }));
           // 功能表4收斂：資料夾卡片不再重組/摘要 confirmHistory，也不以歷史資料改寫原時間。
           // 點入後直接由原本 CellWorkTable 讀取同一份 worklog / zonework，呈現原表格、原內容、原日期。
           const isRealPendingKey = (id, v) => {
@@ -9419,7 +9441,7 @@ function ZoneWorkFolders({ onBack, role, loggedInId, initialZoneId = null }) {
         if (!idx[zoneId]) idx[zoneId] = {};
         if (!idx[zoneId][y]) idx[zoneId][y] = {};
         if (!idx[zoneId][y][m]) idx[zoneId][y][m] = [];
-        idx[zoneId][y][m].push({ cellId, ym, latest, status, historySummary, historyRows });
+        idx[zoneId][y][m].push({ cellId, ym, latest, status, historySummary });
       }
     } catch (e) { console.error(e); }
     Object.values(idx).forEach((byYear) => {
@@ -9516,7 +9538,7 @@ function ZoneWorkFolders({ onBack, role, loggedInId, initialZoneId = null }) {
 
   // 指令3：從報表資料夾點進去，一律唯讀（強制 role="user"），不論實際身分；固定讀取該筆記錄所屬的月份
   if (openCell) {
-    return React.createElement(CellWorkTable, { zone: openCell.zone, cellId: openCell.cellId, ym: openCell.ym, role: "user", onClose: () => setOpenCell(null), loggedInId: loggedInId,} );
+    return React.createElement(CellWorkTable, { zone: openCell.zone, cellId: openCell.cellId, ym: openCell.ym, role: "user", onClose: () => setOpenCell(null), loggedInId: loggedInId, showOriginalHistory: true,} );
   }
 
   const records = (_optionalChain([index, 'access', _279 => _279[zoneSel], 'optionalAccess', _280 => _280[yearSel], 'optionalAccess', _281 => _281[monthSel]])) || [];
@@ -9660,16 +9682,7 @@ function ZoneWorkFolders({ onBack, role, loggedInId, initialZoneId = null }) {
                       )
                     )
                     , React.createElement('div', { style: { fontFamily: "Inter", fontWeight: 600, fontSize: 14, color: C.ink },}, rec.cellId)
-                    , (rec.historyRows && rec.historyRows.length > 0) ? (
-                      rec.historyRows.map((h, hi) => (
-                        React.createElement('div', { key: hi, className: "text-xs mt-1", style: { fontFamily: "Inter", lineHeight: 1.45 },}
-                          , React.createElement('span', { style: { color: C.inkSoft, fontFamily: "IBM Plex Mono" },}, h.at)
-                          , React.createElement('span', { style: { color: C.ink },}, "　", h.text, h.who ? ` · ${h.who}` : "")
-                        )
-                      ))
-                    ) : (
-                      React.createElement('div', { className: "text-xs", style: { color: C.inkSoft, fontFamily: "IBM Plex Mono" },}, rec.latest)
-                    )
+                    , React.createElement('div', { className: "text-xs", style: { color: C.inkSoft, fontFamily: "IBM Plex Mono" },}, rec.latest)
                   )
                   , !exportMode && (role === "designer" || role === "manager" || role === "founder") && (
                     React.createElement('button', {
