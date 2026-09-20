@@ -524,7 +524,7 @@ const C = {
   tiffanyLight: "#B8ECE5",
   tiffanyText: "#2E8577",
 };
-const APP_VERSION = 'V5.1.C57';
+const APP_VERSION = 'V5.1.C58';
 const FONT_LINK = "https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,600;9..144,700&family=Inter:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap";
 
 const WORK_ITEMS = [
@@ -5434,6 +5434,11 @@ function eventStampFor(baseData, itemId, fallbackWorkDate) {
   }
   return workStampForDate(fallbackWorkDate);
 }
+function newWorkEventId() {
+  const d = new Date();
+  const p = (n, w=2) => String(n).padStart(w, "0");
+  return `EV${d.getFullYear()}${p(d.getMonth()+1)}${p(d.getDate())}${p(d.getHours())}${p(d.getMinutes())}${p(d.getSeconds())}${p(d.getMilliseconds(),3)}-${Math.random().toString(36).slice(2,7)}`;
+}
 function monthKeyOf(stamp) {
   if (!stamp) return null;
   const seg = stamp.split(" ")[0].split("/");
@@ -5550,7 +5555,7 @@ function PrintLog({ refreshKey }) {
   );
 }
 
-function CellWorkTable({ zone, cellId, role, onClose, ym, workDate, loggedInId, onGoReport, onHome, showOriginalHistory = false, historyDate = null }) {
+function CellWorkTable({ zone, cellId, role, onClose, ym, workDate, loggedInId, onGoReport, onHome, showOriginalHistory = false, historyDate = null, historyEventId = null }) {
   const workScrollRef = useRef(null);
   const keepInputVisible = (el) => {
     const reveal = () => {
@@ -5685,8 +5690,30 @@ function CellWorkTable({ zone, cellId, role, onClose, ym, workDate, loggedInId, 
 
   const retrySave = () => { if (lastPayloadRef.current) runWrite(lastPayloadRef.current); };
   const confirmAssignmentSave = () => {
-    runWrite(data);
-    runZoneWrite(zoneData);
+    // C58/V5.003 前向事件制：每次「新增指定」建立唯一 eventId。
+    // 舊 confirmHistory / 舊 assignmentHistory 一律只追加、不重寫、不搬移。
+    const freezeAssignments = (base, ids) => {
+      const next = { ...base, timestamps: { ...(base.timestamps || {}) }, assignmentHistory: [...(base.assignmentHistory || [])] };
+      const completed = new Set((base.confirmHistory || []).map((h) => h && h.eventId).filter(Boolean));
+      ids.forEach((itemId) => {
+        if (!(base.pending || {})[itemId]) return;
+        const oldTs = (base.timestamps || {})[itemId] || {};
+        let eventId = oldTs.eventId;
+        if (!eventId || completed.has(eventId)) eventId = newWorkEventId();
+        const assignedAt = oldTs.changedAt || workStampForDate(workDate);
+        next.timestamps[itemId] = { ...oldTs, changedAt: assignedAt, eventId };
+        if (!next.assignmentHistory.some((a) => a && a.eventId === eventId)) {
+          next.assignmentHistory.push({ eventId, itemId: Number(itemId), assignedAt });
+        }
+      });
+      return next;
+    };
+    const nextData = freezeAssignments(data, [1,2,3,4,5]);
+    const nextZone = freezeAssignments(zoneData, [6,7,8]);
+    setData(nextData); dataRef.current = nextData;
+    setZoneData(nextZone); zoneDataRef.current = nextZone;
+    runWrite(nextData);
+    runZoneWrite(nextZone);
     showReportShortcutDialog(() => {
       if (typeof onGoReport === "function") onGoReport();
     });
@@ -5963,7 +5990,7 @@ function CellWorkTable({ zone, cellId, role, onClose, ym, workDate, loggedInId, 
     const raw = String(stamp).trim().split(" ")[0].split("T")[0];
     return raw.replace(/\//g, "-");
   };
-  const sameHistoryDate = (h) => !historyDate || historyDayOf(h && h.at) === historyDate;
+  const sameHistoryDate = (h) => (!historyEventId || (h && h.eventId === historyEventId)) && (!historyDate || historyDayOf(h && h.at) === historyDate);
   const cellDisplayHistory = showOriginalHistory
     ? (Array.isArray(data.confirmHistory) ? data.confirmHistory : []).filter((h) => h && [1, 2, 3, 4, 5].includes(Number(h.itemId)) && sameHistoryDate(h))
     : (data.confirmHistory || []);
@@ -5991,7 +6018,7 @@ function CellWorkTable({ zone, cellId, role, onClose, ym, workDate, loggedInId, 
     const frozenEntries = (entries || []).map((entry) => {
       const itemId = Number(entry && entry.itemId);
       const ts = (baseData.timestamps && baseData.timestamps[itemId]) || {};
-      const frozen = { ...entry, assignedAt: ts.changedAt || null };
+      const frozen = { ...entry, assignedAt: ts.changedAt || null, eventId: ts.eventId || null };
       if (itemId >= 1 && itemId <= 5) {
         frozen.assignedLevel = (baseData.levels && baseData.levels[itemId]) ?? null;
       } else if (itemId === 6 || itemId === 7) {
@@ -9486,10 +9513,28 @@ function ZoneWorkFolders({ onBack, role, loggedInId, initialZoneId = null }) {
         if (!idx[zoneId]) idx[zoneId] = {};
         if (!idx[zoneId][y]) idx[zoneId][y] = {};
         if (!idx[zoneId][y][m]) idx[zoneId][y][m] = [];
-        // 功能4：同一月份內依 confirmHistory 原始日期拆成獨立紀錄；Firebase key 完全不變。
+        // C58/V5.003：新版「一指定＝一事件」。assignmentHistory 只追加新事件；舊資料不轉換。
+        const eventAssignments = [
+          ...((dataForHistory && Array.isArray(dataForHistory.assignmentHistory)) ? dataForHistory.assignmentHistory : []),
+          ...((zoneWorkMap[`${zoneId}:${ym}`] && Array.isArray(zoneWorkMap[`${zoneId}:${ym}`].assignmentHistory)) ? zoneWorkMap[`${zoneId}:${ym}`].assignmentHistory : [])
+        ];
+        const eventSeen = new Set();
+        eventAssignments.forEach((a) => {
+          if (!a || !a.eventId || eventSeen.has(a.eventId)) return;
+          eventSeen.add(a.eventId);
+          const assignedAt = a.assignedAt || "";
+          const historyDate = assignedAt ? String(assignedAt).trim().split(" ")[0].replace(/\//g, "-") : null;
+          const allHist = [
+            ...((dataForHistory && dataForHistory.confirmHistory) || []),
+            ...((zoneWorkMap[`${zoneId}:${ym}`] && zoneWorkMap[`${zoneId}:${ym}`].confirmHistory) || [])
+          ];
+          const done = allHist.some((h) => h && h.eventId === a.eventId);
+          idx[zoneId][y][m].push({ cellId, ym, historyDate, historyEventId: a.eventId, latest: assignedAt, status: done ? "done" : "assigned", historySummary });
+        });
+        // 舊制資料：仍依原 confirmHistory 日期唯讀呈現，不補 eventId、不回寫。
         const historyDays = {};
         (dataForHistory && Array.isArray(dataForHistory.confirmHistory) ? dataForHistory.confirmHistory : []).forEach((h) => {
-          if (!h || !h.at) return;
+          if (!h || !h.at || h.eventId) return;
           const day = String(h.at).trim().split(" ")[0].split("T")[0].replace(/\//g, "-");
           if (!day || !day.startsWith(`${ym}-`)) return;
           if (!historyDays[day] || String(h.at) > historyDays[day]) historyDays[day] = String(h.at);
@@ -9601,7 +9646,7 @@ function ZoneWorkFolders({ onBack, role, loggedInId, initialZoneId = null }) {
 
   // 指令3：從報表資料夾點進去，一律唯讀（強制 role="user"），不論實際身分；固定讀取該筆記錄所屬的月份
   if (openCell) {
-    return React.createElement(CellWorkTable, { zone: openCell.zone, cellId: openCell.cellId, ym: openCell.ym, role: "user", onClose: () => setOpenCell(null), loggedInId: loggedInId, showOriginalHistory: true, historyDate: openCell.historyDate || null,} );
+    return React.createElement(CellWorkTable, { zone: openCell.zone, cellId: openCell.cellId, ym: openCell.ym, role: "user", onClose: () => setOpenCell(null), loggedInId: loggedInId, showOriginalHistory: true, historyDate: openCell.historyDate || null, historyEventId: openCell.historyEventId || null,} );
   }
 
   const records = (_optionalChain([index, 'access', _279 => _279[zoneSel], 'optionalAccess', _280 => _280[yearSel], 'optionalAccess', _281 => _281[monthSel]])) || [];
@@ -9719,7 +9764,7 @@ function ZoneWorkFolders({ onBack, role, loggedInId, initialZoneId = null }) {
               const borderColor = exportMode && checked ? C.tableColor : statusColor;
               return (
                 React.createElement('div', {
-                  key: `${rec.cellId}:${rec.historyDate || rec.ym}`,
+                  key: `${rec.cellId}:${rec.historyEventId || rec.historyDate || rec.ym}`,
                   className: "flex items-center justify-between p-3.5 rounded-xl"    ,
                   style: { background: exportMode && checked ? `${C.tableColor}14` : C.paper, border: `1.5px solid ${borderColor}` },}
 
@@ -9733,7 +9778,7 @@ function ZoneWorkFolders({ onBack, role, loggedInId, initialZoneId = null }) {
                     )
                   )
                   , React.createElement('button', {
-                    onClick: () => (exportMode ? toggleExportSelect(rec.cellId) : setOpenCell({ zone: zoneObj(zoneSel), cellId: rec.cellId, ym: rec.ym, historyDate: rec.historyDate || null })),
+                    onClick: () => (exportMode ? toggleExportSelect(rec.cellId) : setOpenCell({ zone: zoneObj(zoneSel), cellId: rec.cellId, ym: rec.ym, historyDate: rec.historyDate || null, historyEventId: rec.historyEventId || null })),
                     className: "flex-1 text-left" ,}
 
                     , React.createElement('div', { className: "flex items-center gap-1.5"  ,}
