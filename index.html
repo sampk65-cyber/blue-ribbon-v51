@@ -406,10 +406,9 @@ const { useState, useEffect, useRef } = React;
       try {
         const p = prefix || "";
         const end = p + "\uf8ff";
-        const idField = firebase.firestore.FieldPath.documentId();
         const snap = await db.collection(COLLECTION)
-          .where(idField, ">=", p)
-          .where(idField, "<", end)
+          .where("key", ">=", p)
+          .where("key", "<", end)
           .get();
         const keys = snap.docs.map((d) => d.id);
         return { keys, prefix: prefix || undefined, shared: !!shared };
@@ -525,7 +524,7 @@ const C = {
   tiffanyLight: "#B8ECE5",
   tiffanyText: "#2E8577",
 };
-const APP_VERSION = "完全體V5.1C11";
+const APP_VERSION = "完全體V5.1.C12";
 const FONT_LINK = "https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,600;9..144,700&family=Inter:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap";
 
 const WORK_ITEMS = [
@@ -9351,22 +9350,28 @@ function ZoneWorkFolders({ onBack, role, loggedInId, initialZoneId = null }) {
     const pending = {};
     CALENDAR_ROWS.filter((r) => r.id !== "prod").forEach((r) => { idx[r.id] = {}; pending[r.id] = 0; });
     try {
-      // 功能表4精準掃描：直接依 Firestore 文件 ID 列舉既有 worklog，避免逐格逐月空掃。
-      // storage.list 已使用 documentId，因此舊文件即使沒有 key 欄位也能被找到。
-      const listRes = await window.storage.list("worklog:");
-      const keys = (listRes && listRes.keys) || [];
-      const validKeys = keys.filter((k) => {
-        const rest = k.startsWith("worklog:") ? k.slice("worklog:".length) : k;
-        return rest.split(":").length === 3;
-      });
-      const results = await runWithLimit(validKeys, 12, async (k) => {
+      // 功能表4只讀掃描修正：不再依賴 Firestore 文件內的 key 欄位列舉。
+      // 直接依既有平面圖格位 + 功能表4年份/月分組出原本 worklog 文件鍵，再用 storage.get 讀取。
+      // 這只改「掃描找到哪些既有文件」，不改導航、不改儲存、不改 Firebase 資料。
+      const validKeys = [];
+      for (const z of ZONES) {
+        const cells = (FLOOR_SHAPES[z.id] && FLOOR_SHAPES[z.id].cells) || [];
+        for (const cell of cells) {
+          for (const y of FOLDER_YEARS) {
+            for (let m = 1; m <= 12; m++) {
+              validKeys.push(`worklog:${z.id}:${cell.id}:${y}-${String(m).padStart(2, "0")}`);
+            }
+          }
+        }
+      }
+      const results = await runWithLimit(validKeys, 18, async (k) => {
         const rest = k.startsWith("worklog:") ? k.slice("worklog:".length) : k;
         const [zoneId, cellId, ym] = rest.split(":");
         try {
           const res = await window.storage.get(k);
           return { zoneId, cellId, ym, res };
         } catch (e31) { return { zoneId, cellId, ym, res: null }; }
-      });
+      }); // 分批讀取(同時最多6筆)所有 worklog，取代逐筆排隊或一次性大量平行
 
       // 6/7/8是全區共用（zonework:），要另外抓每個「分區＋年月」各一筆，跟本格1-5資料合併才能判斷完整狀態
       const zoneYmSet = new Set(results.filter((r) => r.res).map((r) => `${r.zoneId}:${r.ym}`));
@@ -9399,13 +9404,13 @@ function ZoneWorkFolders({ onBack, role, loggedInId, initialZoneId = null }) {
           // 合併本格1-5的pending/progress，跟該分區同一年月的6-8 zonework資料
           const zw = zoneWorkMap[`${zoneId}:${ym}`] || {};
           // 已回報內容只讀永久歷史。1-5 來自本格 worklog.confirmHistory；6-8 與表一/表三同源，來自 zonework.confirmHistory。
-          const historyRows = [...(data.confirmHistory || []), ...(zw.confirmHistory || [])]
+          const historyRows = [...(data.confirmHistory || [])]
             .filter((h) => h && h.at && String(h.at).slice(0, 7).replace(/\//g, "-") === ym)
             .sort((a, b) => String(a.at || "").localeCompare(String(b.at || "")));
           if (historyRows.length) {
+            const tail = historyRows.slice(-6).map(formatHistoryEntry).filter(Boolean);
+            historySummary = tail.join(" ｜ ");
             const lastAt = historyRows[historyRows.length - 1].at;
-            const snapshotRows = historyRows.filter((h) => String(h.at || "") === String(lastAt || ""));
-            historySummary = snapshotRows.map(formatHistoryEntry).filter(Boolean).join(" ｜ ");
             if (lastAt && (!latest || lastAt > latest)) latest = lastAt;
           }
           const isRealPendingKey = (id, v) => {
