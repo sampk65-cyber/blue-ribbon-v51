@@ -5972,6 +5972,39 @@ function CellWorkTable({ zone, cellId, role, onClose, ym, workDate, loggedInId, 
   const [reportedQty, setReportedQty] = useState(""); // 6/7確認時使用者實際輸入的使用量
   const [reportedQty8, setReportedQty8] = useState({}); // 8：{資材名稱: 使用量}，可能同時選多種
 
+  // 功能表4「唯讀相容」：舊資料沒有 confirmHistory 時，只從既有 progress / confirmedBy / timestamps
+  // 組出畫面用歷史，不回寫、不轉換、不修改 Firebase。
+  const legacyReadOnlyHistory = (src) => {
+    if (!src || (Array.isArray(src.confirmHistory) && src.confirmHistory.length > 0)) return [];
+    const ids = new Set([
+      ...Object.keys(src.progress || {}),
+      ...Object.keys(src.confirmedBy || {}),
+      ...Object.keys(src.timestamps || {}),
+    ]);
+    return [...ids].map((rawId) => {
+      const itemId = Number(rawId);
+      const progress = src.progress ? src.progress[rawId] : undefined;
+      const people = (src.confirmedBy && Array.isArray(src.confirmedBy[rawId])) ? src.confirmedBy[rawId] : [];
+      const stamp = (src.timestamps && src.timestamps[rawId]) || {};
+      if (progress === undefined && people.length === 0 && !stamp.ackAt) return null;
+      return {
+        itemId,
+        itemName: itemNameOf(itemId),
+        progress,
+        personId: people.join("、"),
+        personName: people.map((id) => founderNameOf(id) || id).join("、"),
+        at: stamp.ackAt || stamp.changedAt || "",
+        legacyReadOnly: true,
+      };
+    }).filter(Boolean);
+  };
+  const visibleHistory = () => [
+    ...(data.confirmHistory || []),
+    ...(zoneData.confirmHistory || []),
+    ...legacyReadOnlyHistory(data),
+    ...legacyReadOnlyHistory(zoneData),
+  ];
+
   // 把每一次確認/回報動作記錄成一筆歷史紀錄，之後可在「歷史紀錄」畫面查閱（誰、何時、確認了什麼、多少量）
   const appendHistory = (baseData, entries) => {
     const history = [...(baseData.confirmHistory || []), ...entries];
@@ -6231,7 +6264,7 @@ function CellWorkTable({ zone, cellId, role, onClose, ym, workDate, loggedInId, 
       )
 
       , (() => {
-        const combinedHistory = [...(data.confirmHistory || []), ...(zoneData.confirmHistory || [])];
+        const combinedHistory = visibleHistory();
         return combinedHistory.length > 0 && (
           React.createElement('div', { className: "px-4 pt-2 flex-shrink-0"  ,}
             , React.createElement('button', {
@@ -6673,7 +6706,7 @@ function CellWorkTable({ zone, cellId, role, onClose, ym, workDate, loggedInId, 
               , React.createElement('button', { onClick: () => setShowHistory(false),}, React.createElement(X, { size: 18, color: C.inkSoft,} ))
             )
             , React.createElement('div', { className: "overflow-y-auto flex-1 min-h-0 flex flex-col gap-2"     ,}
-              , [...(data.confirmHistory || []), ...(zoneData.confirmHistory || [])]
+              , visibleHistory()
                 .sort((a, b) => (a.at < b.at ? 1 : -1))
                 .map((h, i) => (
                 React.createElement('div', { key: i, className: "p-3 rounded-xl" , style: { background: C.cream },}
@@ -6685,7 +6718,7 @@ function CellWorkTable({ zone, cellId, role, onClose, ym, workDate, loggedInId, 
                   )
                 )
               ))
-              , (data.confirmHistory || []).length === 0 && (zoneData.confirmHistory || []).length === 0 && (
+              , visibleHistory().length === 0 && (
                 React.createElement('div', { className: "text-center py-8 text-sm"  , style: { color: C.inkSoft, fontFamily: "Inter" },}, "尚無歷史紀錄")
               )
             )
@@ -9391,17 +9424,7 @@ function ZoneWorkFolders({ onBack, role, loggedInId, initialZoneId = null, initi
           const allPending = { ...(data.pending || {}), ...(zw.pending || {}) };
           const allProgress = { ...(data.progress || {}), ...(zw.progress || {}) };
           const pendingKeys = Object.keys(allPending).filter((k) => isRealPendingKey(k, allPending[k]));
-          // 功能表4歷史恢復：完成回報可能已清掉目前工作欄位，
-          // 判讀「已完成」時同時認既有 confirmHistory / ackAt；只讀，不改任何儲存資料。
-          const hasConfirmedHistory =
-            (Array.isArray(data.confirmHistory) && data.confirmHistory.length > 0) ||
-            (Array.isArray(zw.confirmHistory) && zw.confirmHistory.length > 0) ||
-            Object.values(data.timestamps || {}).some((t) => t && t.ackAt) ||
-            Object.values(zw.timestamps || {}).some((t) => t && t.ackAt);
-          const everTouched = Object.keys(allProgress).length > 0 ||
-            (data.confirmedTotals && Object.keys(data.confirmedTotals).length > 0) ||
-            (zw.confirmedTotals && Object.keys(zw.confirmedTotals).length > 0) ||
-            hasConfirmedHistory;
+          const everTouched = Object.keys(allProgress).length > 0 || (data.confirmedTotals && Object.keys(data.confirmedTotals).length > 0) || (zw.confirmedTotals && Object.keys(zw.confirmedTotals).length > 0);
           if (pendingKeys.length === 0) {
             status = everTouched ? "done" : "none";
           } else {
