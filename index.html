@@ -5838,7 +5838,7 @@ function CellWorkTable({ zone, cellId, role, onClose, ym, workDate, loggedInId, 
       timestamps: { ...data.timestamps, [itemId]: { ...data.timestamps[itemId], ackAt: workStampForDate(workDate) } },
     };
     if (progressVal === 1) next = captureItemIntoTotals(next, itemId); // 完成才累加＋清空，讓欄位能接收下一輪新指令
-    next = appendHistory(next, [{ itemId, itemName: itemNameOf(itemId), progress: progressVal, personId, personName: personNameOf(confirmerPeople, personId), at: workStampForDate(workDate) }]);
+    next = appendHistory(next, [{ itemId, itemName: itemNameOf(itemId), level: (data.levels && data.levels[itemId]) || null, progress: progressVal, personId, personName: personNameOf(confirmerPeople, personId), at: workStampForDate(workDate) }]);
     persist(next);
   };
   // 快速確認：不用一一選人/選進度，直接把選中的項目一次標記為完成（進度1）
@@ -5862,7 +5862,7 @@ function CellWorkTable({ zone, cellId, role, onClose, ym, workDate, loggedInId, 
         nextProgress[itemId] = 1;
         nextPending[itemId] = false;
         nextTimestamps[itemId] = { ...nextTimestamps[itemId], ackAt: workStampForDate(workDate) };
-        historyEntriesData.push({ itemId, itemName: itemNameOf(itemId), progress: 1, personId, personName: personNameOf(quickPeople, personId), at: workStampForDate(workDate) });
+        historyEntriesData.push({ itemId, itemName: itemNameOf(itemId), level: (data.levels && data.levels[itemId]) || null, progress: 1, personId, personName: personNameOf(quickPeople, personId), at: workStampForDate(workDate) });
       });
       nextData = { ...data, progress: nextProgress, confirmedBy: nextConfirmedBy, pending: nextPending, timestamps: nextTimestamps };
       nextData = appendHistory(nextData, historyEntriesData);
@@ -9307,6 +9307,20 @@ function ZoneWorkFolders({ onBack, role, loggedInId, initialZoneId = null }) {
     return "-";
   };
 
+  // 功能表4歷史內容：直接讀 confirmHistory；不從完成後已清空的目前欄位反推。
+  const formatHistoryEntry = (h) => {
+    if (!h) return "";
+    const name = h.itemName || itemNameOf(h.itemId);
+    if ([6, 7, 8].includes(Number(h.itemId))) {
+      const row = h.rowKey ? String(h.rowKey).replace(/^金旺$/, "金旺特") : "";
+      const qty = (h.qty !== undefined && h.qty !== null && h.qty !== "") ? ` ${h.qty}${Number(h.itemId) === 8 ? "kg" : (Number(h.itemId) === 6 && row === "噴灌" ? "分" : Number(h.itemId) === 6 ? "噸" : "包")}` : "";
+      return `${name}${row ? `・${row}` : ""}${qty}`;
+    }
+    const level = h.level ? `・等級${h.level}` : "";
+    const progress = h.progress ? `・進度${h.progress}` : "";
+    return `${name}${level}${progress}`;
+  };
+
   const toggleExportSelect = (cellId) => {
     setExportSelected((cur) => (cur.includes(cellId) ? cur.filter((x) => x !== cellId) : [...cur, cellId]));
   };
@@ -9377,6 +9391,7 @@ function ZoneWorkFolders({ onBack, role, loggedInId, initialZoneId = null }) {
         if (!y || !m) continue;
         let latest = ym;
         let status = "none"; // none=無指定工作 | assigned=已指定未回應 | partial=回報中未全部完成 | done=全部確認完成
+        let historySummary = "";
         try {
           const data = JSON.parse(res.value);
           Object.values(data.timestamps || {}).forEach((t) => {
@@ -9388,6 +9403,16 @@ function ZoneWorkFolders({ onBack, role, loggedInId, initialZoneId = null }) {
           }
           // 合併本格1-5的pending/progress，跟該分區同一年月的6-8 zonework資料
           const zw = zoneWorkMap[`${zoneId}:${ym}`] || {};
+          // 已回報內容只讀永久歷史。1-5 來自本格 worklog.confirmHistory；6-8 與表一/表三同源，來自 zonework.confirmHistory。
+          const historyRows = [...(data.confirmHistory || []), ...(zw.confirmHistory || [])]
+            .filter((h) => h && h.at && String(h.at).slice(0, 7).replace(/\//g, "-") === ym)
+            .sort((a, b) => String(a.at || "").localeCompare(String(b.at || "")));
+          if (historyRows.length) {
+            const tail = historyRows.slice(-6).map(formatHistoryEntry).filter(Boolean);
+            historySummary = tail.join(" ｜ ");
+            const lastAt = historyRows[historyRows.length - 1].at;
+            if (lastAt && (!latest || lastAt > latest)) latest = lastAt;
+          }
           const isRealPendingKey = (id, v) => {
             if (!v) return false;
             if (["1", "2", "3", "4", "5"].includes(id)) return !!_optionalChain([data, 'access', _270 => _270.levels, 'optionalAccess', _271 => _271[id]]);
@@ -9408,7 +9433,7 @@ function ZoneWorkFolders({ onBack, role, loggedInId, initialZoneId = null }) {
         if (!idx[zoneId]) idx[zoneId] = {};
         if (!idx[zoneId][y]) idx[zoneId][y] = {};
         if (!idx[zoneId][y][m]) idx[zoneId][y][m] = [];
-        idx[zoneId][y][m].push({ cellId, ym, latest, status });
+        idx[zoneId][y][m].push({ cellId, ym, latest, status, historySummary });
       }
     } catch (e) { console.error(e); }
     Object.values(idx).forEach((byYear) => {
@@ -9649,6 +9674,7 @@ function ZoneWorkFolders({ onBack, role, loggedInId, initialZoneId = null }) {
                       )
                     )
                     , React.createElement('div', { style: { fontFamily: "Inter", fontWeight: 600, fontSize: 14, color: C.ink },}, rec.cellId)
+                    , rec.historySummary && React.createElement('div', { className: "text-xs mt-1", style: { color: C.ink, fontFamily: "Inter", lineHeight: 1.45 },}, rec.historySummary)
                     , React.createElement('div', { className: "text-xs", style: { color: C.inkSoft, fontFamily: "IBM Plex Mono" },}, rec.latest)
                   )
                   , !exportMode && (role === "designer" || role === "manager" || role === "founder") && (
