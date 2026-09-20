@@ -9354,17 +9354,7 @@ function ZoneWorkFolders({ onBack, role, loggedInId, initialZoneId = null, initi
       }); // 分批讀取(同時最多6筆)所有 worklog，取代逐筆排隊或一次性大量平行
 
       // 6/7/8是全區共用（zonework:），要另外抓每個「分區＋年月」各一筆，跟本格1-5資料合併才能判斷完整狀態
-      // 功能表4歷史追回（唯讀）：把 Firebase 已存在的 zonework 月份一起納入索引。
-      // 不建立、不轉換、不回寫任何資料。
       const zoneYmSet = new Set(results.filter((r) => r.res).map((r) => `${r.zoneId}:${r.ym}`));
-      try {
-        const zr = await window.storage.list("zonework:");
-        ((zr && zr.keys) || []).forEach((k) => {
-          const rest = k.startsWith("zonework:") ? k.slice(9) : k;
-          const p = rest.split(":");
-          if (p.length === 2 && /^\d{4}-\d{2}$/.test(p[1])) zoneYmSet.add(`${p[0]}:${p[1]}`);
-        });
-      } catch (eZoneIndex) {}
       const zoneWorkMap = {};
       await runWithLimit([...zoneYmSet], 6, async (key) => {
         try {
@@ -9401,11 +9391,7 @@ function ZoneWorkFolders({ onBack, role, loggedInId, initialZoneId = null, initi
           const allPending = { ...(data.pending || {}), ...(zw.pending || {}) };
           const allProgress = { ...(data.progress || {}), ...(zw.progress || {}) };
           const pendingKeys = Object.keys(allPending).filter((k) => isRealPendingKey(k, allPending[k]));
-          const everTouched = Object.keys(allProgress).length > 0 ||
-            (data.confirmedTotals && Object.keys(data.confirmedTotals).length > 0) ||
-            (zw.confirmedTotals && Object.keys(zw.confirmedTotals).length > 0) ||
-            (Array.isArray(data.confirmHistory) && data.confirmHistory.length > 0) ||
-            (Array.isArray(zw.confirmHistory) && zw.confirmHistory.length > 0);
+          const everTouched = Object.keys(allProgress).length > 0 || (data.confirmedTotals && Object.keys(data.confirmedTotals).length > 0) || (zw.confirmedTotals && Object.keys(zw.confirmedTotals).length > 0);
           if (pendingKeys.length === 0) {
             status = everTouched ? "done" : "none";
           } else {
@@ -9416,26 +9402,10 @@ function ZoneWorkFolders({ onBack, role, loggedInId, initialZoneId = null, initi
         if (!idx[zoneId]) idx[zoneId] = {};
         if (!idx[zoneId][y]) idx[zoneId][y] = {};
         if (!idx[zoneId][y][m]) idx[zoneId][y][m] = [];
-        idx[zoneId][y][m].push({ cellId, ym, latest, status });
-      }
-
-      // 若舊月份只剩 zonework（畫面仍可看到 6/7/8 時間與歷史），
-      // 補一個唯讀入口，點入後仍由原 CellWorkTable 讀取同一份 zonework.confirmHistory。
-      for (const [zoneYm, zw] of Object.entries(zoneWorkMap)) {
-        const [zoneId, ym] = zoneYm.split(":");
-        const [ys, ms] = (ym || "").split("-");
-        const y = parseInt(ys, 10), m = parseInt(ms, 10);
-        if (!y || !m || !zw) continue;
-        const existing = (((idx[zoneId] || {})[y] || {})[m] || []);
-        if (existing.length) continue;
-        const history = Array.isArray(zw.confirmHistory) ? zw.confirmHistory : [];
-        if (!history.length) continue;
-        let latest = ym;
-        history.forEach((h) => { if (h && h.at && h.at > latest) latest = h.at; });
-        if (!idx[zoneId]) idx[zoneId] = {};
-        if (!idx[zoneId][y]) idx[zoneId][y] = {};
-        if (!idx[zoneId][y][m]) idx[zoneId][y][m] = [];
-        idx[zoneId][y][m].push({ cellId: "__ZONE_HISTORY__", ym, latest, status: "done" });
+        const historyRows = [...(data.confirmHistory || []), ...(zw.confirmHistory || [])]
+            .filter((h) => h && h.at && String(h.at).slice(0, 7).replace(/\//g, "-") === ym)
+            .sort((a, b) => (a.at < b.at ? 1 : -1));
+          idx[zoneId][y][m].push({ cellId, ym, latest, status, historyRows });
       }
     } catch (e) { console.error(e); }
     Object.values(idx).forEach((byYear) => {
@@ -9532,7 +9502,7 @@ function ZoneWorkFolders({ onBack, role, loggedInId, initialZoneId = null, initi
 
   // 指令3：從報表資料夾點進去，一律唯讀（強制 role="user"），不論實際身分；固定讀取該筆記錄所屬的月份
   if (openCell) {
-    return React.createElement(CellWorkTable, { zone: openCell.zone, cellId: openCell.cellId === "__ZONE_HISTORY__" ? "__歷史唯讀__" : openCell.cellId, ym: openCell.ym, workDate: (initialWorkDate && initialWorkDate.slice(0,7) === openCell.ym ? initialWorkDate : null), role: "user", onClose: () => setOpenCell(null), loggedInId: loggedInId,} );
+    return React.createElement(CellWorkTable, { zone: openCell.zone, cellId: openCell.cellId, ym: openCell.ym, workDate: (initialWorkDate && initialWorkDate.slice(0,7) === openCell.ym ? initialWorkDate : null), role: "user", onClose: () => setOpenCell(null), loggedInId: loggedInId,} );
   }
 
   const records = (_optionalChain([index, 'access', _279 => _279[zoneSel], 'optionalAccess', _280 => _280[yearSel], 'optionalAccess', _281 => _281[monthSel]])) || [];
@@ -9677,6 +9647,16 @@ function ZoneWorkFolders({ onBack, role, loggedInId, initialZoneId = null, initi
                     )
                     , React.createElement('div', { style: { fontFamily: "Inter", fontWeight: 600, fontSize: 14, color: C.ink },}, rec.cellId)
                     , React.createElement('div', { className: "text-xs", style: { color: C.inkSoft, fontFamily: "IBM Plex Mono" },}, rec.latest)
+                    , (rec.historyRows || []).length > 0 && React.createElement('div', { className: "mt-1 flex flex-col gap-0.5" },
+                        (rec.historyRows || []).map((h, hi) =>
+                          React.createElement('div', { key: hi, className: "text-xs", style: { color: C.inkSoft, fontFamily: "Inter" },},
+                            React.createElement('span', { style: { color: C.ink, fontWeight: 600 },}, `${h.itemId}.${h.itemName || ""}`),
+                            h.rowKey ? `・${h.rowKey} ${h.qty ?? ""}` : (h.progress !== undefined ? `・進度${h.progress}` : ""),
+                            h.personName ? `・${h.personName}` : "",
+                            h.at ? `・${h.at}` : ""
+                          )
+                        )
+                      )
                   )
                   , !exportMode && (role === "designer" || role === "manager" || role === "founder") && (
                     React.createElement('button', {
