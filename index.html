@@ -5975,7 +5975,25 @@ function CellWorkTable({ zone, cellId, role, onClose, ym, workDate, loggedInId, 
 
   // 把每一次確認/回報動作記錄成一筆歷史紀錄，之後可在「歷史紀錄」畫面查閱（誰、何時、確認了什麼、多少量）
   const appendHistory = (baseData, entries) => {
-    const history = [...(baseData.confirmHistory || []), ...entries];
+    // 前向凍結：只對「從現在開始的新回報」保存當下指定快照；舊 confirmHistory 原樣保留，不回填、不推算。
+    const frozenEntries = (entries || []).map((entry) => {
+      const itemId = Number(entry && entry.itemId);
+      const ts = (baseData.timestamps && baseData.timestamps[itemId]) || {};
+      const frozen = { ...entry, assignedAt: ts.changedAt || null };
+      if (itemId >= 1 && itemId <= 5) {
+        frozen.assignedLevel = (baseData.levels && baseData.levels[itemId]) ?? null;
+      } else if (itemId === 6 || itemId === 7) {
+        const rk = entry && entry.rowKey;
+        frozen.assignedOption = rk || null;
+        frozen.assignedQty = rk && baseData.extra ? (baseData.extra[rk] ?? null) : null;
+      } else if (itemId === 8) {
+        const rk = entry && entry.rowKey;
+        frozen.assignedOption = rk || null;
+        frozen.assignedQty = rk && baseData.extra8 ? (baseData.extra8[rk] ?? null) : null;
+      }
+      return frozen;
+    });
+    const history = [...(baseData.confirmHistory || []), ...frozenEntries];
     return { ...baseData, confirmHistory: history };
   };
   const itemNameOf = (itemId) => _optionalChain([WORK_ITEMS, 'access', _72 => _72.find, 'call', _73 => _73((it) => it.id === itemId), 'optionalAccess', _74 => _74.name]) || `項目${itemId}`;
@@ -6473,7 +6491,13 @@ function CellWorkTable({ zone, cellId, role, onClose, ym, workDate, loggedInId, 
                   }, originalHistory.map((h, historyIndex) => React.createElement('div', {
                     key: historyIndex, className: "p-3 rounded-xl", style: { background: C.cream },
                   },
-                    React.createElement('div', { className: "text-xs mb-0.5", style: { color: C.inkSoft },},
+                    h.assignedAt && React.createElement('div', { className: "text-xs mb-0.5", style: { color: C.inkSoft },},
+                      "指定 ", h.assignedAt,
+                      h.assignedLevel != null ? ` · 等級${h.assignedLevel}` : "",
+                      h.assignedOption ? ` · ${h.assignedOption}` : "",
+                      h.assignedQty != null && h.assignedQty !== "" ? ` ${h.assignedQty}` : ""
+                    ),
+                    React.createElement('div', { className: "text-xs mb-0.5", style: { color: C.tableColor, fontWeight: 700 },},
                       "回報 ", h.at ?? "", h.personName ? " · " : "", h.personName ?? ""
                     ),
                     React.createElement('div', { style: { fontWeight: 600, fontSize: 13, color: C.ink },},
