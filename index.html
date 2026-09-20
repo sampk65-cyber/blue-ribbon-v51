@@ -524,7 +524,7 @@ const C = {
   tiffanyLight: "#B8ECE5",
   tiffanyText: "#2E8577",
 };
-const APP_VERSION = 'V5.1.C59';
+const APP_VERSION = 'V5.1.C60';
 const FONT_LINK = "https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,600;9..144,700&family=Inter:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap";
 
 const WORK_ITEMS = [
@@ -5707,19 +5707,21 @@ function CellWorkTable({ zone, cellId, role, onClose, ym, workDate, loggedInId, 
     // C58/V5.003 前向事件制：每次「新增指定」建立唯一 eventId。
     // 舊 confirmHistory / 舊 assignmentHistory 一律只追加、不重寫、不搬移。
     const freezeAssignments = (base, ids) => {
+      // C60/V5.005：事件邊界沿用原工作範圍。
+      // 1–5 同一分區一次新增指派共用一個 cell eventId；6–8 同一溫室一次新增指派共用一個 zone eventId。
+      // 不改舊 confirmHistory / assignmentHistory，只對本次 pending 指派建立新的事件。
       const next = { ...base, timestamps: { ...(base.timestamps || {}) }, assignmentHistory: [...(base.assignmentHistory || [])] };
-      const completed = new Set((base.confirmHistory || []).map((h) => h && h.eventId).filter(Boolean));
-      ids.forEach((itemId) => {
-        if (!(base.pending || {})[itemId]) return;
+      const pendingIds = ids.filter((itemId) => !!((base.pending || {})[itemId]));
+      if (!pendingIds.length) return next;
+      const eventId = newWorkEventId();
+      let eventAssignedAt = null;
+      pendingIds.forEach((itemId) => {
         const oldTs = (base.timestamps || {})[itemId] || {};
-        let eventId = oldTs.eventId;
-        if (!eventId || completed.has(eventId)) eventId = newWorkEventId();
         const assignedAt = oldTs.changedAt || workStampForDate(workDate);
+        if (!eventAssignedAt || String(assignedAt) < String(eventAssignedAt)) eventAssignedAt = assignedAt;
         next.timestamps[itemId] = { ...oldTs, changedAt: assignedAt, eventId };
-        if (!next.assignmentHistory.some((a) => a && a.eventId === eventId)) {
-          next.assignmentHistory.push({ eventId, itemId: Number(itemId), assignedAt });
-        }
       });
+      next.assignmentHistory.push({ eventId, itemIds: pendingIds.map(Number), assignedAt: eventAssignedAt || workStampForDate(workDate) });
       return next;
     };
     const nextData = freezeAssignments(data, [1,2,3,4,5]);
