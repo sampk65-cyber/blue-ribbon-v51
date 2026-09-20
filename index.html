@@ -524,7 +524,7 @@ const C = {
   tiffanyLight: "#B8ECE5",
   tiffanyText: "#2E8577",
 };
-const APP_VERSION = 'V5.1.C58';
+const APP_VERSION = 'V5.1.C59';
 const FONT_LINK = "https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,600;9..144,700&family=Inter:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap";
 
 const WORK_ITEMS = [
@@ -5599,6 +5599,16 @@ function CellWorkTable({ zone, cellId, role, onClose, ym, workDate, loggedInId, 
     progress: {}, confirmedBy: {}, confirmedTotals: {}, confirmHistory: [],
   };
   const [zoneData, setZoneData] = useState(blankZone);
+  // 新增指派初始化隔離：新增模式只顯示乾淨工作表；歷史陣列/統計唯讀沿用，絕不把舊月份的 active 欄位帶進新指定。
+  const isNewAssignmentMode = editable && !showOriginalHistory;
+  const cleanForNewAssignment = (source, base) => ({
+    ...base,
+    assignmentHistory: Array.isArray(source && source.assignmentHistory) ? source.assignmentHistory : [],
+    confirmHistory: Array.isArray(source && source.confirmHistory) ? source.confirmHistory : [],
+    confirmedTotals: (source && source.confirmedTotals) ? source.confirmedTotals : (base.confirmedTotals || {}),
+  });
+  const dataRef = useRef(blank);
+  useEffect(() => { dataRef.current = data; }, [data]);
   // 6/7/8 快速連點保護：同步保存最新本機狀態，避免 React 尚未重繪時下一次點擊讀到舊值。
   // 僅作為狀態鏡像；既有儲存、輸入、確認與導航流程不變。
   const zoneDataRef = useRef(blankZone);
@@ -5614,15 +5624,19 @@ function CellWorkTable({ zone, cellId, role, onClose, ym, workDate, loggedInId, 
     (async () => {
       try {
         const res = await window.storage.get(storeKey);
-        setData(res ? { ...blank, ...JSON.parse(res.value) } : blank);
+        const loadedData = res ? { ...blank, ...JSON.parse(res.value) } : blank;
+        const initialData = isNewAssignmentMode ? cleanForNewAssignment(loadedData, blank) : loadedData;
+        dataRef.current = initialData;
+        setData(initialData);
       } catch (e15) {
         setData(blank);
       }
       try {
         const zres = await window.storage.get(zoneKey, true); // 整區共用，shared=true
         const loadedZone = zres ? { ...blankZone, ...JSON.parse(zres.value) } : blankZone;
-        zoneDataRef.current = loadedZone;
-        setZoneData(loadedZone);
+        const initialZone = isNewAssignmentMode ? cleanForNewAssignment(loadedZone, blankZone) : loadedZone;
+        zoneDataRef.current = initialZone;
+        setZoneData(initialZone);
       } catch (e16) {
         zoneDataRef.current = blankZone;
         setZoneData(blankZone);
