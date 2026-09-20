@@ -524,7 +524,7 @@ const C = {
   tiffanyLight: "#B8ECE5",
   tiffanyText: "#2E8577",
 };
-const APP_VERSION = "完全體V5.1.C12";
+const APP_VERSION = 'V5.1C50';
 const FONT_LINK = "https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,600;9..144,700&family=Inter:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap";
 
 const WORK_ITEMS = [
@@ -5799,7 +5799,7 @@ function CellWorkTable({ zone, cellId, role, onClose, ym, workDate, loggedInId, 
   // 使用者確認回報 → 記錄「這位受文者」對這個項目回報的進度(1~5)，因為現場常常無法一次做完；
   // 呼應級別欄「數字越大越緊急」的邏輯，這裡改成「數字越小完成度越高」：1＝完成（解除待確認），2~5＝仍在處理中、數字越大代表越初期
   // 工項6/7/8確認完成(進度=1)時，把數量累加進 confirmedTotals（跨月持續累計、不會被下一輪新指令覆蓋掉），
-  // 同時清空該項目目前的選項與數量欄位，讓格子能重新接收下一輪的新指令
+  // 原指定內容與數量欄位保留在同一張表
   const captureItemIntoTotals = (baseData, itemId) => {
     if (![6, 7, 8].includes(itemId)) return baseData;
     const totals = { ...(baseData.confirmedTotals || {}) };
@@ -5810,18 +5810,13 @@ function CellWorkTable({ zone, cellId, role, onClose, ym, workDate, loggedInId, 
         const v = parseFloat(qty67(itemId, opt, baseData));
         if (!isNaN(v) && v > 0) totals[opt] = (totals[opt] || 0) + v;
       });
-      next = {
-        ...next,
-        [itemId === 6 ? "multi6" : "multi7"]: [],
-        checks: { ...next.checks, [itemId]: null },
-        extra: { ...next.extra, [itemId]: {} },
-      };
+      // 回報後保留原指定表內容；confirmedTotals 只在回報時累加。
     } else if (itemId === 8) {
       (baseData.multi8Main || []).forEach((opt) => {
         const v = parseFloat((baseData.extra8 || {})[opt]);
         if (!isNaN(v) && v > 0) totals[opt] = (totals[opt] || 0) + v;
       });
-      next = { ...next, multi8Main: [], extra8: {} };
+      // 回報後保留原指定表內容；confirmedTotals 只在回報時累加。
     }
     next.confirmedTotals = totals;
     return next;
@@ -5837,7 +5832,7 @@ function CellWorkTable({ zone, cellId, role, onClose, ym, workDate, loggedInId, 
       pending: { ...data.pending, [itemId]: progressVal > 1 },
       timestamps: { ...data.timestamps, [itemId]: { ...data.timestamps[itemId], ackAt: workStampForDate(workDate) } },
     };
-    if (progressVal === 1) next = captureItemIntoTotals(next, itemId); // 完成才累加＋清空，讓欄位能接收下一輪新指令
+    if (progressVal === 1) next = captureItemIntoTotals(next, itemId); // 完成才累加；原指定表內容保留
     next = appendHistory(next, [{ itemId, itemName: itemNameOf(itemId), level: (data.levels && data.levels[itemId]) || null, progress: progressVal, personId, personName: personNameOf(confirmerPeople, personId), at: workStampForDate(workDate) }]);
     persist(next);
   };
@@ -5895,7 +5890,7 @@ function CellWorkTable({ zone, cellId, role, onClose, ym, workDate, loggedInId, 
                 historyEntriesZone.push({ itemId: 8, itemName: itemNameOf(8), rowKey: material, qty: n, personId, personName: personNameOf(quickPeople, personId), at: workStampForDate(workDate) });
               }
             });
-            nextZone = { ...nextZone, multi8Main: [], extra8: {} };
+            // 回報後保留原指定表內容，不清空 multi8Main / extra8。
           } else {
             const qtyMap = (qtyOverrides[itemId] && typeof qtyOverrides[itemId] === "object") ? qtyOverrides[itemId] : {};
             Object.entries(qtyMap).forEach(([rowKey, val]) => {
@@ -5905,12 +5900,7 @@ function CellWorkTable({ zone, cellId, role, onClose, ym, workDate, loggedInId, 
                 historyEntriesZone.push({ itemId, itemName: itemNameOf(itemId), rowKey, qty: n, personId, personName: personNameOf(quickPeople, personId), at: workStampForDate(workDate) });
               }
             });
-            nextZone = {
-              ...nextZone,
-              [itemId === 6 ? "multi6" : "multi7"]: [],
-              checks: { ...nextZone.checks, [itemId]: null },
-              extra: { ...nextZone.extra, [itemId]: {} }
-            };
+            // 回報後保留原指定表內容，不清空 6/7 選項與數量。
           }
           nextZone.confirmedTotals = totals;
         } else {
@@ -5999,9 +5989,9 @@ function CellWorkTable({ zone, cellId, role, onClose, ym, workDate, loggedInId, 
     let next = {
       ...zoneData,
       confirmedTotals: totals,
-      [itemId === 6 ? "multi6" : "multi7"]: [],
-      checks: { ...zoneData.checks, [itemId]: null },
-      extra: { ...zoneData.extra, [itemId]: {} },
+      [itemId === 6 ? "multi6" : "multi7"]: zoneData[itemId === 6 ? "multi6" : "multi7"],
+      checks: { ...zoneData.checks },
+      extra: { ...zoneData.extra },
       progress: { ...zoneData.progress, [itemId]: 1 },
       confirmedBy: { ...zoneData.confirmedBy, [itemId]: nextConfirmedBy },
       pending: { ...zoneData.pending, [itemId]: false },
