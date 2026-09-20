@@ -5422,6 +5422,17 @@ function workStampForDate(workDate) {
   const t = nowStamp().split(" ")[1] || "00:00";
   return String(workDate).replace(/-/g, "/") + " " + t;
 }
+// 凍結規則：回報沿用「指定事件」的日期；只取現在時間作為回報時刻。
+// 舊資料沒有 changedAt 時才退回目前 workDate，不回寫舊紀錄。
+function eventStampFor(baseData, itemId, fallbackWorkDate) {
+  const ts = baseData && baseData.timestamps && baseData.timestamps[itemId];
+  const assignedAt = ts && ts.changedAt;
+  if (assignedAt) {
+    const day = String(assignedAt).trim().split(" ")[0].split("T")[0].replace(/\//g, "-");
+    if (/^\d{4}-\d{2}-\d{2}$/.test(day)) return workStampForDate(day);
+  }
+  return workStampForDate(fallbackWorkDate);
+}
 function monthKeyOf(stamp) {
   if (!stamp) return null;
   const seg = stamp.split(" ")[0].split("/");
@@ -5763,7 +5774,7 @@ function CellWorkTable({ zone, cellId, role, onClose, ym, workDate, loggedInId, 
       checks: { ...zoneData.checks, [itemId]: arr[0] || null },
       extra: { ...zoneData.extra, [itemId]: nextExtra },
       pending: { ...zoneData.pending, [itemId]: arr.length > 0 },
-      timestamps: { ...zoneData.timestamps, [itemId]: { ...zoneData.timestamps[itemId], changedAt: workStampForDate(workDate) } },
+      timestamps: zoneData.timestamps, // 輸入數量只屬於同一事件，不改指定日期
     });
   };
 
@@ -5830,10 +5841,10 @@ function CellWorkTable({ zone, cellId, role, onClose, ym, workDate, loggedInId, 
       progress: { ...data.progress, [itemId]: progressVal },
       confirmedBy: { ...data.confirmedBy, [itemId]: nextConfirmedBy },
       pending: { ...data.pending, [itemId]: progressVal > 1 },
-      timestamps: { ...data.timestamps, [itemId]: { ...data.timestamps[itemId], ackAt: workStampForDate(workDate) } },
+      timestamps: { ...data.timestamps, [itemId]: { ...data.timestamps[itemId], ackAt: eventStampFor(data, itemId, workDate) } },
     };
     if (progressVal === 1) next = captureItemIntoTotals(next, itemId); // 完成才累加；原指定表內容保留
-    next = appendHistory(next, [{ itemId, itemName: itemNameOf(itemId), level: (data.levels && data.levels[itemId]) || null, progress: progressVal, personId, personName: personNameOf(confirmerPeople, personId), at: workStampForDate(workDate) }]);
+    next = appendHistory(next, [{ itemId, itemName: itemNameOf(itemId), level: (data.levels && data.levels[itemId]) || null, progress: progressVal, personId, personName: personNameOf(confirmerPeople, personId), at: eventStampFor(data, itemId, workDate) }]);
     persist(next);
   };
   // 快速確認：不用一一選人/選進度，直接把選中的項目一次標記為完成（進度1）
@@ -5856,8 +5867,8 @@ function CellWorkTable({ zone, cellId, role, onClose, ym, workDate, loggedInId, 
         nextConfirmedBy[itemId] = already.includes(personId) ? already : [...already, personId];
         nextProgress[itemId] = 1;
         nextPending[itemId] = false;
-        nextTimestamps[itemId] = { ...nextTimestamps[itemId], ackAt: workStampForDate(workDate) };
-        historyEntriesData.push({ itemId, itemName: itemNameOf(itemId), level: (data.levels && data.levels[itemId]) || null, progress: 1, personId, personName: personNameOf(quickPeople, personId), at: workStampForDate(workDate) });
+        nextTimestamps[itemId] = { ...nextTimestamps[itemId], ackAt: eventStampFor(data, itemId, workDate) };
+        historyEntriesData.push({ itemId, itemName: itemNameOf(itemId), level: (data.levels && data.levels[itemId]) || null, progress: 1, personId, personName: personNameOf(quickPeople, personId), at: eventStampFor(data, itemId, workDate) });
       });
       nextData = { ...data, progress: nextProgress, confirmedBy: nextConfirmedBy, pending: nextPending, timestamps: nextTimestamps };
       nextData = appendHistory(nextData, historyEntriesData);
@@ -5874,7 +5885,7 @@ function CellWorkTable({ zone, cellId, role, onClose, ym, workDate, loggedInId, 
         nextConfirmedBy[itemId] = already.includes(personId) ? already : [...already, personId];
         nextProgress[itemId] = 1;
         nextPending[itemId] = false;
-        nextTimestamps[itemId] = { ...nextTimestamps[itemId], ackAt: workStampForDate(workDate) };
+        nextTimestamps[itemId] = { ...nextTimestamps[itemId], ackAt: eventStampFor(zoneData, itemId, workDate) };
       });
       nextZone = { ...zoneData, progress: nextProgress, confirmedBy: nextConfirmedBy, pending: nextPending, timestamps: nextTimestamps };
 
@@ -5887,7 +5898,7 @@ function CellWorkTable({ zone, cellId, role, onClose, ym, workDate, loggedInId, 
               const n = parseFloat(val);
               if (!isNaN(n) && n > 0) {
                 totals[material] = (totals[material] || 0) + n;
-                historyEntriesZone.push({ itemId: 8, itemName: itemNameOf(8), rowKey: material, qty: n, personId, personName: personNameOf(quickPeople, personId), at: workStampForDate(workDate) });
+                historyEntriesZone.push({ itemId: 8, itemName: itemNameOf(8), rowKey: material, qty: n, personId, personName: personNameOf(quickPeople, personId), at: eventStampFor(zoneData, itemId, workDate) });
               }
             });
             // 回報後保留原指定表內容，不清空 multi8Main / extra8。
@@ -5897,7 +5908,7 @@ function CellWorkTable({ zone, cellId, role, onClose, ym, workDate, loggedInId, 
               const n = parseFloat(val);
               if (rowKey && !isNaN(n) && n > 0) {
                 totals[rowKey] = (totals[rowKey] || 0) + n;
-                historyEntriesZone.push({ itemId, itemName: itemNameOf(itemId), rowKey, qty: n, personId, personName: personNameOf(quickPeople, personId), at: workStampForDate(workDate) });
+                historyEntriesZone.push({ itemId, itemName: itemNameOf(itemId), rowKey, qty: n, personId, personName: personNameOf(quickPeople, personId), at: eventStampFor(zoneData, itemId, workDate) });
               }
             });
             // 回報後保留原指定表內容，不清空 6/7 選項與數量。
@@ -6009,7 +6020,7 @@ function CellWorkTable({ zone, cellId, role, onClose, ym, workDate, loggedInId, 
       const n = parseFloat(raw);
       if (!isNaN(n) && n > 0) {
         totals[opt] = (totals[opt] || 0) + n;
-        historyEntries.push({ itemId, itemName: itemNameOf(itemId), rowKey: opt, qty: n, personId, personName: personNameOf(confirmerPeople, personId), at: workStampForDate(workDate) });
+        historyEntries.push({ itemId, itemName: itemNameOf(itemId), rowKey: opt, qty: n, personId, personName: personNameOf(confirmerPeople, personId), at: eventStampFor(zoneData, itemId, workDate) });
       }
     });
     if (historyEntries.length === 0) return;
@@ -6024,7 +6035,7 @@ function CellWorkTable({ zone, cellId, role, onClose, ym, workDate, loggedInId, 
       progress: { ...zoneData.progress, [itemId]: 1 },
       confirmedBy: { ...zoneData.confirmedBy, [itemId]: nextConfirmedBy },
       pending: { ...zoneData.pending, [itemId]: false },
-      timestamps: { ...zoneData.timestamps, [itemId]: { ...zoneData.timestamps[itemId], ackAt: workStampForDate(workDate) } },
+      timestamps: { ...zoneData.timestamps, [itemId]: { ...zoneData.timestamps[itemId], ackAt: eventStampFor(zoneData, itemId, workDate) } },
     };
     next = appendHistory(next, historyEntries);
     persistZone(next);
@@ -6041,7 +6052,7 @@ function CellWorkTable({ zone, cellId, role, onClose, ym, workDate, loggedInId, 
       const n = parseFloat(val);
       if (!isNaN(n) && n > 0) {
         totals[material] = (totals[material] || 0) + n;
-        historyEntries.push({ itemId: 8, itemName: itemNameOf(8), rowKey: material, qty: n, personId, personName: personNameOf(confirmerPeople, personId), at: workStampForDate(workDate) });
+        historyEntries.push({ itemId: 8, itemName: itemNameOf(8), rowKey: material, qty: n, personId, personName: personNameOf(confirmerPeople, personId), at: eventStampFor(zoneData, itemId, workDate) });
       }
     });
     if (historyEntries.length === 0) return;
@@ -6054,7 +6065,7 @@ function CellWorkTable({ zone, cellId, role, onClose, ym, workDate, loggedInId, 
       pending: { ...zoneData.pending, 8: false },
       multi8Main: [],
       extra8: {},
-      timestamps: { ...zoneData.timestamps, 8: { ...zoneData.timestamps[8], ackAt: workStampForDate(workDate) } },
+      timestamps: { ...zoneData.timestamps, 8: { ...zoneData.timestamps[8], ackAt: eventStampFor(zoneData, 8, workDate) } },
     };
     next = appendHistory(next, historyEntries);
     persistZone(next);
