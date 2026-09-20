@@ -5972,39 +5972,6 @@ function CellWorkTable({ zone, cellId, role, onClose, ym, workDate, loggedInId, 
   const [reportedQty, setReportedQty] = useState(""); // 6/7確認時使用者實際輸入的使用量
   const [reportedQty8, setReportedQty8] = useState({}); // 8：{資材名稱: 使用量}，可能同時選多種
 
-  // 功能表4「唯讀相容」：舊資料沒有 confirmHistory 時，只從既有 progress / confirmedBy / timestamps
-  // 組出畫面用歷史，不回寫、不轉換、不修改 Firebase。
-  const legacyReadOnlyHistory = (src) => {
-    if (!src || (Array.isArray(src.confirmHistory) && src.confirmHistory.length > 0)) return [];
-    const ids = new Set([
-      ...Object.keys(src.progress || {}),
-      ...Object.keys(src.confirmedBy || {}),
-      ...Object.keys(src.timestamps || {}),
-    ]);
-    return [...ids].map((rawId) => {
-      const itemId = Number(rawId);
-      const progress = src.progress ? src.progress[rawId] : undefined;
-      const people = (src.confirmedBy && Array.isArray(src.confirmedBy[rawId])) ? src.confirmedBy[rawId] : [];
-      const stamp = (src.timestamps && src.timestamps[rawId]) || {};
-      if (progress === undefined && people.length === 0 && !stamp.ackAt) return null;
-      return {
-        itemId,
-        itemName: itemNameOf(itemId),
-        progress,
-        personId: people.join("、"),
-        personName: people.map((id) => founderNameOf(id) || id).join("、"),
-        at: stamp.ackAt || stamp.changedAt || "",
-        legacyReadOnly: true,
-      };
-    }).filter(Boolean);
-  };
-  const visibleHistory = () => [
-    ...(data.confirmHistory || []),
-    ...(zoneData.confirmHistory || []),
-    ...legacyReadOnlyHistory(data),
-    ...legacyReadOnlyHistory(zoneData),
-  ];
-
   // 把每一次確認/回報動作記錄成一筆歷史紀錄，之後可在「歷史紀錄」畫面查閱（誰、何時、確認了什麼、多少量）
   const appendHistory = (baseData, entries) => {
     const history = [...(baseData.confirmHistory || []), ...entries];
@@ -6264,7 +6231,7 @@ function CellWorkTable({ zone, cellId, role, onClose, ym, workDate, loggedInId, 
       )
 
       , (() => {
-        const combinedHistory = visibleHistory();
+        const combinedHistory = [...(data.confirmHistory || []), ...(zoneData.confirmHistory || [])];
         return combinedHistory.length > 0 && (
           React.createElement('div', { className: "px-4 pt-2 flex-shrink-0"  ,}
             , React.createElement('button', {
@@ -6706,7 +6673,7 @@ function CellWorkTable({ zone, cellId, role, onClose, ym, workDate, loggedInId, 
               , React.createElement('button', { onClick: () => setShowHistory(false),}, React.createElement(X, { size: 18, color: C.inkSoft,} ))
             )
             , React.createElement('div', { className: "overflow-y-auto flex-1 min-h-0 flex flex-col gap-2"     ,}
-              , visibleHistory()
+              , [...(data.confirmHistory || []), ...(zoneData.confirmHistory || [])]
                 .sort((a, b) => (a.at < b.at ? 1 : -1))
                 .map((h, i) => (
                 React.createElement('div', { key: i, className: "p-3 rounded-xl" , style: { background: C.cream },}
@@ -6718,7 +6685,7 @@ function CellWorkTable({ zone, cellId, role, onClose, ym, workDate, loggedInId, 
                   )
                 )
               ))
-              , visibleHistory().length === 0 && (
+              , (data.confirmHistory || []).length === 0 && (zoneData.confirmHistory || []).length === 0 && (
                 React.createElement('div', { className: "text-center py-8 text-sm"  , style: { color: C.inkSoft, fontFamily: "Inter" },}, "尚無歷史紀錄")
               )
             )
@@ -9387,7 +9354,17 @@ function ZoneWorkFolders({ onBack, role, loggedInId, initialZoneId = null, initi
       }); // 分批讀取(同時最多6筆)所有 worklog，取代逐筆排隊或一次性大量平行
 
       // 6/7/8是全區共用（zonework:），要另外抓每個「分區＋年月」各一筆，跟本格1-5資料合併才能判斷完整狀態
+      // 功能表4歷史追回（唯讀）：把 Firebase 已存在的 zonework 月份一起納入索引。
+      // 不建立、不轉換、不回寫任何資料。
       const zoneYmSet = new Set(results.filter((r) => r.res).map((r) => `${r.zoneId}:${r.ym}`));
+      try {
+        const zr = await window.storage.list("zonework:");
+        ((zr && zr.keys) || []).forEach((k) => {
+          const rest = k.startsWith("zonework:") ? k.slice(9) : k;
+          const p = rest.split(":");
+          if (p.length === 2 && /^\d{4}-\d{2}$/.test(p[1])) zoneYmSet.add(`${p[0]}:${p[1]}`);
+        });
+      } catch (eZoneIndex) {}
       const zoneWorkMap = {};
       await runWithLimit([...zoneYmSet], 6, async (key) => {
         try {
@@ -9424,7 +9401,11 @@ function ZoneWorkFolders({ onBack, role, loggedInId, initialZoneId = null, initi
           const allPending = { ...(data.pending || {}), ...(zw.pending || {}) };
           const allProgress = { ...(data.progress || {}), ...(zw.progress || {}) };
           const pendingKeys = Object.keys(allPending).filter((k) => isRealPendingKey(k, allPending[k]));
-          const everTouched = Object.keys(allProgress).length > 0 || (data.confirmedTotals && Object.keys(data.confirmedTotals).length > 0) || (zw.confirmedTotals && Object.keys(zw.confirmedTotals).length > 0);
+          const everTouched = Object.keys(allProgress).length > 0 ||
+            (data.confirmedTotals && Object.keys(data.confirmedTotals).length > 0) ||
+            (zw.confirmedTotals && Object.keys(zw.confirmedTotals).length > 0) ||
+            (Array.isArray(data.confirmHistory) && data.confirmHistory.length > 0) ||
+            (Array.isArray(zw.confirmHistory) && zw.confirmHistory.length > 0);
           if (pendingKeys.length === 0) {
             status = everTouched ? "done" : "none";
           } else {
@@ -9436,6 +9417,25 @@ function ZoneWorkFolders({ onBack, role, loggedInId, initialZoneId = null, initi
         if (!idx[zoneId][y]) idx[zoneId][y] = {};
         if (!idx[zoneId][y][m]) idx[zoneId][y][m] = [];
         idx[zoneId][y][m].push({ cellId, ym, latest, status });
+      }
+
+      // 若舊月份只剩 zonework（畫面仍可看到 6/7/8 時間與歷史），
+      // 補一個唯讀入口，點入後仍由原 CellWorkTable 讀取同一份 zonework.confirmHistory。
+      for (const [zoneYm, zw] of Object.entries(zoneWorkMap)) {
+        const [zoneId, ym] = zoneYm.split(":");
+        const [ys, ms] = (ym || "").split("-");
+        const y = parseInt(ys, 10), m = parseInt(ms, 10);
+        if (!y || !m || !zw) continue;
+        const existing = (((idx[zoneId] || {})[y] || {})[m] || []);
+        if (existing.length) continue;
+        const history = Array.isArray(zw.confirmHistory) ? zw.confirmHistory : [];
+        if (!history.length) continue;
+        let latest = ym;
+        history.forEach((h) => { if (h && h.at && h.at > latest) latest = h.at; });
+        if (!idx[zoneId]) idx[zoneId] = {};
+        if (!idx[zoneId][y]) idx[zoneId][y] = {};
+        if (!idx[zoneId][y][m]) idx[zoneId][y][m] = [];
+        idx[zoneId][y][m].push({ cellId: "__ZONE_HISTORY__", ym, latest, status: "done" });
       }
     } catch (e) { console.error(e); }
     Object.values(idx).forEach((byYear) => {
@@ -9532,7 +9532,7 @@ function ZoneWorkFolders({ onBack, role, loggedInId, initialZoneId = null, initi
 
   // 指令3：從報表資料夾點進去，一律唯讀（強制 role="user"），不論實際身分；固定讀取該筆記錄所屬的月份
   if (openCell) {
-    return React.createElement(CellWorkTable, { zone: openCell.zone, cellId: openCell.cellId, ym: openCell.ym, workDate: (initialWorkDate && initialWorkDate.slice(0,7) === openCell.ym ? initialWorkDate : null), role: "user", onClose: () => setOpenCell(null), loggedInId: loggedInId,} );
+    return React.createElement(CellWorkTable, { zone: openCell.zone, cellId: openCell.cellId === "__ZONE_HISTORY__" ? "__歷史唯讀__" : openCell.cellId, ym: openCell.ym, workDate: (initialWorkDate && initialWorkDate.slice(0,7) === openCell.ym ? initialWorkDate : null), role: "user", onClose: () => setOpenCell(null), loggedInId: loggedInId,} );
   }
 
   const records = (_optionalChain([index, 'access', _279 => _279[zoneSel], 'optionalAccess', _280 => _280[yearSel], 'optionalAccess', _281 => _281[monthSel]])) || [];
