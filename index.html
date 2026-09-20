@@ -9402,10 +9402,7 @@ function ZoneWorkFolders({ onBack, role, loggedInId, initialZoneId = null, initi
         if (!idx[zoneId]) idx[zoneId] = {};
         if (!idx[zoneId][y]) idx[zoneId][y] = {};
         if (!idx[zoneId][y][m]) idx[zoneId][y][m] = [];
-        const historyRows = [...(data.confirmHistory || []), ...(zw.confirmHistory || [])]
-            .filter((h) => h && h.at && String(h.at).slice(0, 7).replace(/\//g, "-") === ym)
-            .sort((a, b) => (a.at < b.at ? 1 : -1));
-          idx[zoneId][y][m].push({ cellId, ym, latest, status, historyRows });
+        idx[zoneId][y][m].push({ cellId, ym, latest, status });
       }
     } catch (e) { console.error(e); }
     Object.values(idx).forEach((byYear) => {
@@ -9647,16 +9644,6 @@ function ZoneWorkFolders({ onBack, role, loggedInId, initialZoneId = null, initi
                     )
                     , React.createElement('div', { style: { fontFamily: "Inter", fontWeight: 600, fontSize: 14, color: C.ink },}, rec.cellId)
                     , React.createElement('div', { className: "text-xs", style: { color: C.inkSoft, fontFamily: "IBM Plex Mono" },}, rec.latest)
-                    , (rec.historyRows || []).length > 0 && React.createElement('div', { className: "mt-1 flex flex-col gap-0.5" },
-                        (rec.historyRows || []).map((h, hi) =>
-                          React.createElement('div', { key: hi, className: "text-xs", style: { color: C.inkSoft, fontFamily: "Inter" },},
-                            React.createElement('span', { style: { color: C.ink, fontWeight: 600 },}, `${h.itemId}.${h.itemName || ""}`),
-                            h.rowKey ? `・${h.rowKey} ${h.qty ?? ""}` : (h.progress !== undefined ? `・進度${h.progress}` : ""),
-                            h.personName ? `・${h.personName}` : "",
-                            h.at ? `・${h.at}` : ""
-                          )
-                        )
-                      )
                   )
                   , !exportMode && (role === "designer" || role === "manager" || role === "founder") && (
                     React.createElement('button', {
