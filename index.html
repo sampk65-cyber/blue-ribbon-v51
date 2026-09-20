@@ -6458,7 +6458,8 @@ function CellWorkTable({ zone, cellId, role, onClose, ym, workDate, loggedInId, 
                   , _optionalChain([data, 'access', _148 => _148.recipientIds, 'optionalAccess', _149 => _149.length]) > 1 && confirmedList.length > 0 && (
                     React.createElement('span', { style: { fontSize: 9, color: C.inkSoft, fontFamily: "Inter" },}, confirmedList.length, "/", data.recipientIds.length, "人確認")
                   )
-                  , _optionalChain([ts, 'optionalAccess', _150 => _150.changedAt]) && React.createElement('span', { style: { fontSize: 9, color: C.inkSoft, fontFamily: "IBM Plex Mono" },}, ts.changedAt)
+                  , _optionalChain([ts, 'optionalAccess', _150 => _150.changedAt]) && React.createElement('span', { style: { fontSize: 9, color: C.inkSoft, fontFamily: "IBM Plex Mono" },}, "指定 ", ts.changedAt)
+                  , showOriginalHistory && _optionalChain([ts, 'optionalAccess', _151 => _151.ackAt]) && React.createElement('span', { style: { fontSize: 9, color: C.tableColor, fontFamily: "IBM Plex Mono", fontWeight: 700 },}, "回報 ", ts.ackAt)
                 )
                 , originalHistory.length > 0 && React.createElement('div', {
                     className: "w-full px-3 pb-2 flex flex-col gap-2",
@@ -6467,7 +6468,7 @@ function CellWorkTable({ zone, cellId, role, onClose, ym, workDate, loggedInId, 
                     key: historyIndex, className: "p-3 rounded-xl", style: { background: C.cream },
                   },
                     React.createElement('div', { className: "text-xs mb-0.5", style: { color: C.inkSoft },},
-                      h.at ?? "", h.personName ? " · " : "", h.personName ?? ""
+                      "回報 ", h.at ?? "", h.personName ? " · " : "", h.personName ?? ""
                     ),
                     React.createElement('div', { style: { fontWeight: 600, fontSize: 13, color: C.ink },},
                       h.itemName ?? "",
