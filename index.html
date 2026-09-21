@@ -1679,7 +1679,7 @@ function HomeIsland({ onHome }) {
 }
 
 
-function ZoneMenu({ zone, onBack, onPick }) {
+function ZoneMenu({ zone, onBack, onPick, onGoReport }) {
   // 掃描該分區本月是否有待確認的異動（設計者/管理者存檔後產生），顯示在「該區平面圖」入口上
   const [pendingCells, setPendingCells] = useState(0);
   useEffect(() => {
@@ -1736,8 +1736,8 @@ function ZoneMenu({ zone, onBack, onPick }) {
               , React.createElement(LayoutTemplate, { size: 22, color: C.coral,} )
             )
             , React.createElement('span', null
-              , React.createElement('div', { style: { fontFamily: "Inter", fontWeight: 600, fontSize: 16, color: C.ink },}, "溫室平面圖")
-              , React.createElement('div', { style: { fontFamily: "Inter", fontSize: 12, color: C.inkSoft },}, "查看溫室棚位配置與外框形狀")
+              , React.createElement('div', { style: { fontFamily: "Inter", fontWeight: 600, fontSize: 16, color: C.ink },}, "工作指定")
+              , React.createElement('div', { style: { fontFamily: "Inter", fontSize: 12, color: C.inkSoft },}, "依目前溫室進入平面圖指定工作")
             )
             , pendingCells > 0 && (
               React.createElement('span', { className: "absolute top-2 right-2 px-1.5 py-0.5 rounded-full"     , style: { background: C.alert, color: "white", fontFamily: "Inter", fontWeight: 700, fontSize: 10 },}
@@ -1759,7 +1759,7 @@ function ZoneMenu({ zone, onBack, onPick }) {
             )
           )
           , React.createElement('button', {
-            onClick: () => onPick("function"),
+            onClick: () => { if (typeof onGoReport === "function") onGoReport(); },
             className: "flex items-center gap-4 p-5 rounded-2xl text-left"     ,
             style: { background: C.paper, border: `1px solid ${C.line}` },}
 
@@ -1767,8 +1767,8 @@ function ZoneMenu({ zone, onBack, onPick }) {
               , React.createElement(ClipboardList, { size: 22, color: C.wine,} )
             )
             , React.createElement('span', null
-              , React.createElement('div', { style: { fontFamily: "Inter", fontWeight: 600, fontSize: 16, color: C.ink },}, "回主功能表")
-              , React.createElement('div', { style: { fontFamily: "Inter", fontSize: 12, color: C.inkSoft },}, "產能輸入、行事曆、環境數據等作業功能")
+              , React.createElement('div', { style: { fontFamily: "Inter", fontWeight: 600, fontSize: 16, color: C.ink },}, "工作回報")
+              , React.createElement('div', { style: { fontFamily: "Inter", fontSize: 12, color: C.inkSoft },}, "依目前溫室直接進入工作回報")
             )
           )
         )
@@ -11041,7 +11041,7 @@ function AppMain({ initialRole, initialId, onLogoutToSplash }) {
       , globalView === "environment" && React.createElement(EnvironmentMenu, { onBack: backToMap, role: roleForMenu(8), loggedInId: loggedInId,} )
       , globalView === "attendance" && React.createElement(AttendanceMenu, { onBack: backToMap, role: roleForMenu(9), loggedInId: loggedInId,} )
 
-      , zone && view === "menu" && React.createElement(ZoneMenu, { zone: zone, onBack: backToMap, onPick: openZoneView,} )
+      , zone && view === "menu" && React.createElement(ZoneMenu, { zone: zone, onBack: backToMap, onPick: openZoneView, onGoReport: () => { setReportShortcutZone(zone.id); openGlobalView("folders"); },} )
       , zone && view === "function" && (
         React.createElement(FunctionMenu, {
           zone: zone,
