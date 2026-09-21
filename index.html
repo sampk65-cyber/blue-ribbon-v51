@@ -5704,6 +5704,29 @@ function CellWorkTable({ zone, cellId, role, onClose, ym, workDate, loggedInId, 
 
   const retrySave = () => { if (lastPayloadRef.current) runWrite(lastPayloadRef.current); };
   const confirmAssignmentSave = () => {
+    // 6–8 統一數量檢查：保留原本點選/暫存/寫入機制，只在「正式建立事件」前攔截。
+    // 任一已選品項沒有有效數量 (>0)，提醒後留在原畫面，不建立 eventId。
+    const missingQty = [];
+    [6, 7].forEach((itemId) => {
+      if (!((zoneData.pending || {})[itemId])) return;
+      const selected = selected67From(zoneData, itemId);
+      if (!selected.length || selected.some((opt) => {
+        const v = parseFloat(qty67(itemId, opt, zoneData));
+        return !Number.isFinite(v) || v <= 0;
+      })) missingQty.push(itemId);
+    });
+    if ((zoneData.pending || {})[8]) {
+      const selected8 = Array.isArray(zoneData.multi8Main) ? zoneData.multi8Main : [];
+      if (!selected8.length || selected8.some((opt) => {
+        const v = parseFloat((zoneData.extra8 || {})[opt]);
+        return !Number.isFinite(v) || v <= 0;
+      })) missingQty.push(8);
+    }
+    if (missingQty.length) {
+      const names = { 6: "補水", 7: "施肥", 8: "其他資材" };
+      alert(`請先輸入${missingQty.map((id) => names[id]).join("、")}的有效數量，再儲存指定。`);
+      return;
+    }
     // C58/V5.003 前向事件制：每次「新增指定」建立唯一 eventId。
     // 舊 confirmHistory / 舊 assignmentHistory 一律只追加、不重寫、不搬移。
     const freezeAssignments = (base, ids) => {
