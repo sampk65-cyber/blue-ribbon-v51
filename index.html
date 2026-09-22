@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-<title>完全體 V5.1.C54・藍帶無花果</title>
+<title>完全體 V5.1.C64・藍帶無花果</title>
 <meta name="apple-mobile-web-app-capable" content="yes" />
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
 <meta name="apple-mobile-web-app-title" content="藍帶無花果" />
@@ -360,11 +360,167 @@ const { useState, useEffect, useRef } = React;
     }
   }
 
+// WORK_DATA_SAFETY_BEGIN
+// 同一份月文件沿用原路徑；只能提交有讀取基準的交易，歷史只追加。
+const WorkDataSafety = (() => {
+  const isWorkKey = key => /^(worklog|zonework):/.test(String(key));
+  const copy = value => JSON.parse(JSON.stringify(value));
+  const stable = value => JSON.stringify(value, function (_key, v) {
+    if (v && typeof v === 'object' && !Array.isArray(v)) return Object.keys(v).sort().reduce((o,k) => { o[k] = v[k]; return o; }, {});
+    return v;
+  });
+  const parse = value => {
+    const data = typeof value === 'string' ? JSON.parse(value) : copy(value);
+    if (!data || typeof data !== 'object' || Array.isArray(data)) throw new Error('工作資料格式不完整，已停止寫入。');
+    for (const field of ['confirmHistory','assignmentHistory']) if (data[field] !== undefined && !Array.isArray(data[field])) throw new Error('歷史格式不完整，已停止寫入。');
+    return data;
+  };
+  const positive = value => (typeof value === 'number' || typeof value === 'string') && String(value).trim() !== '' && Number.isFinite(Number(value)) && Number(value) > 0;
+  const options = (data,id) => {
+    const list = data[id === 6 ? 'multi6' : id === 7 ? 'multi7' : 'multi8Main'];
+    if (Array.isArray(list) && list.length) return list;
+    return id !== 8 && data.checks && data.checks[id] ? [data.checks[id]] : [];
+  };
+  const quantity = (data,id,opt) => {
+    if (id === 8) return (data.extra8 || {})[opt];
+    const extra = (data.extra || {})[id] || {};
+    if (id === 6) return extra[opt === '噴灌' ? 'minutes' : 'tons'];
+    return extra[opt] ?? (options(data,id).length === 1 ? extra.bags : undefined);
+  };
+  const validateQuantities = (names,values) => {
+    if (!names.length) throw new Error('尚未選擇工作內容，本次操作不成立。');
+    const result = {};
+    for (const name of names) {
+      if (!positive(values && values[name])) throw new Error(`「${name}」請輸入大於 0 的有效數量；尚未儲存。`);
+      result[name] = Number(values[name]);
+    }
+    return result;
+  };
+  const validateAssignment = (cell,zone) => {
+    const cellIds = [1,2,3,4,5].filter(id => !!(cell.pending || {})[id]);
+    const zoneIds = [6,7,8].filter(id => !!(zone.pending || {})[id]);
+    if (!cellIds.length && !zoneIds.length) throw new Error('尚未輸入工作內容，本次指定不成立，也不會儲存。');
+    for (const id of cellIds) if (!Number.isInteger(Number((cell.levels || {})[id])) || Number(cell.levels[id]) < 1 || Number(cell.levels[id]) > 5) throw new Error(`工作 ${id} 請選擇有效級別。`);
+    for (const id of zoneIds) validateQuantities(options(zone,id),Object.fromEntries(options(zone,id).map(opt => [opt,quantity(zone,id,opt)])));
+    return {cellIds,zoneIds};
+  };
+  const hasContent = data => ['confirmHistory','assignmentHistory'].some(k => Array.isArray(data[k]) && data[k].length) || Object.values(data.levels || {}).some(positive) || [6,7,8].some(id => options(data,id).length) || !!data.linkedZoneEventId;
+  const checkPreserved = (before,next) => {
+    for (const field of ['confirmHistory','assignmentHistory']) {
+      const a = before[field] || [], b = next[field] || [];
+      if (b.length < a.length || a.some((record,i) => stable(record) !== stable(b[i]))) throw new Error('已阻擋會刪除或改寫既有歷史的操作，請重新讀取資料。');
+    }
+    for (const [name,value] of Object.entries(before.confirmedTotals || {})) {
+      if (typeof value !== 'number' || !Number.isFinite(value) || value < 0) {
+        if (stable((next.confirmedTotals || {})[name]) !== stable(value)) throw new Error('原累計格式需要確認，已停止寫入。');
+      } else if (!Number.isFinite(Number((next.confirmedTotals || {})[name])) || Number(next.confirmedTotals[name]) < value) throw new Error('已阻擋清空或減少既有累計的操作。');
+    }
+    if (!hasContent(next)) throw new Error('沒有有效工作內容，本次操作不成立。');
+  };
+  const buildAssignment = (base,draft,ids,eventId,stamp,isCell,updateRecipients=false) => {
+    const next = copy(base);
+    for (const field of ['levels','checks','extra','pending','timestamps','progress','confirmedBy']) next[field] = {...(next[field] || {})};
+    for (const id of ids) {
+      if ((base.pending || {})[id]) throw new Error(`工作 ${id} 仍有未完成指定，請先處理原事件；尚未寫入。`);
+      for (const field of ['levels','checks','extra']) if (Object.prototype.hasOwnProperty.call(draft[field] || {},id)) next[field][id] = copy(draft[field][id]);
+      next.pending[id] = true;
+      delete next.progress[id]; delete next.confirmedBy[id];
+      next.timestamps[id] = {...((draft.timestamps || {})[id] || {}),eventId,changedAt:((draft.timestamps || {})[id] || {}).changedAt || stamp};
+      delete next.timestamps[id].ackAt;
+      if ([6,7,8].includes(id)) next[id === 6 ? 'multi6' : id === 7 ? 'multi7' : 'multi8Main'] = copy(options(draft,id));
+      if (id === 8) next.extra8 = copy(draft.extra8 || {});
+    }
+    if (isCell && updateRecipients) {
+      if (Object.entries(base.pending || {}).some(([id,v])=>v && !ids.includes(Number(id))) && stable(base.recipientIds || []) !== stable(draft.recipientIds || [])) throw new Error('其他工作仍待回報，新增指定不能改變原受文對象；請沿用原對象或先完成原工作。');
+      for (const field of ['changeSenderId','changeSenderName','recipientIds','recipientNames']) if (draft[field] !== undefined) next[field] = copy(draft[field]);
+    }
+    next.assignmentHistory = [...(base.assignmentHistory || []),{eventId,itemIds:ids,assignedAt:stamp}];
+    return next;
+  };
+  const appendMissing = (current,incoming,field) => {
+    const out = copy(current), counts = new Map(), identities = new Map();
+    const identity = x => {
+      if(!x || typeof x!=='object') return null;
+      if(field==='assignmentHistory') return x.eventId ? 'assignment:'+x.eventId : null;
+      if(x.itemId == null || (!x.eventId && !x.at)) return null;
+      return stable([x.eventId || 'legacy',x.itemId,x.rowKey || '',x.personId || '',x.at]);
+    };
+    current.forEach(x=>{const id=identity(x);if(id){if(!identities.has(id))identities.set(id,new Set());identities.get(id).add(stable(x));}});
+    current.forEach(x => { const k=stable(x); counts.set(k,(counts.get(k)||0)+1); });
+    for (const x of incoming) {
+      const k=stable(x), n=counts.get(k)||0;
+      if(n){counts.set(k,n-1);continue;}
+      const id=identity(x);
+      if(!id) throw new Error('備份有無法辨識單筆身分的歷史，已停止自動補入，請先核對。');
+      if(identities.has(id)) throw new Error('備份與現有資料含同一事件的不同內容或重複筆數，已停止還原，避免重複累加。');
+      out.push(copy(x));identities.set(id,new Set([k]));
+    }
+    return out;
+  };
+  return {isWorkKey,copy,stable,parse,positive,options,quantity,validateQuantities,validateAssignment,hasContent,checkPreserved,buildAssignment,appendMissing};
+})();
+window.WorkDataSafety = WorkDataSafety;
+// WORK_DATA_SAFETY_END
+
   window.storage = {
+    async commitWork(changes, operationId) {
+      await ensureReady();
+      if (!Array.isArray(changes) || !changes.length || !operationId) throw new Error('沒有可儲存的工作操作。');
+      if (new Set(changes.map(c => c.key)).size !== changes.length) throw new Error('工作操作重複，已停止寫入。');
+      const prepared = changes.map(c => {
+        if (!WorkDataSafety.isWorkKey(c.key) || !Object.prototype.hasOwnProperty.call(c,'expectedValue')) throw new Error('缺少工作資料的讀取基準，已停止寫入。');
+        const next = WorkDataSafety.parse(c.next);
+        WorkDataSafety.checkPreserved(c.expectedValue === null ? {} : WorkDataSafety.parse(c.expectedValue),next);
+        return {...c,next,value:JSON.stringify(next),ref:db.collection(COLLECTION).doc(c.key)};
+      });
+      return db.runTransaction(async transaction => {
+        // Firestore 要求先完成所有讀取，再進行任何寫入。
+        const snapshots = [];
+        for (const c of prepared) snapshots.push(await transaction.get(c.ref));
+        const prior = snapshots.map(s => s.exists ? s.data() : null);
+        const applied = prior.map(d => !!(d && Array.isArray(d.workSafetyOperations) && d.workSafetyOperations.includes(operationId)));
+        if (applied.every(Boolean)) return prior.map((d,i) => ({key:prepared[i].key,value:d.value}));
+        if (applied.some(Boolean)) throw new Error('操作紀錄不一致，請重新讀取；未再寫入。');
+        for (let i=0;i<prepared.length;i++) {
+          const current = prior[i] ? prior[i].value : null;
+          if (current !== prepared[i].expectedValue) throw new Error('資料已由其他畫面更新，已阻擋舊資料覆蓋。請重新讀取後再操作。');
+          WorkDataSafety.checkPreserved(current === null ? {} : WorkDataSafety.parse(current),prepared[i].next);
+        }
+        prepared.forEach((c,i) => transaction.set(c.ref,{
+          key:c.key,value:c.value,updatedAt:Date.now(),updatedByUid:auth.currentUser ? auth.currentUser.uid : null,
+          workSafetyRevision: Number(prior[i] && prior[i].workSafetyRevision || 0)+1,
+          workSafetyOperations:[...((prior[i] && prior[i].workSafetyOperations) || []),operationId].slice(-128),
+        },{merge:true}));
+        return prepared.map(c => ({key:c.key,value:c.value}));
+      });
+    },
+    async restoreWorkRecord(key,value) {
+      await ensureReady();
+      if (!WorkDataSafety.isWorkKey(key)) throw new Error('不是工作文件。');
+      const incoming = WorkDataSafety.parse(value);
+      const ref = db.collection(COLLECTION).doc(key);
+      return db.runTransaction(async transaction => {
+        const snapshot = await transaction.get(ref);
+        const before = snapshot.exists ? WorkDataSafety.parse(snapshot.data().value) : null;
+        let next = before ? WorkDataSafety.copy(before) : WorkDataSafety.copy(incoming);
+        if (before) {
+          for (const field of ['assignmentHistory','confirmHistory']) next[field] = WorkDataSafety.appendMissing(before[field] || [],incoming[field] || [],field);
+          next.confirmedTotals = {...(before.confirmedTotals || {})};
+          for (const h of next.confirmHistory.slice((before.confirmHistory || []).length)) {
+            if (h && [6,7,8].includes(Number(h.itemId)) && h.rowKey && WorkDataSafety.positive(h.qty)) next.confirmedTotals[h.rowKey] = Number(next.confirmedTotals[h.rowKey] || 0)+Number(h.qty);
+          }
+        }
+        WorkDataSafety.checkPreserved(before || {},next);
+        const saved = JSON.stringify(next);
+        if (!snapshot.exists || saved !== snapshot.data().value) transaction.set(ref,{key,value:saved,updatedAt:Date.now(),updatedByUid:auth.currentUser ? auth.currentUser.uid : null},{merge:true});
+        return {key,value:saved};
+      });
+    },
+
     async get(key, shared) {
       await ensureReady();
       try {
-        const doc = await db.collection(COLLECTION).doc(key).get();
+        const doc = await db.collection(COLLECTION).doc(key).get(WorkDataSafety.isWorkKey(key) ? { source: "server" } : undefined);
         if (!doc.exists) return null;
         const data = doc.data() || {};
         return { key, value: data.value, shared: !!shared };
@@ -375,6 +531,7 @@ const { useState, useEffect, useRef } = React;
     },
 
     async set(key, value, shared) {
+      if (WorkDataSafety.isWorkKey(key)) throw new Error("已阻擋整月覆寫，工作資料必須使用單筆操作的安全交易。");
       await ensureReady();
       try {
         await db.collection(COLLECTION).doc(key).set({
@@ -391,6 +548,7 @@ const { useState, useEffect, useRef } = React;
     },
 
     async delete(key, shared) {
+      if (WorkDataSafety.isWorkKey(key)) throw new Error("禁止刪除整份月工作文件，請使用可辨識的單一事件操作。");
       await ensureReady();
       try {
         await db.collection(COLLECTION).doc(key).delete();
@@ -524,7 +682,7 @@ const C = {
   tiffanyLight: "#B8ECE5",
   tiffanyText: "#2E8577",
 };
-const APP_VERSION = 'V5.1.C63';
+const APP_VERSION = 'V5.1.C64';
 const FONT_LINK = "https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,600;9..144,700&family=Inter:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap";
 
 const WORK_ITEMS = [
@@ -1094,12 +1252,14 @@ function BackupPanel({ onClose }) {
       const listResult = await window.storage.list("");
       const keys = _optionalChain([listResult, 'optionalAccess', _2 => _2.keys]) || [];
       const data = {};
+      const failedKeys = [];
       await runWithLimit(keys, 6, async (k) => {
         try {
           const res = await window.storage.get(k);
           if (res) data[k] = res.value;
-        } catch (e2) { /* 略過單筆讀取失敗 */ }
+        } catch (error) { failedKeys.push(k); }
       });
+      if(failedKeys.length) throw new Error(`有 ${failedKeys.length} 份資料未讀取成功，本次不產生不完整備份，請重新匯出。`);
       const payload = { exportedAt: new Date().toISOString(), count: Object.keys(data).length, data };
       const blob = new Blob([JSON.stringify(payload, null, 2)], { type: "application/json" });
       const url = URL.createObjectURL(blob);
@@ -1126,7 +1286,7 @@ function BackupPanel({ onClose }) {
         const parsed = JSON.parse(ev.target.result);
         if (!parsed || typeof parsed.data !== "object") throw new Error("檔案內容格式不符");
         setFileContent(parsed);
-        setMsg(`已讀取備份檔，共 ${Object.keys(parsed.data).length} 筆資料，確認還原後會覆蓋雲端現有資料`);
+        setMsg(`已讀取備份檔，共 ${Object.keys(parsed.data).length} 筆資料，工作紀錄只補歷史缺漏，其他資料依原方式還原`);
       } catch (err) {
         setFileContent(null);
         setMsg("檔案格式錯誤，無法讀取，請確認選的是本App匯出的備份檔");
@@ -1142,7 +1302,8 @@ function BackupPanel({ onClose }) {
     try {
       const entries = Object.entries(fileContent.data);
       await runWithLimit(entries, 6, async ([k, v]) => {
-        await window.storage.set(k, v);
+        if(window.WorkDataSafety.isWorkKey(k)) await window.storage.restoreWorkRecord(k,v);
+        else await window.storage.set(k,v);
       });
       setMsg(`已還原 ${entries.length} 筆資料，請退出此畫面後重新整理頁面查看`);
       setFileContent(null);
@@ -1172,7 +1333,7 @@ function BackupPanel({ onClose }) {
 
         , React.createElement('div', { className: "mb-3", style: { borderTop: `1px solid ${C.line}`, paddingTop: 16 },}
           , React.createElement('div', { style: { fontFamily: "Inter", fontWeight: 700, fontSize: 14, color: C.ink }, className: "mb-1",}, "還原備份")
-          , React.createElement('div', { className: "text-xs mb-2" , style: { color: C.alert, fontFamily: "Inter" },}, "注意：還原會覆蓋雲端現有資料，請先確認選的是正確的備份檔"
+          , React.createElement('div', { className: "text-xs mb-2" , style: { color: C.alert, fontFamily: "Inter" },}, "注意：工作紀錄只補回歷史缺漏，不清空現有紀錄；其他資料仍會覆蓋同名資料，請確認備份檔"
 
           )
           , React.createElement('input', { type: "file", accept: "application/json", onChange: handleFile, className: "text-xs mb-3" ,} )
@@ -5580,7 +5741,7 @@ function CellWorkTable({ zone, cellId, role, onClose, ym, workDate, loggedInId, 
     document.body.classList.add("cell-work-open");
     return () => document.body.classList.remove("cell-work-open");
   }, []);
-  const editable = role === "designer" || role === "manager" || role === "founder";
+  const canEditRole = role === "designer" || role === "manager" || role === "founder";
   const isUser = role === "user" || role === "founder";
   const shape = FLOOR_SHAPES[zone.id];
   // 指令修正：儲存內容需對應到「該區該月」的資料夾，key 內含年月；
@@ -5600,9 +5761,13 @@ function CellWorkTable({ zone, cellId, role, onClose, ym, workDate, loggedInId, 
   };
   const [zoneData, setZoneData] = useState(blankZone);
   // 新增指派初始化隔離：新增模式只顯示乾淨工作表；歷史陣列/統計唯讀沿用，絕不把舊月份的 active 欄位帶進新指定。
-  const isNewAssignmentMode = editable && !showOriginalHistory;
+  const isNewAssignmentMode = canEditRole && !showOriginalHistory;
   const cleanForNewAssignment = (source, base) => ({
     ...base,
+    changeSenderId: source?.changeSenderId ?? base.changeSenderId ?? null,
+    changeSenderName: source?.changeSenderName ?? base.changeSenderName ?? null,
+    recipientIds: source?.recipientIds || base.recipientIds || [],
+    recipientNames: source?.recipientNames || base.recipientNames || {},
     assignmentHistory: Array.isArray(source && source.assignmentHistory) ? source.assignmentHistory : [],
     confirmHistory: Array.isArray(source && source.confirmHistory) ? source.confirmHistory : [],
     confirmedTotals: (source && source.confirmedTotals) ? source.confirmedTotals : (base.confirmedTotals || {}),
@@ -5616,163 +5781,180 @@ function CellWorkTable({ zone, cellId, role, onClose, ym, workDate, loggedInId, 
   const [status, setStatus] = useState("loading");
   const [saveStatus, setSaveStatus] = useState("idle"); // idle | saving | saved | error
   const [saveError, setSaveError] = useState("");
+  const editable = canEditRole && saveStatus !== "saving";
   const [showApply, setShowApply] = useState(false);
   const [applyTargets, setApplyTargets] = useState([]);
   const [applyMsg, setApplyMsg] = useState("");
 
+  const [loadError, setLoadError] = useState("");
+  const [reloadNonce, setReloadNonce] = useState(0);
+  const workSessionRef = useRef(null);
+  const workQueueRef = useRef(Promise.resolve());
+  const assignmentBusyRef = useRef(false);
+  const assignmentDirtyRef = useRef(false);
+  const recipientDirtyRef = useRef(false);
+  const pendingOperationRef = useRef(null);
+  const safety = window.WorkDataSafety;
+  const showWorkError = (error) => {
+    const message = error && error.message ? error.message : String(error);
+    setSaveStatus("error"); setSaveError(message);
+    window.alert(message);
+    return false;
+  };
   useEffect(() => {
+    let alive = true;
+    workSessionRef.current = null;
+    assignmentDirtyRef.current = false;
+    recipientDirtyRef.current = false;
+    pendingOperationRef.current = null;
+    setStatus("loading"); setLoadError(""); setSaveStatus("idle");
     (async () => {
       try {
-        const res = await window.storage.get(storeKey);
-        const loadedData = res ? { ...blank, ...JSON.parse(res.value) } : blank;
-        const initialData = isNewAssignmentMode ? cleanForNewAssignment(loadedData, blank) : loadedData;
-        dataRef.current = initialData;
-        setData(initialData);
-      } catch (e15) {
-        setData(blank);
+        const [res,zres] = await Promise.all([window.storage.get(storeKey),window.storage.get(zoneKey,true)]);
+        const loadedData = res ? {...blank,...safety.parse(res.value)} : {...blank};
+        const loadedZone = zres ? {...blankZone,...safety.parse(zres.value)} : {...blankZone};
+        if (!alive) return;
+        const context = {work:{key:storeKey,value:res ? res.value : null,data:loadedData},zone:{key:zoneKey,value:zres ? zres.value : null,data:loadedZone},failed:false};
+        workSessionRef.current = context;
+        const initialData = isNewAssignmentMode ? cleanForNewAssignment(loadedData,blank) : loadedData;
+        const initialZone = isNewAssignmentMode ? cleanForNewAssignment(loadedZone,blankZone) : loadedZone;
+        dataRef.current=initialData; zoneDataRef.current=initialZone;
+        setData(initialData); setZoneData(initialZone); setStatus("ready");
+      } catch (error) {
+        if (!alive) return;
+        workSessionRef.current = null;
+        setLoadError("工作資料讀取失敗，已停用輸入與儲存。請確認連線後重新讀取。");
+        setStatus("error");
       }
-      try {
-        const zres = await window.storage.get(zoneKey, true); // 整區共用，shared=true
-        const loadedZone = zres ? { ...blankZone, ...JSON.parse(zres.value) } : blankZone;
-        const initialZone = isNewAssignmentMode ? cleanForNewAssignment(loadedZone, blankZone) : loadedZone;
-        zoneDataRef.current = initialZone;
-        setZoneData(initialZone);
-      } catch (e16) {
-        zoneDataRef.current = blankZone;
-        setZoneData(blankZone);
-      }
-      setStatus("ready");
     })();
-  }, [storeKey, zoneKey]);
+    return () => { alive=false; };
+  }, [storeKey,zoneKey,reloadNonce]);
 
-  const zoneWriteQueueRef = useRef(Promise.resolve());
-  const lastZonePayloadRef = useRef(null);
-  const runZoneWrite = (next) => {
-    lastZonePayloadRef.current = next;
+  const requireWorkReady = () => {
+    const context=workSessionRef.current;
+    if (!context || context.failed || context.work.key !== storeKey || context.zone.key !== zoneKey) throw new Error("資料尚未成功讀取，或上次儲存失敗；請重新讀取後再操作。");
+    return context;
+  };
+  const queueWorkChanges = (updates) => {
+    let context;
+    try { context=requireWorkReady(); } catch(error) { return Promise.resolve(showWorkError(error)); }
+    const frozen=updates.map(u=>({scope:u.scope,next:safety.copy(u.next)}));
+    const operationId=newWorkEventId();
     setSaveStatus("saving");
-    zoneWriteQueueRef.current = zoneWriteQueueRef.current
-      .catch(() => {})
-      .then(() => window.storage.set(zoneKey, JSON.stringify(next), true))
-      .then((result) => {
-        if (!result) throw new Error("storage.set 回傳空值");
-        if (lastZonePayloadRef.current === next) {
-          setSaveStatus("saved");
-          setSaveError("");
-          setTimeout(() => setSaveStatus((s) => (s === "saved" ? "idle" : s)), 1500);
-        }
-      })
-      .catch((e) => {
-        console.error(e);
-        if (lastZonePayloadRef.current === next) {
-          setSaveStatus("error");
-          setSaveError(_optionalChain([e, 'optionalAccess', _43 => _43.message]) || String(e));
-        }
-      });
-  };
-  const persistZone = (next) => {
-    zoneDataRef.current = next;
-    setZoneData(next);
-    runZoneWrite(next);
-  };
-
-  const writeQueueRef = useRef(Promise.resolve()); // 同一格子的所有寫入排隊依序執行，避免快速連點時互相衝突
-  const lastPayloadRef = useRef(null);
-
-  const runWrite = (next) => {
-    lastPayloadRef.current = next;
-    setSaveStatus("saving");
-    writeQueueRef.current = writeQueueRef.current
-      .catch(() => {}) // 前一筆失敗也不中斷佇列
-      .then(() => window.storage.set(storeKey, JSON.stringify(next)))
-      .then((result) => {
-        if (!result) throw new Error("storage.set 回傳空值，可能是儲存空間權限問題");
-        // 只有「最新一筆」才更新狀態顯示，避免舊的排隊結果覆蓋新狀態
-        if (lastPayloadRef.current === next) {
-          setSaveStatus("saved");
-          setSaveError("");
-          setTimeout(() => setSaveStatus((s) => (s === "saved" ? "idle" : s)), 1500);
-        }
-      })
-      .catch((e) => {
-        console.error(e);
-        if (lastPayloadRef.current === next) {
-          setSaveStatus("error");
-          setSaveError(_optionalChain([e, 'optionalAccess', _44 => _44.message]) || String(e));
-        }
-      });
-  };
-
-  const retrySave = () => { if (lastPayloadRef.current) runWrite(lastPayloadRef.current); };
-  const confirmAssignmentSave = () => {
-    // C58/V5.003 前向事件制：每次「新增指定」建立唯一 eventId。
-    // 舊 confirmHistory / 舊 assignmentHistory 一律只追加、不重寫、不搬移。
-    const freezeAssignments = (base, ids) => {
-      // C60/V5.005：事件邊界沿用原工作範圍。
-      // 1–5 同一分區一次新增指派共用一個 cell eventId；6–8 同一溫室一次新增指派共用一個 zone eventId。
-      // 不改舊 confirmHistory / assignmentHistory，只對本次 pending 指派建立新的事件。
-      const next = { ...base, timestamps: { ...(base.timestamps || {}) }, assignmentHistory: [...(base.assignmentHistory || [])] };
-      const pendingIds = ids.filter((itemId) => !!((base.pending || {})[itemId]));
-      if (!pendingIds.length) return next;
-      const eventId = newWorkEventId();
-      let eventAssignedAt = null;
-      pendingIds.forEach((itemId) => {
-        const oldTs = (base.timestamps || {})[itemId] || {};
-        const assignedAt = oldTs.changedAt || workStampForDate(workDate);
-        if (!eventAssignedAt || String(assignedAt) < String(eventAssignedAt)) eventAssignedAt = assignedAt;
-        next.timestamps[itemId] = { ...oldTs, changedAt: assignedAt, eventId };
-      });
-      next.assignmentHistory.push({ eventId, itemIds: pendingIds.map(Number), assignedAt: eventAssignedAt || workStampForDate(workDate) });
-      return next;
-    };
-    const nextData = freezeAssignments(data, [1,2,3,4,5]);
-    const nextZone = freezeAssignments(zoneData, [6,7,8]);
-    setData(nextData); dataRef.current = nextData;
-    setZoneData(nextZone); zoneDataRef.current = nextZone;
-    runWrite(nextData);
-    runZoneWrite(nextZone);
-    showReportShortcutDialog(() => {
-      if (typeof onGoReport === "function") onGoReport();
+    const job=workQueueRef.current.then(async()=>{
+      if (context.failed) throw new Error("前次儲存未完成，後續寫入已停止。請重新讀取。");
+      const changes=frozen.map(u=>({key:context[u.scope].key,expectedValue:context[u.scope].value,next:u.next}));
+      pendingOperationRef.current={context,changes,operationId};
+      const results=await window.storage.commitWork(changes,operationId);
+      results.forEach((result,i)=>{context[frozen[i].scope]={key:result.key,value:result.value,data:safety.parse(result.value)};});
+      if(workSessionRef.current===context){setSaveStatus("saved");setSaveError("");pendingOperationRef.current=null;}
+      return true;
+    }).catch(error=>{
+      context.failed=true;
+      if(workSessionRef.current===context) showWorkError(error);
+      return false;
     });
+    workQueueRef.current=job.then(()=>{});
+    return job;
   };
-
-  const persist = (next) => {
-    setData(next);
-    runWrite(next);
+  const runWrite = next => queueWorkChanges([{scope:"work",next}]);
+  const runZoneWrite = next => queueWorkChanges([{scope:"zone",next}]);
+  const retrySave = () => {
+    // 不盲目重送整月舊快照；重讀後由使用者重新確認單筆操作。
+    setReloadNonce(n=>n+1);
   };
-  const touch = (itemId) => ({ [itemId]: { ...data.timestamps[itemId], changedAt: workStampForDate(workDate) } });
+  const persist = (next,report=false) => {
+    if(assignmentBusyRef.current) return Promise.resolve(showWorkError(new Error("儲存中，請稍候再輸入。")));
+    try { requireWorkReady(); } catch(error) { return Promise.resolve(showWorkError(error)); }
+    dataRef.current=next; setData(next);
+    if(isNewAssignmentMode && !report){assignmentDirtyRef.current=true;setSaveStatus("draft");return Promise.resolve(true);}
+    return runWrite(next);
+  };
+  const persistZone = (next,report=false) => {
+    if(assignmentBusyRef.current) return Promise.resolve(showWorkError(new Error("儲存中，請稍候再輸入。")));
+    try { requireWorkReady(); } catch(error) { return Promise.resolve(showWorkError(error)); }
+    zoneDataRef.current=next;setZoneData(next);
+    if(isNewAssignmentMode && !report){assignmentDirtyRef.current=true;setSaveStatus("draft");return Promise.resolve(true);}
+    return runZoneWrite(next);
+  };
+  const confirmAssignmentSave = async () => {
+    if(assignmentBusyRef.current) return false;
+    try {
+      const context=requireWorkReady();
+      if(!assignmentDirtyRef.current) throw new Error("尚未輸入新的工作內容，本次指定不成立，也不會儲存。");
+      const cellDraft=dataRef.current,zoneDraft=zoneDataRef.current;
+      const {cellIds,zoneIds}=safety.validateAssignment(cellDraft,zoneDraft);
+      const stamp=workStampForDate(workDate);
+      const updates=[];
+      let nextData=cellDraft,nextZone=zoneDraft,zoneEventId=null;
+      if(cellIds.length){nextData=safety.buildAssignment(context.work.data,cellDraft,cellIds,newWorkEventId(),stamp,true,recipientDirtyRef.current);updates.push({scope:"work",next:nextData});}
+      if(zoneIds.length){zoneEventId=newWorkEventId();nextZone=safety.buildAssignment(context.zone.data,zoneDraft,zoneIds,zoneEventId,stamp,false);updates.push({scope:"zone",next:nextZone});}
+      if(!cellIds.length && recipientDirtyRef.current){
+        if(Object.values(context.work.data.pending||{}).some(Boolean) && safety.stable(context.work.data.recipientIds||[])!==safety.stable(cellDraft.recipientIds||[])) throw new Error("其他工作仍待回報，請沿用原受文對象或先完成原工作。");
+        nextData=safety.copy(context.work.data);
+        for(const field of ["changeSenderId","changeSenderName","recipientIds","recipientNames"]) nextData[field]=safety.copy(cellDraft[field]);
+        nextData.linkedZoneEventId=zoneEventId;
+        updates.push({scope:"work",next:nextData});
+      }
+      assignmentBusyRef.current=true;
+      const success=await queueWorkChanges(updates);
+      if(!success) return false;
+      if(workSessionRef.current!==context) return true;
+      const freshData=cleanForNewAssignment(context.work.data,blank),freshZone=cleanForNewAssignment(context.zone.data,blankZone);
+      dataRef.current=freshData;zoneDataRef.current=freshZone;setData(freshData);setZoneData(freshZone);
+      assignmentDirtyRef.current=false;recipientDirtyRef.current=false;
+      showReportShortcutDialog(()=>{ if(typeof onGoReport==="function") onGoReport(); });
+      return true;
+    } catch(error) { return showWorkError(error); }
+    finally { assignmentBusyRef.current=false; }
+  };
+  const validateReport = (ids,personId) => {
+    if(assignmentBusyRef.current) throw new Error("指定尚在儲存，請稍候再回報。");
+    const context=requireWorkReady();
+    if(!personId || !ids.length) throw new Error("請選擇回報人員與工作，本次回報尚未成立。");
+    for(const id of ids){
+      const current=id<=5?dataRef.current:zoneDataRef.current;
+      const saved=id<=5?context.work.data:context.zone.data;
+      const currentEvent=((current.timestamps||{})[id]||{}).eventId;
+      const savedEvent=((saved.timestamps||{})[id]||{}).eventId;
+      if(!(current.pending||{})[id] || !(saved.pending||{})[id] || currentEvent!==savedEvent) throw new Error("這筆工作尚未正式指定、已完成，或已變更，請重新讀取後確認。");
+      if(historyEventId && savedEvent!==historyEventId) throw new Error("此畫面是其他事件的歷史，不能修改目前工作。");
+    }
+  };
+  const touch = (itemId) => ({ [itemId]: { ...dataRef.current.timestamps[itemId], changedAt: workStampForDate(workDate) } });
 
   // 設計者/管理者變更 → 標記該項為「待確認」(醒目提示) + 記錄時間；新異動一律清空舊回覆，讓「一給一收」保持乾淨的一輪一輪對應
   const setLevel = (itemId, lvl) => {
     if (!editable) return;
-    const sameLevel = data.levels[itemId] === lvl;
-    const wasPending = !!data.pending[itemId];
+    const sameLevel = dataRef.current.levels[itemId] === lvl;
+    const wasPending = !!dataRef.current.pending[itemId];
     // 待回報時再次點同級別＝取消本輪；上一輪已完成時再次點同級別＝建立新一輪。
     const nextVal = sameLevel && wasPending ? 0 : lvl;
-    const nextProgress = { ...data.progress };
-    const nextConfirmedBy = { ...data.confirmedBy };
+    const nextProgress = { ...dataRef.current.progress };
+    const nextConfirmedBy = { ...dataRef.current.confirmedBy };
     if (nextVal !== 0) {
       delete nextProgress[itemId];
       delete nextConfirmedBy[itemId];
     }
     persist({
-      ...data,
-      levels: { ...data.levels, [itemId]: nextVal },
-      pending: { ...data.pending, [itemId]: nextVal !== 0 },
+      ...dataRef.current,
+      levels: { ...dataRef.current.levels, [itemId]: nextVal },
+      pending: { ...dataRef.current.pending, [itemId]: nextVal !== 0 },
       progress: nextProgress,
       confirmedBy: nextConfirmedBy,
-      timestamps: { ...data.timestamps, ...touch(itemId) },
+      timestamps: { ...dataRef.current.timestamps, ...touch(itemId) },
     });
   };
   const setCheck = (itemId, opt) => {
     if (!editable) return;
-    const nextVal = zoneData.checks[itemId] === opt ? null : opt;
-    const nextExtra = nextVal ? zoneData.extra : { ...zoneData.extra, [itemId]: {} }; // 取消選取時一併清空對應的數字欄位，避免殘留舊數值
+    const nextVal = zoneDataRef.current.checks[itemId] === opt ? null : opt;
+    const nextExtra = nextVal ? zoneDataRef.current.extra : { ...zoneDataRef.current.extra, [itemId]: {} }; // 取消選取時一併清空對應的數字欄位，避免殘留舊數值
     persistZone({
-      ...zoneData,
-      checks: { ...zoneData.checks, [itemId]: nextVal },
+      ...zoneDataRef.current,
+      checks: { ...zoneDataRef.current.checks, [itemId]: nextVal },
       extra: nextExtra,
-      pending: { ...zoneData.pending, [itemId]: !!nextVal },
-      timestamps: { ...zoneData.timestamps, [itemId]: { ...zoneData.timestamps[itemId], changedAt: workStampForDate(workDate) } },
+      pending: { ...zoneDataRef.current.pending, [itemId]: !!nextVal },
+      timestamps: { ...zoneDataRef.current.timestamps, [itemId]: { ...zoneDataRef.current.timestamps[itemId], changedAt: workStampForDate(workDate) } },
     });
   };
   const selected67From = (src, itemId) => {
@@ -5782,7 +5964,7 @@ function CellWorkTable({ zone, cellId, role, onClose, ym, workDate, loggedInId, 
     const legacy = src && src.checks ? src.checks[itemId] : null;
     return legacy ? [legacy] : [];
   };
-  const selected67 = (itemId) => selected67From(zoneData, itemId);
+  const selected67 = (itemId) => selected67From(zoneDataRef.current, itemId);
 
   const toggleMulti67 = (itemId, opt) => {
     if (!editable) return;
@@ -5810,34 +5992,28 @@ function CellWorkTable({ zone, cellId, role, onClose, ym, workDate, loggedInId, 
     const cur = selected67(itemId);
     const arr = (value !== "" && !cur.includes(opt)) ? [...cur, opt] : cur;
     const field = itemId === 6 ? (opt === "噴灌" ? "minutes" : "tons") : opt;
-    const nextExtra = { ...(zoneData.extra[itemId] || {}), [field]: value };
+    const nextExtra = { ...(zoneDataRef.current.extra[itemId] || {}), [field]: value };
     if (itemId === 7 && arr.length === 1 && arr[0] === opt) nextExtra.bags = value; // 舊資料相容
     persistZoneDebounced({
-      ...zoneData,
+      ...zoneDataRef.current,
       [key]: arr,
-      checks: { ...zoneData.checks, [itemId]: arr[0] || null },
-      extra: { ...zoneData.extra, [itemId]: nextExtra },
-      pending: { ...zoneData.pending, [itemId]: arr.length > 0 },
-      timestamps: zoneData.timestamps, // 輸入數量只屬於同一事件，不改指定日期
+      checks: { ...zoneDataRef.current.checks, [itemId]: arr[0] || null },
+      extra: { ...zoneDataRef.current.extra, [itemId]: nextExtra },
+      pending: { ...zoneDataRef.current.pending, [itemId]: arr.length > 0 },
+      timestamps: zoneDataRef.current.timestamps, // 輸入數量只屬於同一事件，不改指定日期
     });
   };
 
   const zoneDebounceRef = useRef({});
-  const persistZoneDebounced = (next, delayMs = 500) => {
-    zoneDataRef.current = next;
-    setZoneData(next); // 畫面立即更新，不等儲存完成
-    setSaveStatus("saving");
-    clearTimeout(zoneDebounceRef.current.timer);
-    zoneDebounceRef.current.timer = setTimeout(() => runZoneWrite(next), delayMs);
-  };
+  const persistZoneDebounced = (next) => persistZone(next);
 
   const setExtra = (itemId, field, value) => {
     if (!editable) return;
-    persistZoneDebounced({ ...zoneData, extra: { ...zoneData.extra, [itemId]: { ...zoneData.extra[itemId], [field]: value } } });
+    persistZoneDebounced({ ...zoneDataRef.current, extra: { ...zoneDataRef.current.extra, [itemId]: { ...zoneDataRef.current.extra[itemId], [field]: value } } });
   };
   const clearExtra = (itemId, field) => {
     if (!editable) return;
-    persistZone({ ...zoneData, extra: { ...zoneData.extra, [itemId]: { ...zoneData.extra[itemId], [field]: "" } } });
+    persistZone({ ...zoneDataRef.current, extra: { ...zoneDataRef.current.extra, [itemId]: { ...zoneDataRef.current.extra[itemId], [field]: "" } } });
   };
   // 表格8：所有成分皆為扁平多選
   const toggleMulti8Main = (opt) => {
@@ -5849,7 +6025,7 @@ function CellWorkTable({ zone, cellId, role, onClose, ym, workDate, loggedInId, 
   };
   const setExtra8 = (opt, value) => {
     if (!editable) return;
-    persistZoneDebounced({ ...zoneData, extra8: { ...zoneData.extra8, [opt]: value } });
+    persistZoneDebounced({ ...zoneDataRef.current, extra8: { ...zoneDataRef.current.extra8, [opt]: value } });
   };
   // 使用者確認回報 → 記錄「這位受文者」對這個項目回報的進度(1~5)，因為現場常常無法一次做完；
   // 呼應級別欄「數字越大越緊急」的邏輯，這裡改成「數字越小完成度越高」：1＝完成（解除待確認），2~5＝仍在處理中、數字越大代表越初期
@@ -5877,7 +6053,8 @@ function CellWorkTable({ zone, cellId, role, onClose, ym, workDate, loggedInId, 
     return next;
   };
 
-  const confirmItem = (itemId, personId, progressVal) => {
+  const confirmItem = async (itemId, personId, progressVal) => {
+    try { validateReport([itemId],personId); if(!Number.isInteger(progressVal) || progressVal<1 || progressVal>5) throw new Error("請選擇有效進度。"); } catch(error) { return showWorkError(error); }
     const already = _optionalChain([data, 'access', _60 => _60.confirmedBy, 'optionalAccess', _61 => _61[itemId]]) || [];
     const nextConfirmedBy = already.includes(personId) ? already : [...already, personId];
     let next = {
@@ -5889,11 +6066,12 @@ function CellWorkTable({ zone, cellId, role, onClose, ym, workDate, loggedInId, 
     };
     if (progressVal === 1) next = captureItemIntoTotals(next, itemId); // 完成才累加；原指定表內容保留
     next = appendHistory(next, [{ itemId, itemName: itemNameOf(itemId), level: (data.levels && data.levels[itemId]) || null, progress: progressVal, personId, personName: personNameOf(confirmerPeople, personId), at: eventStampFor(data, itemId, workDate) }]);
-    persist(next);
+    return persist(next,true);
   };
   // 快速確認：不用一一選人/選進度，直接把選中的項目一次標記為完成（進度1）
   // 1-5是每格各自的進度，6/7/8是整區共用的用量，兩邊分開持久化
-  const quickConfirmItems = (itemIds, personId, qtyOverrides = {}) => {
+  const quickConfirmItems = async (itemIds, personId, qtyOverrides = {}) => {
+    try { validateReport(itemIds,personId); for(const id of itemIds.filter(id=>[6,7,8].includes(id))) qtyOverrides[id]=safety.validateQuantities(safety.options(zoneDataRef.current,id),qtyOverrides[id]); } catch(error) { return showWorkError(error); }
     if (!itemIds.length) return;
     const levelIds = itemIds.filter((id) => ![6, 7, 8].includes(id));
     const qtyIds = itemIds.filter((id) => [6, 7, 8].includes(id));
@@ -5965,8 +6143,10 @@ function CellWorkTable({ zone, cellId, role, onClose, ym, workDate, loggedInId, 
       nextZone = appendHistory(nextZone, historyEntriesZone);
     }
 
-    if (levelIds.length > 0) persist(nextData);
-    if (qtyIds.length > 0) persistZone(nextZone);
+    const updates=[];
+    if(levelIds.length){dataRef.current=nextData;setData(nextData);updates.push({scope:"work",next:nextData});}
+    if(qtyIds.length){zoneDataRef.current=nextZone;setZoneData(nextZone);updates.push({scope:"zone",next:nextZone});}
+    return queueWorkChanges(updates);
   };
 
   // 送出對象設定：異動人員(自己)選一位、受文對象(負責處理的人)可多選；
@@ -5985,6 +6165,7 @@ function CellWorkTable({ zone, cellId, role, onClose, ym, workDate, loggedInId, 
     setPickRecipientIds((cur) => (cur.includes(id) ? cur.filter((x) => x !== id) : [...cur, id]));
   };
   const saveRecipients = () => {
+    recipientDirtyRef.current = true;
     const sender = people.find((p) => p.id === pickSenderId);
     persist({
       ...data,
@@ -6055,7 +6236,8 @@ function CellWorkTable({ zone, cellId, role, onClose, ym, workDate, loggedInId, 
   const personNameOf = (list, personId) => _optionalChain([list, 'access', _75 => _75.find, 'call', _76 => _76((p) => p.id === personId), 'optionalAccess', _77 => _77.name]) || personId;
 
   // 6/7是使用量（不是完成度），確認時直接輸入實際用了多少，回報即等於累加確認，不用選1~5進度
-  const reportQtyItem = (itemId, personId, qtyMap) => {
+  const reportQtyItem = async (itemId, personId, qtyMap) => {
+    try { validateReport([itemId],personId); const names=selected67(itemId); safety.validateQuantities(names,typeof qtyMap==="object" ? qtyMap : Object.fromEntries(names.map(n=>[n,qtyMap]))); } catch(error) { return showWorkError(error); }
     const selected = selected67(itemId);
     const totals = { ...(zoneData.confirmedTotals || {}) };
     const historyEntries = [];
@@ -6082,12 +6264,14 @@ function CellWorkTable({ zone, cellId, role, onClose, ym, workDate, loggedInId, 
       timestamps: { ...zoneData.timestamps, [itemId]: { ...zoneData.timestamps[itemId], ackAt: eventStampFor(zoneData, itemId, workDate) } },
     };
     next = appendHistory(next, historyEntries);
-    persistZone(next);
-    setConfirmItemId(null);
+    const success=await persistZone(next,true);
+    if(success) setConfirmItemId(null);
+    return success;
   };
 
   // 8可能同時勾選多種資材，各自輸入用量、各自累加
-  const reportQty8Item = (personId, qtyMap) => {
+  const reportQty8Item = async (personId, qtyMap) => {
+    try { validateReport([8],personId); qtyMap=safety.validateQuantities(safety.options(zoneDataRef.current,8),qtyMap); } catch(error) { return showWorkError(error); }
     const already = _optionalChain([zoneData, 'access', _84 => _84.confirmedBy, 'optionalAccess', _85 => _85[8]]) || [];
     const nextConfirmedBy = already.includes(personId) ? already : [...already, personId];
     const totals = { ...(zoneData.confirmedTotals || {}) };
@@ -6112,8 +6296,9 @@ function CellWorkTable({ zone, cellId, role, onClose, ym, workDate, loggedInId, 
       timestamps: { ...zoneData.timestamps, 8: { ...zoneData.timestamps[8], ackAt: eventStampFor(zoneData, 8, workDate) } },
     };
     next = appendHistory(next, historyEntries);
-    persistZone(next);
-    setConfirmItemId(null);
+    const success=await persistZone(next,true);
+    if(success) setConfirmItemId(null);
+    return success;
   };
 
   // 快速確認模式：不用逐項選人+選進度，先選一次「我是誰」，接著多選要確認完成的項目，一次送出
@@ -6161,13 +6346,14 @@ function CellWorkTable({ zone, cellId, role, onClose, ym, workDate, loggedInId, 
       return [...cur, itemId];
     });
   };
-  const submitQuickConfirm = () => {
+  const submitQuickConfirm = async () => {
     if (!quickPersonId || quickSelected.length === 0) return;
     const qtyOverrides = {};
     if (quickSelected.includes(6)) qtyOverrides[6] = Object.fromEntries(selected67(6).map((opt) => [opt, quickQty8[`6:${opt}`] ?? qty67(6, opt)]));
     if (quickSelected.includes(7)) qtyOverrides[7] = Object.fromEntries(selected67(7).map((opt) => [opt, quickQty8[`7:${opt}`] ?? qty67(7, opt)]));
     if (quickSelected.includes(8)) qtyOverrides[8] = quickQty8;
-    quickConfirmItems(quickSelected, quickPersonId, qtyOverrides);
+    const success=await quickConfirmItems(quickSelected, quickPersonId, qtyOverrides);
+    if(!success) return;
     setQuickSelected([]);
     setQuickQty({});
     setQuickQty8({});
@@ -6189,18 +6375,26 @@ function CellWorkTable({ zone, cellId, role, onClose, ym, workDate, loggedInId, 
 
   // 套用其他表格：只套用1-5(每格各自的級別)，6/7/8已經是整區共用，不需要、也不會再逐格套用
   const applyToOthers = async () => {
-    const pending = {};
-    WORK_ITEMS.filter((it) => it.type === "level").forEach((it) => {
-      if (data.levels[it.id]) pending[it.id] = true;
-    });
-    await runWithLimit(applyTargets, 4, async (targetId) => {
-      const key = `worklog:${zone.id}:${targetId}:${activeYm}`;
-      const payload = { ...data, pending };
-      await window.storage.set(key, JSON.stringify(payload));
-    }); // 分批寫入(同時最多4筆)，取代逐格排隊或27格一次全部平行
-    setApplyMsg(`已套用到 ${applyTargets.length} 格`);
-    setApplyTargets([]);
-    setTimeout(() => { setShowApply(false); setApplyMsg(""); }, 1200);
+    try {
+      requireWorkReady();
+      const draft=dataRef.current;
+      const ids=[1,2,3,4,5].filter(id=>Number((draft.levels||{})[id])>0);
+      if(!ids.length || !applyTargets.length) throw new Error("請輸入工作級別並選擇目標格；尚未套用。");
+      const forValidation={...draft,pending:Object.fromEntries(ids.map(id=>[id,true]))};
+      safety.validateAssignment(forValidation,{});
+      const changes=[];
+      for(const targetId of applyTargets){
+        const key=`worklog:${zone.id}:${targetId}:${activeYm}`;
+        const result=await window.storage.get(key);
+        const base=result?safety.parse(result.value):{};
+        const next=safety.buildAssignment(base,forValidation,ids,newWorkEventId(),workStampForDate(workDate),true,true);
+        changes.push({key,expectedValue:result?result.value:null,next});
+      }
+      await window.storage.commitWork(changes,newWorkEventId());
+      setApplyMsg(`已套用到 ${applyTargets.length} 格，原有歷史保留`);
+      setApplyTargets([]);
+      setTimeout(()=>{setShowApply(false);setApplyMsg("");},1200);
+    } catch(error) { showWorkError(error); }
   };
 
   const kgInput = (opt, wide) => (
@@ -6220,6 +6414,12 @@ function CellWorkTable({ zone, cellId, role, onClose, ym, workDate, loggedInId, 
         )
       )
     )
+  );
+
+  if(status!=="ready") return React.createElement('div',{className:"fixed inset-0 z-40 flex flex-col items-center justify-center p-6",style:{background:C.paper,color:C.ink}},
+    React.createElement('p',{role:"alert",style:{marginBottom:16}},status==="loading"?"正在讀取工作資料，完成前暫停輸入…":loadError),
+    status==="error" && React.createElement('button',{onClick:()=>setReloadNonce(n=>n+1),className:"px-4 py-2 rounded-xl",style:{background:C.tableColor,color:"white"}},"重新讀取"),
+    React.createElement('button',{onClick:onClose,className:"mt-4 px-4 py-2 rounded-xl"},"回上一頁")
   );
 
   return (
@@ -6263,6 +6463,7 @@ function CellWorkTable({ zone, cellId, role, onClose, ym, workDate, loggedInId, 
               , React.createElement(Users, { size: 13,} ), " " , _optionalChain([data, 'access', _113 => _113.recipientIds, 'optionalAccess', _114 => _114.length]) ? `受文 ${data.recipientIds.length} 人` : "設定送出對象"
             )
           )
+          , saveStatus === "draft" && React.createElement("span",{className:"text-xs",style:{color:C.inkSoft}},"尚未送出，請按資料輸入")
           , saveStatus === "saving" && (
             React.createElement('span', { className: "text-xs flex-shrink-0" , style: { color: C.inkSoft, fontFamily: "Inter" },}, "儲存中…")
           )
@@ -6573,6 +6774,7 @@ function CellWorkTable({ zone, cellId, role, onClose, ym, workDate, loggedInId, 
 
       , editable && React.createElement('button', {
           onClick: confirmAssignmentSave,
+          disabled: saveStatus === "saving",
           className: "cell-confirm-float fixed no-print flex items-center justify-center gap-2 rounded-full",
           style: { right: 18, bottom: "calc(18px + env(safe-area-inset-bottom, 0px))", zIndex: 39, minHeight: 40, padding: "0 12px", background: "#2E5FA3", color: "white", border: "2px solid white", fontFamily: "Inter", fontWeight: 800, fontSize: 13, boxShadow: "0 2px 6px rgba(0,0,0,.18)", textAlign: "center", touchAction: "manipulation" },
           'aria-label': "資料輸入並前往回報",
@@ -6748,7 +6950,7 @@ function CellWorkTable({ zone, cellId, role, onClose, ym, workDate, loggedInId, 
                     React.createElement('button', {
                       key: lvl,
                       disabled: !confirmerPick,
-                      onClick: () => { confirmItem(confirmItemId, confirmerPick, lvl); setConfirmItemId(null); },
+                      onClick: async () => { if(await confirmItem(confirmItemId, confirmerPick, lvl)) setConfirmItemId(null); },
                       className: "flex-1 py-3 rounded-xl text-sm"   ,
                       style: {
                         background: lvl === 1 ? C.tableColor : "#D4A017",
@@ -9414,6 +9616,7 @@ function ZoneNoticeBoard({ role, loggedInId }) {
 
 function ZoneWorkFolders({ onBack, role, loggedInId, initialZoneId = null }) {
   const [loading, setLoading] = useState(true);
+  const [scanError,setScanError] = useState("");
   const [index, setIndex] = useState({}); // index[zoneId][year][month] = [{cellId, ym, latest}]
   const [pendingByZone, setPendingByZone] = useState({}); // { [zoneId]: 待確認格數 }，用於在資料夾根畫面明顯提示
   const [zoneSel, setZoneSel] = useState(() => initialZoneId || null);
@@ -9496,6 +9699,8 @@ function ZoneWorkFolders({ onBack, role, loggedInId, initialZoneId = null }) {
 
   const scan = async (focusZone = null, focusYear = null, focusMonth = null) => {
     setLoading(true);
+    setScanError("");
+    const readFailures=[];
     const idx = {};
     const pending = {};
     CALENDAR_ROWS.filter((r) => r.id !== "prod").forEach((r) => { idx[r.id] = {}; pending[r.id] = 0; });
@@ -9524,19 +9729,30 @@ function ZoneWorkFolders({ onBack, role, loggedInId, initialZoneId = null }) {
         const [zoneId, cellId, ym] = rest.split(":");
         try {
           const res = await window.storage.get(k);
+          if(res) window.WorkDataSafety.parse(res.value);
           return { zoneId, cellId, ym, res };
-        } catch (e31) { return { zoneId, cellId, ym, res: null }; }
+        } catch (error) { readFailures.push(k); return { zoneId, cellId, ym, res: null }; }
       }); // 分批讀取(同時最多6筆)所有 worklog，取代逐筆排隊或一次性大量平行
 
       // 6/7/8是全區共用（zonework:），要另外抓每個「分區＋年月」各一筆，跟本格1-5資料合併才能判斷完整狀態
-      const zoneYmSet = new Set(results.filter((r) => r.res).map((r) => `${r.zoneId}:${r.ym}`));
+      const zoneYmSet = new Set();
+      for(const z of scanZones) for(const y of scanYears) for(const m of scanMonths) zoneYmSet.add(`${z.id}:${y}-${String(m).padStart(2,"0")}`);
       const zoneWorkMap = {};
       await runWithLimit([...zoneYmSet], 6, async (key) => {
         try {
           const zres = await window.storage.get(`zonework:${key}`, true);
-          if (zres) zoneWorkMap[key] = JSON.parse(zres.value);
-        } catch (e32) {}
+          if (zres) zoneWorkMap[key] = window.WorkDataSafety.parse(zres.value);
+        } catch (error) { readFailures.push(`zonework:${key}`); }
       });
+
+      // 6–8 是整區資料，不能依賴某個格位的 1–5 文件才能顯示。
+      for(const [pair,zoneData] of Object.entries(zoneWorkMap)){
+        const [zoneId,ym]=pair.split(":");
+        if(results.some(r=>r.zoneId===zoneId && r.ym===ym && r.res)) continue;
+        if(!window.WorkDataSafety.hasContent(zoneData) && !Object.keys(zoneData.confirmedTotals||{}).length) continue;
+        const cell=((FLOOR_SHAPES[zoneId]||{}).cells||[])[0];
+        if(cell) results.push({zoneId,cellId:cell.id,ym,res:{value:"{}"}});
+      }
 
       for (const { zoneId, cellId, ym, res } of results) {
         if (!res) continue;
@@ -9549,7 +9765,7 @@ function ZoneWorkFolders({ onBack, role, loggedInId, initialZoneId = null }) {
         let historySummary = "";
         let dataForHistory = null;
         try {
-          const data = JSON.parse(res.value);
+          const data = window.WorkDataSafety.parse(res.value);
           dataForHistory = data;
           Object.values(data.timestamps || {}).forEach((t) => {
             if (_optionalChain([t, 'optionalAccess', _267 => _267.changedAt]) && (!latest || t.changedAt > latest)) latest = t.changedAt;
@@ -9578,7 +9794,7 @@ function ZoneWorkFolders({ onBack, role, loggedInId, initialZoneId = null }) {
             const anyStarted = pendingKeys.some((k) => (allProgress[k] || 0) > 0);
             status = anyStarted ? "partial" : "assigned";
           }
-        } catch (e33) {}
+        } catch (error) { readFailures.push("工作資料"); }
         if (!idx[zoneId]) idx[zoneId] = {};
         if (!idx[zoneId][y]) idx[zoneId][y] = {};
         if (!idx[zoneId][y][m]) idx[zoneId][y][m] = [];
@@ -9620,7 +9836,7 @@ function ZoneWorkFolders({ onBack, role, loggedInId, initialZoneId = null }) {
           idx[zoneId][y][m].push({ cellId, ym, historyDate: currentDay || null, latest, status, historySummary });
         }
       }
-    } catch (e) { console.error(e); }
+    } catch (error) { readFailures.push("工作資料索引"); console.error(error); }
     Object.values(idx).forEach((byYear) => {
       Object.values(byYear).forEach((byMonth) => {
         Object.values(byMonth).forEach((arr) => arr.sort((a, b) => (a.latest > b.latest ? 1 : -1)));
@@ -9633,7 +9849,7 @@ function ZoneWorkFolders({ onBack, role, loggedInId, initialZoneId = null }) {
         try {
           const zres = await window.storage.get(`zonework:${r.id}:${ym}`, true);
           if (!zres) return;
-          const zdata = JSON.parse(zres.value);
+          const zdata = window.WorkDataSafety.parse(zres.value);
           const hasRealPending = Object.entries(zdata.pending || {}).some(([id, v]) => {
             if (!v) return false;
             if (id === "8") return (zdata.multi8Main || []).length > 0;
@@ -9642,9 +9858,10 @@ function ZoneWorkFolders({ onBack, role, loggedInId, initialZoneId = null }) {
           if (hasRealPending) {
             pending[r.id] = (pending[r.id] || 0) + 1;
           }
-        } catch (e34) {}
+        } catch (error) { readFailures.push("工作資料"); }
       });
-    } catch (e35) {}
+    } catch (error) { readFailures.push("工作資料"); }
+    if(readFailures.length){setScanError(`有 ${readFailures.length} 份工作資料尚未讀取成功，請重新讀取；不能視為沒有紀錄。`);setLoading(false);return;}
     setIndex((prev) => {
       if (!focusZone) return idx;
       const next = { ...prev, [focusZone]: { ...(prev[focusZone] || {}) } };
@@ -9665,60 +9882,8 @@ function ZoneWorkFolders({ onBack, role, loggedInId, initialZoneId = null }) {
   const fileNameOf = (zoneId, year, month, idxInList) => `${zoneObj(zoneId).name}_${year}${String(month).padStart(2, "0")}_${String(idxInList + 1).padStart(2, "0")}`;
 
   const doDelete = async () => {
-    const { zoneId, cellId, ym } = deleteTarget;
-    // 2026-09-19 資料安全修正：刪除「未完成指定」絕不可刪除整份 worklog / zonework。
-    // 只清除目前仍 pending 的本輪工作狀態；history / confirmHistory / confirmedTotals 等完成成果永久保留。
-    try {
-      const workKey = `worklog:${zoneId}:${cellId}:${ym}`;
-      const wr = await window.storage.get(workKey);
-      if (wr && wr.value) {
-        const w = JSON.parse(wr.value);
-        const pending = { ...(w.pending || {}) };
-        const levels = { ...(w.levels || {}) };
-        const progress = { ...(w.progress || {}) };
-        const confirmedBy = { ...(w.confirmedBy || {}) };
-        Object.keys(pending).forEach((id) => {
-          if (!pending[id]) return;
-          pending[id] = false;
-          levels[id] = 0;
-          delete progress[id];
-          delete confirmedBy[id];
-        });
-        const safeWork = { ...w, pending, levels, progress, confirmedBy };
-        await window.storage.set(workKey, JSON.stringify(safeWork));
-      }
-
-      const zoneKey = `zonework:${zoneId}:${ym}`;
-      const zr = await window.storage.get(zoneKey, true);
-      if (zr && zr.value) {
-        const z = JSON.parse(zr.value);
-        const pending = { ...(z.pending || {}) };
-        const progress = { ...(z.progress || {}) };
-        const confirmedBy = { ...(z.confirmedBy || {}) };
-        let safeZone = { ...z };
-        [6, 7, 8].forEach((id) => {
-          if (!pending[id]) return;
-          pending[id] = false;
-          delete progress[id];
-          delete confirmedBy[id];
-          if (id === 6) safeZone.multi6 = [];
-          if (id === 7) safeZone.multi7 = [];
-          if (id === 6 || id === 7) {
-            safeZone.checks = { ...(safeZone.checks || {}), [id]: null };
-            safeZone.extra = { ...(safeZone.extra || {}), [id]: {} };
-          }
-          if (id === 8) {
-            safeZone.multi8Main = [];
-            safeZone.extra8 = {};
-          }
-        });
-        safeZone = { ...safeZone, pending, progress, confirmedBy };
-        // 注意：confirmHistory / confirmedTotals 沒有被重建或清空，直接沿用原 z 內容。
-        await window.storage.set(zoneKey, JSON.stringify(safeZone), true);
-      }
-    } catch (e) { console.error(e); }
+    window.alert("這筆舊紀錄沒有可核對的單一事件識別，已阻擋取消；所有資料均未變更。");
     setDeleteTarget(null);
-    scan();
   };
 
   // 指令3：從報表資料夾點進去，一律唯讀（強制 role="user"），不論實際身分；固定讀取該筆記錄所屬的月份
@@ -9734,6 +9899,7 @@ function ZoneWorkFolders({ onBack, role, loggedInId, initialZoneId = null }) {
       , React.createElement(BackIsland, {
         onBack: () => { if (monthSel) setMonthSel(null); else if (yearSel) setYearSel(null); else if (zoneSel) setZoneSel(null); else onBack(); },}
       )
+      , scanError && React.createElement("div",{role:"alert",className:"px-4 py-3",style:{color:C.alert}},scanError,React.createElement("button",{onClick:()=>scan(zoneSel,yearSel,monthSel),className:"ml-2 px-3 py-1 rounded",style:{background:C.tableColor,color:"white"}},"重新讀取"))
       , React.createElement('div', { className: "px-4 py-3" , style: { borderBottom: `1px solid ${C.line}` },}
         , React.createElement('div', { className: "text-xs", style: { color: C.inkSoft, fontFamily: "Inter" },}, "分區工項提示內容 "
            , zoneSel && `／ ${zoneObj(zoneSel).name}`, " " , yearSel && `／ ${yearSel}年`, " " , monthSel && `／ ${monthSel}月`, "　·　僅供檢視"
@@ -9829,7 +9995,7 @@ function ZoneWorkFolders({ onBack, role, loggedInId, initialZoneId = null }) {
             )
           )
           , records.length === 0 ? (
-            React.createElement('div', { className: "text-center py-10 text-sm"  , style: { color: C.inkSoft, fontFamily: "Inter" },}, "此月份尚無異動紀錄"
+            React.createElement('div', { className: "text-center py-10 text-sm"  , style: { color: C.inkSoft, fontFamily: "Inter" },}, scanError ? "資料尚未讀取完整，請重新讀取。" : "此月份尚無異動紀錄"
 
             )
           ) : (
