@@ -682,7 +682,7 @@ const C = {
   tiffanyLight: "#B8ECE5",
   tiffanyText: "#2E8577",
 };
-const APP_VERSION = 'V5.1.C64';
+const APP_VERSION = 'V5.1.C65';
 const FONT_LINK = "https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,600;9..144,700&family=Inter:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap";
 
 const WORK_ITEMS = [
@@ -9754,8 +9754,14 @@ function ZoneWorkFolders({ onBack, role, loggedInId, initialZoneId = null }) {
         if(cell) results.push({zoneId,cellId:cell.id,ym,res:{value:"{}"}});
       }
 
+      // C65/V5.011：6–8 為整區共用資料；同一 zonework event 只能在索引中建立一次。
+      // 每個格位仍各自掃描 1–5，但不再把同一筆整區事件複製到每個格位。
+      const zoneWorkIndexSeen = new Set();
       for (const { zoneId, cellId, ym, res } of results) {
         if (!res) continue;
+        const zoneWorkPair = `${zoneId}:${ym}`;
+        const isFirstZoneWorkPass = !zoneWorkIndexSeen.has(zoneWorkPair);
+        zoneWorkIndexSeen.add(zoneWorkPair);
         const [yStr, mStr] = (ym || "").split("-");
         const y = parseInt(yStr, 10);
         const m = parseInt(mStr, 10);
@@ -9775,7 +9781,9 @@ function ZoneWorkFolders({ onBack, role, loggedInId, initialZoneId = null }) {
             pending[zoneId] = (pending[zoneId] || 0) + 1;
           }
           // 合併本格1-5的pending/progress，跟該分區同一年月的6-8 zonework資料
-          const zw = zoneWorkMap[`${zoneId}:${ym}`] || {};
+          const zwAll = zoneWorkMap[`${zoneId}:${ym}`] || {};
+          // 只有本分區第一次進入索引時才納入整區 6–8；其他格位只處理自己的 1–5。
+          const zw = isFirstZoneWorkPass ? zwAll : {};
           // 功能表4收斂：資料夾卡片不再重組/摘要 confirmHistory，也不以歷史資料改寫原時間。
           // 點入後直接由原本 CellWorkTable 讀取同一份 worklog / zonework，呈現原表格、原內容、原日期。
           const isRealPendingKey = (id, v) => {
@@ -9799,9 +9807,11 @@ function ZoneWorkFolders({ onBack, role, loggedInId, initialZoneId = null }) {
         if (!idx[zoneId][y]) idx[zoneId][y] = {};
         if (!idx[zoneId][y][m]) idx[zoneId][y][m] = [];
         // C58/V5.003：新版「一指定＝一事件」。assignmentHistory 只追加新事件；舊資料不轉換。
+        // C66/V5.012：6-8為整區共用事件，比照zw的作法，只在isFirstZoneWorkPass時併入，
+        // 避免同一筆zonework事件被該分區內每個已存在1-5文件的格位各自重複列出。
         const eventAssignments = [
           ...((dataForHistory && Array.isArray(dataForHistory.assignmentHistory)) ? dataForHistory.assignmentHistory : []),
-          ...((zoneWorkMap[`${zoneId}:${ym}`] && Array.isArray(zoneWorkMap[`${zoneId}:${ym}`].assignmentHistory)) ? zoneWorkMap[`${zoneId}:${ym}`].assignmentHistory : [])
+          ...((isFirstZoneWorkPass && zoneWorkMap[`${zoneId}:${ym}`] && Array.isArray(zoneWorkMap[`${zoneId}:${ym}`].assignmentHistory)) ? zoneWorkMap[`${zoneId}:${ym}`].assignmentHistory : [])
         ];
         const eventSeen = new Set();
         eventAssignments.forEach((a) => {
