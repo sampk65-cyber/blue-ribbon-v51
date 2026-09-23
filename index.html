@@ -437,6 +437,41 @@ const WorkDataSafety = (() => {
     next.assignmentHistory = [...(base.assignmentHistory || []),{eventId,itemIds:ids,assignedAt:stamp}];
     return next;
   };
+  // C66/V5.012：允許「已指派、尚未開始回報」的事件直接修正內容/數量。
+  // 只在 base.pending[itemId] 為 true，且該項目尚未有任何 progress/confirmedBy（代表尚未開始回報）時才允許；
+  // 完全不動 eventId、assignmentHistory、confirmHistory，只覆寫該工項本身的數值欄位並更新 changedAt。
+  const reviseAssignment = (base, itemId, patch) => {
+    if (!base || !(base.pending || {})[itemId]) throw new Error('這項工作目前不是待回報狀態，無法修正。');
+    if ((base.progress || {})[itemId] || (base.confirmedBy || {})[itemId]) throw new Error('這項工作已經開始回報，無法直接修正數量；請改用新增指派，或請回報人員在回報時調整。');
+    const next = copy(base);
+    if (itemId <= 5) {
+      const lvl = Number(patch.level);
+      if (!Number.isInteger(lvl) || lvl < 1 || lvl > 5) throw new Error('請選擇有效級別(1-5)。');
+      next.levels = { ...(next.levels || {}), [itemId]: lvl };
+    } else {
+      const names = Array.isArray(patch.names) ? patch.names : [];
+      const values = validateQuantities(names, patch.values || {});
+      if (itemId === 8) {
+        next.multi8Main = [...names];
+        next.extra8 = { ...values };
+      } else {
+        next.checks = { ...(next.checks || {}), [itemId]: names.length === 1 ? names[0] : (names.length === 0 ? null : (next.checks || {})[itemId]) };
+        next[itemId === 6 ? 'multi6' : 'multi7'] = [...names];
+        const extraForItem = {};
+        if (itemId === 6) {
+          if (values['溝灌'] !== undefined) extraForItem.tons = values['溝灌'];
+          if (values['噴灌'] !== undefined) extraForItem.minutes = values['噴灌'];
+        } else {
+          names.forEach((n) => { extraForItem[n] = values[n]; });
+          if (names.length === 1) extraForItem.bags = values[names[0]];
+        }
+        next.extra = { ...(next.extra || {}), [itemId]: extraForItem };
+      }
+    }
+    next.timestamps = { ...(next.timestamps || {}), [itemId]: { ...(((next.timestamps || {})[itemId]) || {}), changedAt: patch.stamp || (((next.timestamps || {})[itemId]) || {}).changedAt } };
+    checkPreserved(base, next);
+    return next;
+  };
   const appendMissing = (current,incoming,field) => {
     const out = copy(current), counts = new Map(), identities = new Map();
     const identity = x => {
@@ -457,7 +492,7 @@ const WorkDataSafety = (() => {
     }
     return out;
   };
-  return {isWorkKey,copy,stable,parse,positive,options,quantity,validateQuantities,validateAssignment,hasContent,checkPreserved,buildAssignment,appendMissing};
+  return {isWorkKey,copy,stable,parse,positive,options,quantity,validateQuantities,validateAssignment,hasContent,checkPreserved,buildAssignment,reviseAssignment,appendMissing};
 })();
 window.WorkDataSafety = WorkDataSafety;
 // WORK_DATA_SAFETY_END
@@ -682,7 +717,7 @@ const C = {
   tiffanyLight: "#B8ECE5",
   tiffanyText: "#2E8577",
 };
-const APP_VERSION = 'V5.1.C65';
+const APP_VERSION = 'V5.1.C66';
 const FONT_LINK = "https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,600;9..144,700&family=Inter:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap";
 
 const WORK_ITEMS = [
@@ -5760,6 +5795,9 @@ function CellWorkTable({ zone, cellId, role, onClose, ym, workDate, loggedInId, 
     progress: {}, confirmedBy: {}, confirmedTotals: {}, confirmHistory: [],
   };
   const [zoneData, setZoneData] = useState(blankZone);
+  // C66/V5.012：保存「真實、未被 cleanForNewAssignment 清空」的原始已載入資料，
+  // 專供「修正待回報數量」功能讀取現值與寫入基準，不影響原本新增指派用的 data/zoneData 狀態。
+  const [pendingRaw, setPendingRaw] = useState({ work: null, zone: null });
   // 新增指派初始化隔離：新增模式只顯示乾淨工作表；歷史陣列/統計唯讀沿用，絕不把舊月份的 active 欄位帶進新指定。
   const isNewAssignmentMode = canEditRole && !showOriginalHistory;
   const cleanForNewAssignment = (source, base) => ({
@@ -5816,6 +5854,7 @@ function CellWorkTable({ zone, cellId, role, onClose, ym, workDate, loggedInId, 
         if (!alive) return;
         const context = {work:{key:storeKey,value:res ? res.value : null,data:loadedData},zone:{key:zoneKey,value:zres ? zres.value : null,data:loadedZone},failed:false};
         workSessionRef.current = context;
+        setPendingRaw({ work: loadedData, zone: loadedZone });
         const initialData = isNewAssignmentMode ? cleanForNewAssignment(loadedData,blank) : loadedData;
         const initialZone = isNewAssignmentMode ? cleanForNewAssignment(loadedZone,blankZone) : loadedZone;
         dataRef.current=initialData; zoneDataRef.current=initialZone;
@@ -5907,6 +5946,59 @@ function CellWorkTable({ zone, cellId, role, onClose, ym, workDate, loggedInId, 
       return true;
     } catch(error) { return showWorkError(error); }
     finally { assignmentBusyRef.current=false; }
+  };
+  // C66/V5.012：修正「已指派、尚未開始回報」事件的數量/內容，不建立新事件、不影響其他功能。
+  // 判斷依據：pendingRaw 內該工項 pending 為 true，且尚未有 progress 或 confirmedBy（代表現場尚未動手回報）。
+  const pendingUnstartedItems = WORK_ITEMS.filter((it) => {
+    const src = it.id <= 5 ? pendingRaw.work : pendingRaw.zone;
+    if (!src) return false;
+    return !!(src.pending || {})[it.id] && !(src.progress || {})[it.id] && !(src.confirmedBy || {})[it.id];
+  });
+  const [reviseOpenId, setReviseOpenId] = useState(null);
+  const [reviseDraft, setReviseDraft] = useState({});
+  const [reviseBusy, setReviseBusy] = useState(false);
+  const openRevise = (it) => {
+    const src = it.id <= 5 ? pendingRaw.work : pendingRaw.zone;
+    if (!src) return;
+    if (it.id <= 5) {
+      setReviseDraft({ level: (src.levels || {})[it.id] || 1 });
+    } else {
+      const names = safety.options(src, it.id);
+      const values = {};
+      (it.options || []).forEach((n) => { const v = safety.quantity(src, it.id, n); if (v !== undefined && v !== null) values[n] = v; });
+      setReviseDraft({ names: [...names], values });
+    }
+    setReviseOpenId(it.id);
+  };
+  const closeRevise = () => { setReviseOpenId(null); setReviseDraft({}); };
+  const toggleReviseName = (name) => {
+    setReviseDraft((d) => {
+      const names = Array.isArray(d.names) ? d.names : [];
+      const has = names.includes(name);
+      return { ...d, names: has ? names.filter((n) => n !== name) : [...names, name] };
+    });
+  };
+  const setReviseValue = (name, val) => {
+    setReviseDraft((d) => ({ ...d, values: { ...(d.values || {}), [name]: val } }));
+  };
+  const saveRevise = async () => {
+    const it = WORK_ITEMS.find((w) => w.id === reviseOpenId);
+    if (!it || reviseBusy) return;
+    setReviseBusy(true);
+    try {
+      const context = requireWorkReady();
+      const scope = it.id <= 5 ? "work" : "zone";
+      const base = context[scope].data;
+      const patch = it.id <= 5
+        ? { level: reviseDraft.level, stamp: workStampForDate(workDate) }
+        : { names: reviseDraft.names, values: reviseDraft.values, stamp: workStampForDate(workDate) };
+      const next = safety.reviseAssignment(base, it.id, patch);
+      const success = await queueWorkChanges([{ scope, next }]);
+      if (!success) { setReviseBusy(false); return; }
+      setPendingRaw((p) => ({ ...p, [scope]: (workSessionRef.current && workSessionRef.current[scope].data) || next }));
+      closeRevise();
+    } catch (error) { showWorkError(error); }
+    setReviseBusy(false);
   };
   const validateReport = (ids,personId) => {
     if(assignmentBusyRef.current) throw new Error("指定尚在儲存，請稍候再回報。");
@@ -6502,6 +6594,79 @@ function CellWorkTable({ zone, cellId, role, onClose, ym, workDate, loggedInId, 
       , !editable && (
         React.createElement('div', { className: "px-4 py-1 text-xs flex-shrink-0"   , style: { background: `${C.alert}15`, color: C.alert, fontFamily: "Inter" },}, "使用者權限僅能檢視與確認異動"
 
+        )
+      )
+
+      , editable && pendingUnstartedItems.length > 0 && (
+        React.createElement('div', { className: "px-4 pt-2 flex-shrink-0" },
+          React.createElement('div', { className: "rounded-lg px-3 py-2", style: { background: `${C.tableColor}12`, border: `1px solid ${C.tableColor}40` } },
+            React.createElement('div', { className: "text-xs mb-1.5", style: { color: C.tableColor, fontFamily: "Inter", fontWeight: 700 } }, "✎ 可修正待回報數量（尚未開始回報）")
+            , ...pendingUnstartedItems.map((it) =>
+              React.createElement('div', { key: `revise-${it.id}`, className: "flex items-center justify-between py-1" }
+                , React.createElement('span', { className: "text-xs", style: { color: C.ink, fontFamily: "Inter" } }, `${it.id}.${it.name}`)
+                , React.createElement('button', {
+                    onClick: () => openRevise(it),
+                    className: "px-2 py-1 rounded text-xs",
+                    style: { background: C.tableColor, color: "white", fontFamily: "Inter", fontWeight: 600 },
+                  }, "修正數量")
+              )
+            )
+            , reviseOpenId !== null && (() => {
+              const it = WORK_ITEMS.find((w) => w.id === reviseOpenId);
+              if (!it) return null;
+              return React.createElement('div', { className: "mt-2 pt-2", style: { borderTop: `1px solid ${C.tableColor}40` } }
+                , it.id <= 5
+                  ? React.createElement('div', { className: "flex items-center gap-2 flex-wrap" }
+                      , ...[1,2,3,4,5].map((lvl) =>
+                          React.createElement('button', {
+                            key: lvl,
+                            onClick: () => setReviseDraft({ level: lvl }),
+                            className: "w-8 h-8 rounded text-xs",
+                            style: reviseDraft.level === lvl
+                              ? { background: C.tableColor, color: "white", fontWeight: 700 }
+                              : { background: "white", color: C.ink, border: `1px solid ${C.inkSoft}60` },
+                          }, String(lvl))
+                        )
+                    )
+                  : React.createElement('div', { className: "flex flex-col gap-1.5" }
+                      , ...(it.options || []).map((opt) => {
+                          const checked = (reviseDraft.names || []).includes(opt);
+                          return React.createElement('div', { key: opt, className: "flex items-center gap-2" }
+                            , React.createElement('button', {
+                                onClick: () => toggleReviseName(opt),
+                                className: "px-2 py-1 rounded text-xs",
+                                style: checked
+                                  ? { background: C.tableColor, color: "white", fontWeight: 600 }
+                                  : { background: "white", color: C.ink, border: `1px solid ${C.inkSoft}60` },
+                              }, opt)
+                            , checked && React.createElement('input', {
+                                type: "number",
+                                inputMode: "decimal",
+                                value: (reviseDraft.values || {})[opt] ?? "",
+                                onChange: (e) => setReviseValue(opt, e.target.value),
+                                className: "w-20 px-2 py-1 rounded text-xs",
+                                style: { border: `1px solid ${C.inkSoft}60` },
+                                placeholder: it.id === 6 ? (opt === "噴灌" ? "分鐘" : "噸") : it.id === 8 ? "kg" : "包",
+                              })
+                          );
+                        })
+                    )
+                , React.createElement('div', { className: "flex items-center gap-2 mt-2" }
+                    , React.createElement('button', {
+                        onClick: saveRevise,
+                        disabled: reviseBusy,
+                        className: "px-3 py-1.5 rounded text-xs",
+                        style: { background: C.tableColor, color: "white", fontFamily: "Inter", fontWeight: 700, opacity: reviseBusy ? 0.6 : 1 },
+                      }, reviseBusy ? "儲存中…" : "儲存修正")
+                    , React.createElement('button', {
+                        onClick: closeRevise,
+                        className: "px-3 py-1.5 rounded text-xs",
+                        style: { background: "white", color: C.inkSoft, border: `1px solid ${C.inkSoft}60`, fontFamily: "Inter" },
+                      }, "取消")
+                  )
+              );
+            })()
+          )
         )
       )
 
