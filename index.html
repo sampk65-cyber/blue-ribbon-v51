@@ -717,7 +717,7 @@ const C = {
   tiffanyLight: "#B8ECE5",
   tiffanyText: "#2E8577",
 };
-const APP_VERSION = 'V5.1.C84';
+const APP_VERSION = 'V5.1.C85';
 const FONT_LINK = "https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,600;9..144,700&family=Inter:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap";
 
 const WORK_ITEMS = [
@@ -7633,9 +7633,11 @@ async function fetchYieldLongTermSeries(zone, startYear, endYear, onProgress, gr
   return { periods, values };
 }
 
+const YIELD_GRADE_COLORS = { A: "#4E7C6B", B: "#2E5FA3", D: "#E0785F", NG: "#5B2A45" };
 function YieldLongTermReport({ onBack }) {
   const [zone, setZone] = useState("一期");
   const [gradeSel, setGradeSel] = useState(() => [...YIELD_GRADES]);
+  const [gradeMode, setGradeMode] = useState("sum"); // "sum"=加總成一條線 | "separate"=各品級各自一條線並列比較
   const [loading, setLoading] = useState(false);
   const [progress, setProgress] = useState("");
   const [result, setResult] = useState(null);
@@ -7643,11 +7645,24 @@ function YieldLongTermReport({ onBack }) {
   const startYear = 2020;
   const endYear = new Date().getFullYear();
 
-  const run = async (targetZone, grades) => {
+  const run = async (targetZone, grades, mode) => {
     setLoading(true); setError(""); setResult(null); setProgress("");
     try {
-      const r = await fetchYieldLongTermSeries(targetZone, startYear, endYear, (d, t) => setProgress(`${d}/${t}`), grades);
-      setResult(r);
+      if (mode === "separate") {
+        const gs = grades.length ? grades : YIELD_GRADES;
+        let periods = null;
+        const seriesByGrade = {};
+        for (let gi = 0; gi < gs.length; gi++) {
+          const g = gs[gi];
+          const r = await fetchYieldLongTermSeries(targetZone, startYear, endYear, (d, t) => setProgress(`${g}：${d}/${t}`), [g]);
+          periods = r.periods;
+          seriesByGrade[g] = r.values;
+        }
+        setResult({ periods, seriesByGrade });
+      } else {
+        const r = await fetchYieldLongTermSeries(targetZone, startYear, endYear, (d, t) => setProgress(`${d}/${t}`), grades);
+        setResult({ periods: r.periods, values: r.values });
+      }
     } catch (e) {
       setError("讀取失敗：" + (e.message || e));
     }
@@ -7656,9 +7671,11 @@ function YieldLongTermReport({ onBack }) {
 
   // C75/V5.018：進頁面、或切換分區時自動載入資料，不用先按查詢鈕才看得到圖。
   // C84/V5.025：加入品級(A/B/D/NG)複選，切換品級也自動重新查詢。
-  useEffect(() => { run(zone, gradeSel); }, [zone, gradeSel]);
+  // C85/V5.026：加入「加總／並列」切換——並列時各品級各自一條線，用不同顏色比較。
+  useEffect(() => { run(zone, gradeSel, gradeMode); }, [zone, gradeSel, gradeMode]);
 
-  const maxVal = result ? Math.max(10, ...result.values) : 10;
+  const allValues = result ? (result.values || Object.values(result.seriesByGrade || {}).flat()) : [];
+  const maxVal = result ? Math.max(10, ...allValues.filter((v) => v != null)) : 10;
   const n = result ? result.periods.length : 0;
   const W = Math.max(900, n * 26), H = 340, padL = 62, padR = 16, padT = 20, padB = 60;
   const xOf = (i) => padL + (n <= 1 ? 0 : (i / (n - 1)) * (W - padL - padR));
@@ -7676,10 +7693,16 @@ function YieldLongTermReport({ onBack }) {
       fontFamily: "IBM Plex Mono, monospace", transform: `rotate(-45 ${xOf(i)} ${H - padB + 14})`,
     }, p.label) : null
   )) : null;
-  const linePoints = result ? result.values.map((v, i) => `${xOf(i).toFixed(1)},${yOf(v).toFixed(1)}`).join(" ") : "";
-  const dots = result ? result.values.map((v, i) => (
-    React.createElement("circle", { key: i, cx: xOf(i), cy: yOf(v), r: 2.2, fill: C.tableColor })
-  )) : null;
+  const lineFor = (values, color) => {
+    const points = values.map((v, i) => `${xOf(i).toFixed(1)},${yOf(v).toFixed(1)}`).join(" ");
+    const dots = values.map((v, i) => React.createElement("circle", { key: i, cx: xOf(i), cy: yOf(v), r: 2.2, fill: color }));
+    return React.createElement(React.Fragment, null, React.createElement("polyline", { points, fill: "none", stroke: color, strokeWidth: 2 }), dots);
+  };
+  const chartLines = result
+    ? (gradeMode === "separate"
+        ? gradeSel.map((g) => React.createElement(React.Fragment, { key: g }, lineFor(result.seriesByGrade[g] || [], YIELD_GRADE_COLORS[g])))
+        : lineFor(result.values || [], C.tableColor))
+    : null;
 
   return React.createElement("div", { className: "min-h-screen flex flex-col", style: { background: C.cream } },
     React.createElement(NavBar, { backLabel: "耗材與報表", onBack }),
@@ -7699,30 +7722,41 @@ function YieldLongTermReport({ onBack }) {
             : { background: "white", color: C.ink, border: `1px solid ${C.line}`, fontFamily: "Inter" },
         }, z))
       ),
-      React.createElement("div", { className: "text-xs mb-2", style: { color: C.inkSoft, fontFamily: "Inter" } }, "產能品級（可複選加總，A/B/D/NG）"),
-      React.createElement("div", { className: "flex gap-2 flex-wrap mb-4" },
+      React.createElement("div", { className: "text-xs mb-2", style: { color: C.inkSoft, fontFamily: "Inter" } }, "產能品級（可複選，A/B/D/NG）"),
+      React.createElement("div", { className: "flex gap-2 flex-wrap mb-2" },
         ...YIELD_GRADES.map((g) => {
           const checked = gradeSel.includes(g);
           return React.createElement("button", {
             key: g, onClick: () => setGradeSel((prev) => checked ? prev.filter((x) => x !== g) : [...prev, g]),
             className: "px-3 py-1.5 rounded-full text-sm",
             style: checked
-              ? { background: C.tableColor, color: "white", fontFamily: "Inter", fontWeight: 700 }
+              ? { background: gradeMode === "separate" ? YIELD_GRADE_COLORS[g] : C.tableColor, color: "white", fontFamily: "Inter", fontWeight: 700 }
               : { background: "white", color: C.ink, border: `1px solid ${C.line}`, fontFamily: "Inter" },
           }, g);
         })
       ),
+      React.createElement("div", { className: "flex gap-2 mb-4" },
+        React.createElement("button", { onClick: () => setGradeMode("sum"), className: "px-3 py-1.5 rounded-lg text-sm", style: gradeMode === "sum" ? { background: C.wine, color: "white", fontWeight: 700 } : { background: "white", color: C.ink, border: `1px solid ${C.line}` } }, "加總成一條線"),
+        React.createElement("button", { onClick: () => setGradeMode("separate"), className: "px-3 py-1.5 rounded-lg text-sm", style: gradeMode === "separate" ? { background: C.wine, color: "white", fontWeight: 700 } : { background: "white", color: C.ink, border: `1px solid ${C.line}` } }, "各品級並列比較")
+      ),
       React.createElement("button", {
-        onClick: () => run(zone, gradeSel), disabled: loading,
+        onClick: () => run(zone, gradeSel, gradeMode), disabled: loading,
         className: "px-4 py-2 rounded-lg text-sm",
         style: { background: C.tableColor, color: "white", fontFamily: "Inter", fontWeight: 700, opacity: loading ? 0.6 : 1 },
       }, loading ? `讀取中…${progress ? `（${progress}）` : ""}` : "重新查詢"),
       error && React.createElement("p", { className: "text-sm mt-3", style: { color: C.alert } }, error),
       result && React.createElement("div", { className: "mt-4" },
-        React.createElement("p", { className: "text-sm mb-2", style: { color: C.wine, fontFamily: "Inter", fontWeight: 600 } }, `${zone}・${gradeSel.length === YIELD_GRADES.length ? "全品級" : gradeSel.join("+") || "未選品級"}・${startYear}~${endYear}年 每15天產能趨勢（單位：kg）`),
+        React.createElement("p", { className: "text-sm mb-2", style: { color: C.wine, fontFamily: "Inter", fontWeight: 600 } },
+          gradeMode === "separate"
+            ? `${zone}・各品級並列（${gradeSel.join("、") || "未選品級"}）・${startYear}~${endYear}年 每15天產能趨勢（單位：kg）`
+            : `${zone}・${gradeSel.length === YIELD_GRADES.length ? "全品級" : gradeSel.join("+") || "未選品級"}・${startYear}~${endYear}年 每15天產能趨勢（單位：kg）`),
+        gradeMode === "separate" && React.createElement("div", { className: "flex gap-3 flex-wrap text-xs mb-2", style: { fontFamily: "Inter" } },
+          ...gradeSel.map((g) => React.createElement("span", { key: g },
+            React.createElement("span", { style: { display: "inline-block", width: 10, height: 2, background: YIELD_GRADE_COLORS[g], marginRight: 4 } }), g))
+        ),
         React.createElement("div", { style: { overflowX: "auto", maxWidth: "100%" } },
           React.createElement("svg", { viewBox: `0 0 ${W} ${H}`, style: { width: W, height: H, display: "block" } },
-            gridLines, React.createElement("polyline", { points: linePoints, fill: "none", stroke: C.tableColor, strokeWidth: 2 }), dots, xTicks
+            gridLines, chartLines, xTicks
           )
         )
       )
@@ -8205,6 +8239,8 @@ function ZoneMaterialYieldReport({ onBack }) {
   const [showLabels, setShowLabels] = useState(true);
   const [selectedMaterials, setSelectedMaterials] = useState(() => [...LIQUID_KEYS]); // 液體肥可複選資材
   const [gradeSel, setGradeSel] = useState(() => [...YIELD_GRADES]); // 產能A/B/D/NG可複選
+  const [gradeMode, setGradeMode] = useState("sum"); // "sum"=加總 | "separate"=各品級並列比較(僅限目前顯示的分區)
+  const [separateYield, setSeparateYield] = useState(null); // { A:[...], B:[...], ... }，只在gradeMode="separate"時使用
   const [loading, setLoading] = useState(false);
   const [progress, setProgress] = useState("");
   const [error, setError] = useState("");
@@ -8272,6 +8308,25 @@ function ZoneMaterialYieldReport({ onBack }) {
   };
 
   useEffect(() => { run(); }, [mode, year, selectedMaterials, gradeSel]);
+
+  // C85/V5.026：並列品級模式——只針對「目前顯示的那一區」抓各品級各自的序列，
+  // 因為底層 archive 文件快取跟 grades 篩選無關（grades 只是本地端加總時的過濾條件），
+  // 前面 run() 已經把該分區/年度的 archive 讀過一次，這裡幾乎是重用快取、不太會多打資料庫。
+  const runSeparateYield = async () => {
+    if (gradeMode !== "separate") { setSeparateYield(null); return; }
+    try {
+      const periods = periodsForMode();
+      const out = {};
+      gradeSel.forEach((g) => { out[g] = []; });
+      for (const p of periods) {
+        if (!p) { gradeSel.forEach((g) => out[g].push(null)); continue; }
+        const vals = await Promise.all(gradeSel.map((g) => fetchYieldZonesPeriodTotal([zone], p.start, p.end, [g])));
+        gradeSel.forEach((g, gi) => out[g].push(vals[gi]));
+      }
+      setSeparateYield(out);
+    } catch (e) { /* 並列品級失敗就先不顯示，不影響主要圖表 */ }
+  };
+  useEffect(() => { runSeparateYield(); }, [gradeMode, zone, gradeSel, mode, year, data]);
 
   const zoneData = data ? data.perZone[zone] : null;
   const labels = data ? data.labels : [];
@@ -8425,16 +8480,20 @@ function ZoneMaterialYieldReport({ onBack }) {
           style: zone === z ? { background: C.tableColor, color: "white", fontWeight: 700 } : { background: "white", color: C.ink, border: `1px solid ${C.line}` },
         }, z))
       ),
-      React.createElement("div", { className: "text-xs mb-2", style: { color: C.inkSoft } }, "產能品級（可複選加總，A/B/D/NG）"),
-      React.createElement("div", { className: "flex gap-2 flex-wrap mb-3" },
+      React.createElement("div", { className: "text-xs mb-2", style: { color: C.inkSoft } }, "產能品級（可複選，A/B/D/NG）"),
+      React.createElement("div", { className: "flex gap-2 flex-wrap mb-2" },
         ...YIELD_GRADES.map((g) => {
           const checked = gradeSel.includes(g);
           return React.createElement("button", {
             key: g, onClick: () => setGradeSel((prev) => checked ? prev.filter((x) => x !== g) : [...prev, g]),
             className: "px-3 py-1.5 rounded-full text-sm",
-            style: checked ? { background: C.tableColor, color: "white", fontWeight: 700 } : { background: "white", color: C.ink, border: `1px solid ${C.line}` },
+            style: checked ? { background: gradeMode === "separate" ? YIELD_GRADE_COLORS[g] : C.tableColor, color: "white", fontWeight: 700 } : { background: "white", color: C.ink, border: `1px solid ${C.line}` },
           }, g);
         })
+      ),
+      React.createElement("div", { className: "flex gap-2 mb-3" },
+        React.createElement("button", { onClick: () => setGradeMode("sum"), className: "px-3 py-1.5 rounded-lg text-sm", style: gradeMode === "sum" ? { background: C.wine, color: "white", fontWeight: 700 } : { background: "white", color: C.ink, border: `1px solid ${C.line}` } }, "加總成一條線"),
+        React.createElement("button", { onClick: () => setGradeMode("separate"), className: "px-3 py-1.5 rounded-lg text-sm", style: gradeMode === "separate" ? { background: C.wine, color: "white", fontWeight: 700 } : { background: "white", color: C.ink, border: `1px solid ${C.line}` } }, "各品級並列（僅目前分區）")
       ),
       React.createElement("label", { className: "flex items-center gap-2 text-xs mb-3", style: { color: C.inkSoft, cursor: "pointer" } },
         React.createElement("input", { type: "checkbox", checked: showLabels, onChange: (e) => setShowLabels(e.target.checked) }),
@@ -8445,13 +8504,18 @@ function ZoneMaterialYieldReport({ onBack }) {
       data && React.createElement("div", { className: "mt-2" },
         React.createElement("div", { className: "flex gap-4 flex-wrap text-xs mb-2", style: { fontFamily: "Inter" } },
           ...paramLegend,
-          React.createElement("span", { key: "y" }, React.createElement("span", { style: { display: "inline-block", width: 10, height: 2, background: C.tableColor, marginRight: 4 } }), `產能(kg)・${zone}・${gradeSel.length === YIELD_GRADES.length ? "全品級" : gradeSel.join("+") || "未選品級"}｜右外軸`)
+          gradeMode === "separate"
+            ? React.createElement(React.Fragment, { key: "y" }, ...gradeSel.map((g) => React.createElement("span", { key: g },
+                React.createElement("span", { style: { display: "inline-block", width: 10, height: 2, background: YIELD_GRADE_COLORS[g], marginRight: 4 } }), `產能・${zone}・${g}`)))
+            : React.createElement("span", { key: "y" }, React.createElement("span", { style: { display: "inline-block", width: 10, height: 2, background: C.tableColor, marginRight: 4 } }), `產能(kg)・${zone}・${gradeSel.length === YIELD_GRADES.length ? "全品級" : gradeSel.join("+") || "未選品級"}｜右外軸`)
         ),
         React.createElement("div", { style: { overflowX: "auto", maxWidth: "100%" } },
           React.createElement("svg", { viewBox: `0 0 ${W} ${H}`, style: { width: W, height: H, display: "block" } },
             gridY, paramChart, paramAxisTicksLeft, paramAxisTicksRight2,
             axisTicksRight(yieldMax, C.tableColor, yieldAxisX, "kg"), xTicks,
-            lineOf(zoneData && zoneData.yield, yYield, C.tableColor),
+            gradeMode === "separate"
+              ? gradeSel.map((g) => React.createElement(React.Fragment, { key: g }, lineOf(separateYield && separateYield[g], yYield, YIELD_GRADE_COLORS[g])))
+              : lineOf(zoneData && zoneData.yield, yYield, C.tableColor),
             ratioLabels, ratioCaption
           )
         )
