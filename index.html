@@ -717,7 +717,7 @@ const C = {
   tiffanyLight: "#B8ECE5",
   tiffanyText: "#2E8577",
 };
-const APP_VERSION = 'V5.1.C71';
+const APP_VERSION = 'V5.1.C72';
 const FONT_LINK = "https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,600;9..144,700&family=Inter:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap";
 
 const WORK_ITEMS = [
@@ -5777,7 +5777,10 @@ function CellWorkTable({ zone, cellId, role, onClose, ym, workDate, loggedInId, 
     return () => document.body.classList.remove("cell-work-open");
   }, []);
   const canEditRole = role === "designer" || role === "manager" || role === "founder";
-  const isUser = role === "user" || role === "founder";
+  // C72/V5.016：拿掉先前把 founder 也算進 isUser 的寫死例外——這會讓創辦人(B01)看到
+  // 「回報/確認」按鈕、「待確認」字樣等現場人員才該有的介面，跟 designer/manager 的
+  // 指派畫面不一致。isUser 只代表「現場回報者」身分，只認 user 角色。
+  const isUser = role === "user";
   const shape = FLOOR_SHAPES[zone.id];
   // 指令修正：儲存內容需對應到「該區該月」的資料夾，key 內含年月；
   // 從平面圖進來(未帶 ym)一律對應「當下月份」，從功能表4資料夾點進來(帶 ym)則固定讀該月
