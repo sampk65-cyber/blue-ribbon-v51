@@ -717,7 +717,7 @@ const C = {
   tiffanyLight: "#B8ECE5",
   tiffanyText: "#2E8577",
 };
-const APP_VERSION = 'V5.1.C83';
+const APP_VERSION = 'V5.1.C84';
 const FONT_LINK = "https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,600;9..144,700&family=Inter:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap";
 
 const WORK_ITEMS = [
@@ -7575,10 +7575,12 @@ async function loadYieldDayDoc(db, zone, dateStr) {
   if (!snap.exists) return null;
   try { return JSON.parse(snap.data().value); } catch (e) { return null; }
 }
-function sumYieldRecordKg(rec) {
+const YIELD_GRADES = ["A", "B", "D", "NG"];
+function sumYieldRecordKg(rec, grades) {
   if (!rec) return 0;
+  const use = grades && grades.length ? grades : YIELD_GRADES;
   let total = 0;
-  for (const q of ["A", "B", "D", "NG"]) {
+  for (const q of use) {
     (rec[q] || []).forEach((e) => { total += Number(e && e.net) || 0; });
   }
   return Math.round(total * 100) / 100;
@@ -7600,7 +7602,7 @@ function yieldPeriodsAcrossYears(startYear, endYear) {
   }
   return periods;
 }
-async function fetchYieldLongTermSeries(zone, startYear, endYear, onProgress) {
+async function fetchYieldLongTermSeries(zone, startYear, endYear, onProgress, grades) {
   const { db, authReady } = getYieldDb();
   await authReady;
   const periods = yieldPeriodsAcrossYears(startYear, endYear);
@@ -7614,7 +7616,7 @@ async function fetchYieldLongTermSeries(zone, startYear, endYear, onProgress) {
       if (!(cacheKey in archiveCache)) archiveCache[cacheKey] = await loadYieldArchiveDoc(db, zone, cacheKey);
       const archive = archiveCache[cacheKey];
       for (const dateStr of Object.keys(archive)) {
-        if (dateStr >= p.start && dateStr <= p.end) sum += sumYieldRecordKg(archive[dateStr]);
+        if (dateStr >= p.start && dateStr <= p.end) sum += sumYieldRecordKg(archive[dateStr], grades);
       }
     } else {
       const tasks = [];
@@ -7622,7 +7624,7 @@ async function fetchYieldLongTermSeries(zone, startYear, endYear, onProgress) {
       const endD = new Date(p.end + "T00:00:00");
       while (d <= endD) { tasks.push(d.toISOString().slice(0, 10)); d.setDate(d.getDate() + 1); }
       const recs = await Promise.all(tasks.map((ds) => loadYieldDayDoc(db, zone, ds)));
-      recs.forEach((rec) => { sum += sumYieldRecordKg(rec); });
+      recs.forEach((rec) => { sum += sumYieldRecordKg(rec, grades); });
     }
     values.push(Math.round(sum * 10) / 10);
     done++;
@@ -7633,6 +7635,7 @@ async function fetchYieldLongTermSeries(zone, startYear, endYear, onProgress) {
 
 function YieldLongTermReport({ onBack }) {
   const [zone, setZone] = useState("一期");
+  const [gradeSel, setGradeSel] = useState(() => [...YIELD_GRADES]);
   const [loading, setLoading] = useState(false);
   const [progress, setProgress] = useState("");
   const [result, setResult] = useState(null);
@@ -7640,10 +7643,10 @@ function YieldLongTermReport({ onBack }) {
   const startYear = 2020;
   const endYear = new Date().getFullYear();
 
-  const run = async (targetZone) => {
+  const run = async (targetZone, grades) => {
     setLoading(true); setError(""); setResult(null); setProgress("");
     try {
-      const r = await fetchYieldLongTermSeries(targetZone, startYear, endYear, (d, t) => setProgress(`${d}/${t}`));
+      const r = await fetchYieldLongTermSeries(targetZone, startYear, endYear, (d, t) => setProgress(`${d}/${t}`), grades);
       setResult(r);
     } catch (e) {
       setError("讀取失敗：" + (e.message || e));
@@ -7652,7 +7655,8 @@ function YieldLongTermReport({ onBack }) {
   };
 
   // C75/V5.018：進頁面、或切換分區時自動載入資料，不用先按查詢鈕才看得到圖。
-  useEffect(() => { run(zone); }, [zone]);
+  // C84/V5.025：加入品級(A/B/D/NG)複選，切換品級也自動重新查詢。
+  useEffect(() => { run(zone, gradeSel); }, [zone, gradeSel]);
 
   const maxVal = result ? Math.max(10, ...result.values) : 10;
   const n = result ? result.periods.length : 0;
@@ -7695,14 +7699,27 @@ function YieldLongTermReport({ onBack }) {
             : { background: "white", color: C.ink, border: `1px solid ${C.line}`, fontFamily: "Inter" },
         }, z))
       ),
+      React.createElement("div", { className: "text-xs mb-2", style: { color: C.inkSoft, fontFamily: "Inter" } }, "產能品級（可複選加總，A/B/D/NG）"),
+      React.createElement("div", { className: "flex gap-2 flex-wrap mb-4" },
+        ...YIELD_GRADES.map((g) => {
+          const checked = gradeSel.includes(g);
+          return React.createElement("button", {
+            key: g, onClick: () => setGradeSel((prev) => checked ? prev.filter((x) => x !== g) : [...prev, g]),
+            className: "px-3 py-1.5 rounded-full text-sm",
+            style: checked
+              ? { background: C.tableColor, color: "white", fontFamily: "Inter", fontWeight: 700 }
+              : { background: "white", color: C.ink, border: `1px solid ${C.line}`, fontFamily: "Inter" },
+          }, g);
+        })
+      ),
       React.createElement("button", {
-        onClick: () => run(zone), disabled: loading,
+        onClick: () => run(zone, gradeSel), disabled: loading,
         className: "px-4 py-2 rounded-lg text-sm",
         style: { background: C.tableColor, color: "white", fontFamily: "Inter", fontWeight: 700, opacity: loading ? 0.6 : 1 },
       }, loading ? `讀取中…${progress ? `（${progress}）` : ""}` : "重新查詢"),
       error && React.createElement("p", { className: "text-sm mt-3", style: { color: C.alert } }, error),
       result && React.createElement("div", { className: "mt-4" },
-        React.createElement("p", { className: "text-sm mb-2", style: { color: C.wine, fontFamily: "Inter", fontWeight: 600 } }, `${zone}・${startYear}~${endYear}年 每15天產能趨勢（單位：kg）`),
+        React.createElement("p", { className: "text-sm mb-2", style: { color: C.wine, fontFamily: "Inter", fontWeight: 600 } }, `${zone}・${gradeSel.length === YIELD_GRADES.length ? "全品級" : gradeSel.join("+") || "未選品級"}・${startYear}~${endYear}年 每15天產能趨勢（單位：kg）`),
         React.createElement("div", { style: { overflowX: "auto", maxWidth: "100%" } },
           React.createElement("svg", { viewBox: `0 0 ${W} ${H}`, style: { width: W, height: H, display: "block" } },
             gridLines, React.createElement("polyline", { points: linePoints, fill: "none", stroke: C.tableColor, strokeWidth: 2 }), dots, xTicks
@@ -7757,7 +7774,7 @@ async function fetchClimateYearAgg(year) {
   }
   return { tMax, tMin, rainTotal: Math.round(rainTotal * 10) / 10 };
 }
-async function fetchYieldYearMonthlyBreakdown(zone, year) {
+async function fetchYieldYearMonthlyBreakdown(zone, year, grades) {
   const { db, authReady } = getYieldDb();
   await authReady;
   const nowStr = new Date().toISOString().slice(0, 10);
@@ -7767,7 +7784,7 @@ async function fetchYieldYearMonthlyBreakdown(zone, year) {
     for (const dateStr of Object.keys(archive)) {
       if (dateStr > nowStr) continue;
       const m = Number(dateStr.slice(5, 7));
-      if (m >= 1 && m <= 12) monthTotals[m - 1] += sumYieldRecordKg(archive[dateStr]);
+      if (m >= 1 && m <= 12) monthTotals[m - 1] += sumYieldRecordKg(archive[dateStr], grades);
     }
   }
   if (`${year}-12-31` >= YIELD_DB_ARCHIVE_CUTOFF) {
@@ -7776,12 +7793,12 @@ async function fetchYieldYearMonthlyBreakdown(zone, year) {
     const days = [];
     while (d <= endD) { days.push(d.toISOString().slice(0, 10)); d.setDate(d.getDate() + 1); }
     const recs = await Promise.all(days.map((ds) => loadYieldDayDoc(db, zone, ds)));
-    days.forEach((ds, i) => { const m = Number(ds.slice(5, 7)); monthTotals[m - 1] += sumYieldRecordKg(recs[i]); });
+    days.forEach((ds, i) => { const m = Number(ds.slice(5, 7)); monthTotals[m - 1] += sumYieldRecordKg(recs[i], grades); });
   }
   return monthTotals.map((v) => Math.round(v * 10) / 10);
 }
-async function fetchYieldZonesYearMonthlyBreakdown(zones, year) {
-  const perZone = await Promise.all(zones.map((z) => fetchYieldYearMonthlyBreakdown(z, year)));
+async function fetchYieldZonesYearMonthlyBreakdown(zones, year, grades) {
+  const perZone = await Promise.all(zones.map((z) => fetchYieldYearMonthlyBreakdown(z, year, grades)));
   const combined = new Array(12).fill(0);
   perZone.forEach((arr) => arr.forEach((v, i) => { combined[i] += v; }));
   return combined.map((v) => Math.round(v * 10) / 10);
@@ -7829,7 +7846,7 @@ function yieldPeriodsOfYear(year) {
   }
   return periods;
 }
-async function fetchYieldZonesPeriodTotal(zones, startDate, endDate) {
+async function fetchYieldZonesPeriodTotal(zones, startDate, endDate, grades) {
   const { db, authReady } = getYieldDb();
   await authReady;
   let sum = 0;
@@ -7837,7 +7854,7 @@ async function fetchYieldZonesPeriodTotal(zones, startDate, endDate) {
     if (startDate < YIELD_DB_ARCHIVE_CUTOFF) {
       const archive = await loadYieldArchiveDoc(db, zone, startDate.slice(0, 4));
       for (const dateStr of Object.keys(archive)) {
-        if (dateStr >= startDate && dateStr <= endDate) sum += sumYieldRecordKg(archive[dateStr]);
+        if (dateStr >= startDate && dateStr <= endDate) sum += sumYieldRecordKg(archive[dateStr], grades);
       }
     } else {
       const days = [];
@@ -7845,7 +7862,7 @@ async function fetchYieldZonesPeriodTotal(zones, startDate, endDate) {
       const endD = new Date(endDate + "T00:00:00");
       while (d <= endD) { days.push(d.toISOString().slice(0, 10)); d.setDate(d.getDate() + 1); }
       const recs = await Promise.all(days.map((ds) => loadYieldDayDoc(db, zone, ds)));
-      recs.forEach((r) => { sum += sumYieldRecordKg(r); });
+      recs.forEach((r) => { sum += sumYieldRecordKg(r, grades); });
     }
   }
   return Math.round(sum * 10) / 10;
@@ -7854,6 +7871,7 @@ async function fetchYieldZonesPeriodTotal(zones, startDate, endDate) {
 function ClimateYieldReport({ onBack }) {
   const [mode, setMode] = useState("year"); // "year" | "month" | "period"
   const [zoneSel, setZoneSel] = useState("全場");
+  const [gradeSel, setGradeSel] = useState(() => [...YIELD_GRADES]);
   const [year, setYear] = useState(new Date().getFullYear());
   const [showLabels, setShowLabels] = useState(true);
   const [loading, setLoading] = useState(false);
@@ -7877,7 +7895,7 @@ function ClimateYieldReport({ onBack }) {
         setProgress(`${i + 1}/${years.length}`);
         const [climate, yieldMonths] = await Promise.all([
           fetchClimateYearAgg(years[i]),
-          fetchYieldZonesYearMonthlyBreakdown(zonesForFetch, years[i]),
+          fetchYieldZonesYearMonthlyBreakdown(zonesForFetch, years[i], gradeSel),
         ]);
         rain.push(climate.rainTotal); tMax.push(climate.tMax); tMin.push(climate.tMin);
         yieldArr.push(Math.round(yieldMonths.reduce((s, v) => s + v, 0) * 10) / 10);
@@ -7893,7 +7911,7 @@ function ClimateYieldReport({ onBack }) {
       const months = Array.from({ length: 12 }, (_, i) => i + 1);
       const nowM = year === nowYear ? new Date().getMonth() + 1 : 12;
       const rain = [], tMax = [], tMin = [];
-      const yieldArr = await fetchYieldZonesYearMonthlyBreakdown(zonesForFetch, year);
+      const yieldArr = await fetchYieldZonesYearMonthlyBreakdown(zonesForFetch, year, gradeSel);
       for (let m = 1; m <= 12; m++) {
         if (m > nowM) { rain.push(null); tMax.push(null); tMin.push(null); continue; }
         setProgress(`${m}/${nowM}`);
@@ -7915,7 +7933,7 @@ function ClimateYieldReport({ onBack }) {
         const p = periods[i];
         const [climate, yieldTotal] = await Promise.all([
           fetchClimatePeriodAgg(p.start, p.end),
-          fetchYieldZonesPeriodTotal(zonesForFetch, p.start, p.end),
+          fetchYieldZonesPeriodTotal(zonesForFetch, p.start, p.end, gradeSel),
         ]);
         rain.push(climate.rainTotal); tMax.push(climate.tMax); tMin.push(climate.tMin); yieldArr.push(yieldTotal);
       }
@@ -7928,7 +7946,7 @@ function ClimateYieldReport({ onBack }) {
     if (mode === "year") runYear();
     else if (mode === "month") runMonth();
     else runPeriod();
-  }, [mode, zoneSel, year]);
+  }, [mode, zoneSel, year, gradeSel]);
 
   const data = mode === "year" ? yearData : mode === "month" ? monthData : periodData;
   const labels = data
@@ -8017,6 +8035,17 @@ function ClimateYieldReport({ onBack }) {
           style: zoneSel === z ? { background: C.tableColor, color: "white", fontWeight: 700 } : { background: "white", color: C.ink, border: `1px solid ${C.line}` },
         }, z))
       ),
+      React.createElement("div", { className: "text-xs mb-2", style: { color: C.inkSoft } }, "產能品級（可複選加總，A/B/D/NG）"),
+      React.createElement("div", { className: "flex gap-2 flex-wrap mb-3" },
+        ...YIELD_GRADES.map((g) => {
+          const checked = gradeSel.includes(g);
+          return React.createElement("button", {
+            key: g, onClick: () => setGradeSel((prev) => checked ? prev.filter((x) => x !== g) : [...prev, g]),
+            className: "px-3 py-1.5 rounded-full text-sm",
+            style: checked ? { background: C.tableColor, color: "white", fontWeight: 700 } : { background: "white", color: C.ink, border: `1px solid ${C.line}` },
+          }, g);
+        })
+      ),
       React.createElement("label", { className: "flex items-center gap-2 text-xs mb-3", style: { color: C.inkSoft, cursor: "pointer" } },
         React.createElement("input", { type: "checkbox", checked: showLabels, onChange: (e) => setShowLabels(e.target.checked) }),
         "顯示數值標籤"
@@ -8027,7 +8056,7 @@ function ClimateYieldReport({ onBack }) {
         React.createElement("div", { className: "flex gap-4 flex-wrap text-xs mb-2", style: { fontFamily: "Inter" } },
           React.createElement("span", null, React.createElement("span", { style: { display: "inline-block", width: 10, height: 10, background: `${C.brandBlue}55`, marginRight: 4 } }), "雨量(mm)｜左軸・0~300正常刻度，300~1000壓縮顯示"),
           React.createElement("span", null, React.createElement("span", { style: { display: "inline-block", width: 10, height: 2, background: C.coral, marginRight: 4 } }), "最高/最低溫(℃)｜右內軸・固定5~40℃"),
-          React.createElement("span", null, React.createElement("span", { style: { display: "inline-block", width: 10, height: 2, background: C.tableColor, marginRight: 4 } }), `產能(kg)・${zoneSel}｜右外軸`)
+          React.createElement("span", null, React.createElement("span", { style: { display: "inline-block", width: 10, height: 2, background: C.tableColor, marginRight: 4 } }), `產能(kg)・${zoneSel}・${gradeSel.length === YIELD_GRADES.length ? "全品級" : gradeSel.join("+") || "未選品級"}｜右外軸`)
         ),
         React.createElement("div", { style: { overflowX: "auto", maxWidth: "100%" } },
           React.createElement("svg", { viewBox: `0 0 ${W} ${H}`, style: { width: W, height: H, display: "block" } },
@@ -8175,6 +8204,7 @@ function ZoneMaterialYieldReport({ onBack }) {
   const [year, setYear] = useState(new Date().getFullYear());
   const [showLabels, setShowLabels] = useState(true);
   const [selectedMaterials, setSelectedMaterials] = useState(() => [...LIQUID_KEYS]); // 液體肥可複選資材
+  const [gradeSel, setGradeSel] = useState(() => [...YIELD_GRADES]); // 產能A/B/D/NG可複選
   const [loading, setLoading] = useState(false);
   const [progress, setProgress] = useState("");
   const [error, setError] = useState("");
@@ -8226,7 +8256,7 @@ function ZoneMaterialYieldReport({ onBack }) {
         const results = await Promise.all(YIELD_DB_ZONES.map(async (z) => {
           const [zw, y] = await Promise.all([
             fetchZoneworkRange(z, p.start, p.end),
-            fetchYieldZonesPeriodTotal([z], p.start, p.end),
+            fetchYieldZonesPeriodTotal([z], p.start, p.end, gradeSel),
           ]);
           const liquidSum = Math.round(selectedMaterials.reduce((s, k) => s + (zw.liquidByMaterial[k] || 0), 0) * 10) / 10;
           return { z, tons: zw.tons, minutes: zw.minutes, solid: zw.solid, liquid: liquidSum, yield: y };
@@ -8241,7 +8271,7 @@ function ZoneMaterialYieldReport({ onBack }) {
     setLoading(false); setProgress("");
   };
 
-  useEffect(() => { run(); }, [mode, year, selectedMaterials]);
+  useEffect(() => { run(); }, [mode, year, selectedMaterials, gradeSel]);
 
   const zoneData = data ? data.perZone[zone] : null;
   const labels = data ? data.labels : [];
@@ -8395,6 +8425,17 @@ function ZoneMaterialYieldReport({ onBack }) {
           style: zone === z ? { background: C.tableColor, color: "white", fontWeight: 700 } : { background: "white", color: C.ink, border: `1px solid ${C.line}` },
         }, z))
       ),
+      React.createElement("div", { className: "text-xs mb-2", style: { color: C.inkSoft } }, "產能品級（可複選加總，A/B/D/NG）"),
+      React.createElement("div", { className: "flex gap-2 flex-wrap mb-3" },
+        ...YIELD_GRADES.map((g) => {
+          const checked = gradeSel.includes(g);
+          return React.createElement("button", {
+            key: g, onClick: () => setGradeSel((prev) => checked ? prev.filter((x) => x !== g) : [...prev, g]),
+            className: "px-3 py-1.5 rounded-full text-sm",
+            style: checked ? { background: C.tableColor, color: "white", fontWeight: 700 } : { background: "white", color: C.ink, border: `1px solid ${C.line}` },
+          }, g);
+        })
+      ),
       React.createElement("label", { className: "flex items-center gap-2 text-xs mb-3", style: { color: C.inkSoft, cursor: "pointer" } },
         React.createElement("input", { type: "checkbox", checked: showLabels, onChange: (e) => setShowLabels(e.target.checked) }),
         "顯示數值標籤"
@@ -8404,7 +8445,7 @@ function ZoneMaterialYieldReport({ onBack }) {
       data && React.createElement("div", { className: "mt-2" },
         React.createElement("div", { className: "flex gap-4 flex-wrap text-xs mb-2", style: { fontFamily: "Inter" } },
           ...paramLegend,
-          React.createElement("span", { key: "y" }, React.createElement("span", { style: { display: "inline-block", width: 10, height: 2, background: C.tableColor, marginRight: 4 } }), `產能(kg)・${zone}｜右外軸`)
+          React.createElement("span", { key: "y" }, React.createElement("span", { style: { display: "inline-block", width: 10, height: 2, background: C.tableColor, marginRight: 4 } }), `產能(kg)・${zone}・${gradeSel.length === YIELD_GRADES.length ? "全品級" : gradeSel.join("+") || "未選品級"}｜右外軸`)
         ),
         React.createElement("div", { style: { overflowX: "auto", maxWidth: "100%" } },
           React.createElement("svg", { viewBox: `0 0 ${W} ${H}`, style: { width: W, height: H, display: "block" } },
