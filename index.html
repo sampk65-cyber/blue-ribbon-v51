@@ -717,7 +717,7 @@ const C = {
   tiffanyLight: "#B8ECE5",
   tiffanyText: "#2E8577",
 };
-const APP_VERSION = 'V5.1.C82';
+const APP_VERSION = 'V5.1.C83';
 const FONT_LINK = "https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,600;9..144,700&family=Inter:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap";
 
 const WORK_ITEMS = [
@@ -8247,7 +8247,7 @@ function ZoneMaterialYieldReport({ onBack }) {
   const labels = data ? data.labels : [];
   const n = labels.length;
   const perPoint = (mode === "period" || mode === "week") ? 44 : 70;
-  const W = Math.max(700, n * perPoint), H = 380, padL = 68, padR = param === "water" ? 150 : 112, padT = 24, padB = 50;
+  const W = Math.max(700, n * perPoint), H = 380, padL = 68, padR = param === "water" ? 150 : 112, padT = 24, padB = param === "water" ? 78 : 64;
   const plotW = W - padL - padR, plotH = H - padT - padB;
   const xOf = (i) => padL + (n <= 1 ? plotW / 2 : (i / (n - 1)) * plotW);
   const barW = Math.min(26, (plotW / Math.max(1, n)) * 0.42);
@@ -8293,6 +8293,28 @@ function ZoneMaterialYieldReport({ onBack }) {
   const xTicks = labels.map((lab, i) => (
     React.createElement("text", { key: i, x: xOf(i), y: H - padB + 18, fontSize: (mode === "period" || mode === "week") ? 9.5 : 11.5, fill: C.inkSoft, textAnchor: "middle", fontFamily: "Inter" }, lab)
   ));
+  // 比值標籤：資材用量 ÷ 產能 × 100%，只在「產能>0」時顯示——非產季產能是0，除以0沒有意義，
+  // 直接留空不畫，比硬塞一個0%或∞更清楚。
+  const ratioFmt = (v, y) => (y > 0 && v != null) ? `${((v / y) * 100).toFixed(1)}%` : "";
+  const ratioRow = (arr, color, rowY) => labels.map((_, i) => {
+    const y = zoneData && zoneData.yield ? zoneData.yield[i] : null;
+    const v = arr ? arr[i] : null;
+    const txt = ratioFmt(v, y);
+    if (!txt) return null;
+    return React.createElement("text", { key: i, x: xOf(i), y: rowY, fontSize: 9.5, fill: color, textAnchor: "middle", fontFamily: "IBM Plex Mono, monospace" }, txt);
+  });
+  const ratioLabels = param === "water"
+    ? React.createElement(React.Fragment, null,
+        ratioRow(zoneData && zoneData.tons, C.brandBlue, H - padB + 34),
+        ratioRow(zoneData && zoneData.minutes, C.leaf, H - padB + 48)
+      )
+    : ratioRow(
+        zoneData && (param === "solid" ? zoneData.solid : zoneData.liquid),
+        param === "solid" ? C.coral : C.leafSoft,
+        H - padB + 34
+      );
+  const ratioCaption = React.createElement("text", { x: padL, y: H - padB + (param === "water" ? 60 : 46), fontSize: 8.5, fill: C.inkSoft, textAnchor: "start", fontFamily: "Inter" },
+    param === "water" ? "灰階：噸/kg％、分鐘/kg％（產能=0時留空）" : `資材(${YIELD_PARAM_DEFS[param].unitLabel})÷產能(kg)×100%，產能=0時留空`);
   const gridY = [0, 0.25, 0.5, 0.75, 1].map((f) => (
     React.createElement("line", { key: f, x1: padL, y1: padT + f * plotH, x2: W - padR, y2: padT + f * plotH, stroke: C.line, strokeWidth: 1 })
   ));
@@ -8388,7 +8410,8 @@ function ZoneMaterialYieldReport({ onBack }) {
           React.createElement("svg", { viewBox: `0 0 ${W} ${H}`, style: { width: W, height: H, display: "block" } },
             gridY, paramChart, paramAxisTicksLeft, paramAxisTicksRight2,
             axisTicksRight(yieldMax, C.tableColor, yieldAxisX, "kg"), xTicks,
-            lineOf(zoneData && zoneData.yield, yYield, C.tableColor)
+            lineOf(zoneData && zoneData.yield, yYield, C.tableColor),
+            ratioLabels, ratioCaption
           )
         )
       )
