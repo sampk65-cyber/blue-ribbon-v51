@@ -717,7 +717,7 @@ const C = {
   tiffanyLight: "#B8ECE5",
   tiffanyText: "#2E8577",
 };
-const APP_VERSION = 'V5.1.C76';
+const APP_VERSION = 'V5.1.C77';
 const FONT_LINK = "https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,600;9..144,700&family=Inter:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap";
 
 const WORK_ITEMS = [
@@ -7777,16 +7777,82 @@ async function fetchYieldZonesYearMonthlyBreakdown(zones, year) {
   perZone.forEach((arr) => arr.forEach((v, i) => { combined[i] += v; }));
   return combined.map((v) => Math.round(v * 10) / 10);
 }
+// C77/V5.020：表九新增「看15天」——15天區間一律落在同一個月內，直接沿用月度的
+// hourly list，用日期範圍篩選即可，不用跨月處理。
+async function fetchClimatePeriodAgg(startDate, endDate) {
+  const ym = startDate.slice(0, 7);
+  try {
+    await window.firebaseReady;
+    const listRes = await window.storage.list(`environment:outdoor:hour:${ym}`);
+    const keys = (listRes && listRes.keys) || [];
+    if (!keys.length) return { tMax: null, tMin: null, rainTotal: 0 };
+    const recs = await runWithLimit(keys, 6, async (k) => {
+      try { const res = await window.storage.get(k); return res ? JSON.parse(res.value) : null; } catch (e) { return null; }
+    });
+    let tMax = null, tMin = null;
+    const rainByDay = {};
+    recs.filter(Boolean).forEach((r) => {
+      const day = String(r.hourKey || r.observedAt || "").slice(0, 10);
+      if (day < startDate || day > endDate) return;
+      const temp = CLIMATE_N(r.temperature ?? r.temp ?? r.AirTemperature ?? r.TEMP);
+      if (temp != null) { if (tMax == null || temp > tMax) tMax = temp; if (tMin == null || temp < tMin) tMin = temp; }
+      const rain = CLIMATE_N(r.rainfall ?? r.rain ?? r.precipitation ?? r.Precipitation ?? r.H_24R);
+      if (rain != null) rainByDay[day] = Math.max(rainByDay[day] || 0, rain);
+    });
+    const rainTotal = Object.values(rainByDay).reduce((s, v) => s + v, 0);
+    return { tMax, tMin, rainTotal: Math.round(rainTotal * 10) / 10 };
+  } catch (e) {
+    return { tMax: null, tMin: null, rainTotal: 0 };
+  }
+}
+function yieldPeriodsOfYear(year) {
+  const periods = [];
+  const todayStr = new Date().toISOString().slice(0, 10);
+  for (let m = 1; m <= 12; m++) {
+    const mm = String(m).padStart(2, "0");
+    const lastDay = new Date(year, m, 0).getDate();
+    const p1start = `${year}-${mm}-01`;
+    if (p1start > todayStr) break;
+    periods.push({ label: `${m}/1`, start: p1start, end: `${year}-${mm}-15` });
+    const p2start = `${year}-${mm}-16`;
+    if (p2start > todayStr) break;
+    periods.push({ label: `${m}/16`, start: p2start, end: `${year}-${mm}-${String(lastDay).padStart(2, "0")}` });
+  }
+  return periods;
+}
+async function fetchYieldZonesPeriodTotal(zones, startDate, endDate) {
+  const { db, authReady } = getYieldDb();
+  await authReady;
+  let sum = 0;
+  for (const zone of zones) {
+    if (startDate < YIELD_DB_ARCHIVE_CUTOFF) {
+      const archive = await loadYieldArchiveDoc(db, zone, startDate.slice(0, 4));
+      for (const dateStr of Object.keys(archive)) {
+        if (dateStr >= startDate && dateStr <= endDate) sum += sumYieldRecordKg(archive[dateStr]);
+      }
+    } else {
+      const days = [];
+      let d = new Date(startDate + "T00:00:00");
+      const endD = new Date(endDate + "T00:00:00");
+      while (d <= endD) { days.push(d.toISOString().slice(0, 10)); d.setDate(d.getDate() + 1); }
+      const recs = await Promise.all(days.map((ds) => loadYieldDayDoc(db, zone, ds)));
+      recs.forEach((r) => { sum += sumYieldRecordKg(r); });
+    }
+  }
+  return Math.round(sum * 10) / 10;
+}
 
 function ClimateYieldReport({ onBack }) {
-  const [mode, setMode] = useState("year"); // "year" | "month"
+  const [mode, setMode] = useState("year"); // "year" | "month" | "period"
   const [zoneSel, setZoneSel] = useState("全場");
   const [year, setYear] = useState(new Date().getFullYear());
+  const [showLabels, setShowLabels] = useState(true);
   const [loading, setLoading] = useState(false);
   const [progress, setProgress] = useState("");
   const [error, setError] = useState("");
-  const [yearData, setYearData] = useState(null); // { years, rain[], tMax[], tMin[], yield[] }
-  const [monthData, setMonthData] = useState(null); // { months(1-12), rain[], tMax[], tMin[], yield[] }
+  const [yearData, setYearData] = useState(null);
+  const [monthData, setMonthData] = useState(null);
+  const [periodData, setPeriodData] = useState(null); // { periods:[{label}], rain[], tMax[], tMin[], yield[] }
   const startYear = 2020;
   const nowYear = new Date().getFullYear();
   const zoneOptions = ["全場", ...YIELD_DB_ZONES];
@@ -7830,52 +7896,92 @@ function ClimateYieldReport({ onBack }) {
     setLoading(false); setProgress("");
   };
 
-  useEffect(() => { if (mode === "year") runYear(); else runMonth(); }, [mode, zoneSel, year]);
+  const runPeriod = async () => {
+    setLoading(true); setError(""); setPeriodData(null);
+    try {
+      const periods = yieldPeriodsOfYear(year);
+      const rain = [], tMax = [], tMin = [], yieldArr = [];
+      for (let i = 0; i < periods.length; i++) {
+        setProgress(`${i + 1}/${periods.length}`);
+        const p = periods[i];
+        const [climate, yieldTotal] = await Promise.all([
+          fetchClimatePeriodAgg(p.start, p.end),
+          fetchYieldZonesPeriodTotal(zonesForFetch, p.start, p.end),
+        ]);
+        rain.push(climate.rainTotal); tMax.push(climate.tMax); tMin.push(climate.tMin); yieldArr.push(yieldTotal);
+      }
+      setPeriodData({ periods, rain, tMax, tMin, yield: yieldArr });
+    } catch (e) { setError("讀取失敗：" + (e.message || e)); }
+    setLoading(false); setProgress("");
+  };
 
-  const data = mode === "year" ? yearData : monthData;
-  const labels = data ? (mode === "year" ? data.years.map(String) : data.months.map((m) => `${m}月`)) : [];
+  useEffect(() => {
+    if (mode === "year") runYear();
+    else if (mode === "month") runMonth();
+    else runPeriod();
+  }, [mode, zoneSel, year]);
+
+  const data = mode === "year" ? yearData : mode === "month" ? monthData : periodData;
+  const labels = data
+    ? mode === "year" ? data.years.map(String)
+    : mode === "month" ? data.months.map((m) => `${m}月`)
+    : data.periods.map((p) => p.label)
+    : [];
   const n = labels.length;
 
-  // 三個獨立座標軸：左＝雨量(mm)，右內＝溫度(℃)，右外＝產能(kg)
-  const W = Math.max(700, n * 70), H = 360, padL = 56, padR = 100, padT = 24, padB = 46;
+  // 三個獨立座標軸：左＝雨量(mm，分段刻度應付極端降雨)，右內＝溫度(℃，固定5~40)，右外＝產能(kg)
+  const perPoint = mode === "period" ? 46 : 70;
+  const W = Math.max(700, n * perPoint), H = 380, padL = 56, padR = 100, padT = 24, padB = 46;
   const plotW = W - padL - padR;
-  const rainMax = data ? Math.max(10, ...data.rain.filter((v) => v != null)) : 10;
-  const tempVals = data ? [...data.tMax, ...data.tMin].filter((v) => v != null) : [];
-  const tMaxAxis = tempVals.length ? Math.max(...tempVals) + 3 : 35;
-  const tMinAxis = tempVals.length ? Math.min(...tempVals) - 3 : 0;
-  const yieldMax = data ? Math.max(10, ...data.yield.filter((v) => v != null)) : 10;
+  const plotH = H - padT - padB;
   const xOf = (i) => padL + (n <= 1 ? plotW / 2 : (i / (n - 1)) * plotW);
-  const barW = Math.min(28, plotW / Math.max(1, n) * 0.5);
-  const yRain = (v) => padT + (1 - v / rainMax) * (H - padT - padB);
-  const yTemp = (v) => padT + (1 - (v - tMinAxis) / (tMaxAxis - tMinAxis || 1)) * (H - padT - padB);
-  const yYield = (v) => padT + (1 - v / yieldMax) * (H - padT - padB);
+  const barW = Math.min(26, plotW / Math.max(1, n) * 0.5);
 
+  // 雨量分段刻度：0~300沿用底部75%高度、300~1000壓縮進剩下25%高度，因應極端降雨仍能顯示不爆版。
+  const RAIN_BREAK = 300, RAIN_CAP = 1000, RAIN_BREAK_FRAC = 0.75;
+  const rainFrac = (v) => {
+    const cv = Math.min(v, RAIN_CAP);
+    return cv <= RAIN_BREAK ? (cv / RAIN_BREAK) * RAIN_BREAK_FRAC
+      : RAIN_BREAK_FRAC + ((cv - RAIN_BREAK) / (RAIN_CAP - RAIN_BREAK)) * (1 - RAIN_BREAK_FRAC);
+  };
+  const yRain = (v) => padT + (1 - rainFrac(v)) * plotH;
+  // 溫度固定5~40度，跨模式、跨查詢刻度一致，方便比較。
+  const TEMP_MIN = 5, TEMP_MAX = 40;
+  const yTemp = (v) => padT + (1 - (v - TEMP_MIN) / (TEMP_MAX - TEMP_MIN)) * plotH;
+  const yieldMax = data ? Math.max(10, ...data.yield.filter((v) => v != null)) : 10;
+  const yYield = (v) => padT + (1 - v / yieldMax) * plotH;
+
+  const fmtN = (v, d = 0) => v == null ? "" : Number(v).toFixed(d);
   const bars = data ? data.rain.map((v, i) => v == null ? null :
-    React.createElement("rect", { key: i, x: xOf(i) - barW / 2, y: yRain(v), width: barW, height: (H - padB) - yRain(v), fill: `${C.brandBlue}55`, rx: 2 })
+    React.createElement("g", { key: i },
+      React.createElement("rect", { x: xOf(i) - barW / 2, y: yRain(v), width: barW, height: (H - padB) - yRain(v), fill: `${C.brandBlue}55`, rx: 2 }),
+      showLabels && v > 0 && React.createElement("text", { x: xOf(i), y: yRain(v) - 4, fontSize: 8.5, fill: C.brandBlue, textAnchor: "middle", fontFamily: "IBM Plex Mono, monospace" }, fmtN(v))
+    )
   ) : null;
   const lineOf = (arr, yfn, color) => {
     const pts = arr.map((v, i) => (v == null ? null : `${xOf(i).toFixed(1)},${yfn(v).toFixed(1)}`)).filter(Boolean).join(" ");
-    const dots = arr.map((v, i) => v == null ? null : React.createElement("circle", { key: i, cx: xOf(i), cy: yfn(v), r: 2.6, fill: color }));
+    const dots = arr.map((v, i) => v == null ? null : React.createElement("g", { key: i },
+      React.createElement("circle", { cx: xOf(i), cy: yfn(v), r: 2.6, fill: color }),
+      showLabels && React.createElement("text", { x: xOf(i), y: yfn(v) - 6, fontSize: 8.5, fill: color, textAnchor: "middle", fontFamily: "IBM Plex Mono, monospace" }, fmtN(v))
+    ));
     return React.createElement(React.Fragment, null,
       React.createElement("polyline", { points: pts, fill: "none", stroke: color, strokeWidth: 2 }), dots);
   };
-  const rainAxisTicks = data ? [0, 0.5, 1].map((f) => {
-    const val = rainMax * f;
-    return React.createElement("text", { key: f, x: padL - 8, y: yRain(val) + 3, fontSize: 9.5, fill: C.brandBlue, textAnchor: "end", fontFamily: "IBM Plex Mono, monospace" }, val.toFixed(0));
-  }) : null;
-  const tempAxisTicks = data ? [0, 0.5, 1].map((f) => {
-    const val = tMinAxis + (tMaxAxis - tMinAxis) * f;
-    return React.createElement("text", { key: f, x: W - padR + 8, y: yTemp(val) + 3, fontSize: 9.5, fill: C.coral, textAnchor: "start", fontFamily: "IBM Plex Mono, monospace" }, val.toFixed(0) + "℃");
-  }) : null;
-  const yieldAxisTicks = data ? [0, 0.5, 1].map((f) => {
+  const rainAxisTicks = [0, 100, 200, 300, 500, 1000].map((val) => (
+    React.createElement("text", { key: val, x: padL - 8, y: yRain(val) + 3, fontSize: 9, fill: C.brandBlue, textAnchor: "end", fontFamily: "IBM Plex Mono, monospace" }, val)
+  ));
+  const rainAxisGrid = [0, 100, 200, 300, 500, 1000].map((val) => (
+    React.createElement("line", { key: val, x1: padL, y1: yRain(val), x2: W - padR, y2: yRain(val), stroke: val === RAIN_BREAK ? C.brandBlue : C.line, strokeDasharray: val === RAIN_BREAK ? "4,3" : undefined, strokeWidth: 1 })
+  ));
+  const tempAxisTicks = [5, 20, 40].map((val) => (
+    React.createElement("text", { key: val, x: W - padR + 8, y: yTemp(val) + 3, fontSize: 9, fill: C.coral, textAnchor: "start", fontFamily: "IBM Plex Mono, monospace" }, val + "℃")
+  ));
+  const yieldAxisTicks = [0, 0.5, 1].map((f) => {
     const val = yieldMax * f;
-    return React.createElement("text", { key: f, x: W - padR + 46, y: yYield(val) + 3, fontSize: 9.5, fill: C.tableColor, textAnchor: "start", fontFamily: "IBM Plex Mono, monospace" }, val.toFixed(0));
-  }) : null;
-  const xTicks = data ? labels.map((lab, i) => (
-    React.createElement("text", { key: i, x: xOf(i), y: H - padB + 16, fontSize: 10, fill: C.inkSoft, textAnchor: "middle", fontFamily: "Inter" }, lab)
-  )) : null;
-  const gridY = [0, 0.25, 0.5, 0.75, 1].map((f) => (
-    React.createElement("line", { key: f, x1: padL, y1: padT + f * (H - padT - padB), x2: W - padR, y2: padT + f * (H - padT - padB), stroke: C.line, strokeWidth: 1 })
+    return React.createElement("text", { key: f, x: W - padR + 46, y: yYield(val) + 3, fontSize: 9, fill: C.tableColor, textAnchor: "start", fontFamily: "IBM Plex Mono, monospace" }, val.toFixed(0));
+  });
+  const xTicks = labels.map((lab, i) => (
+    React.createElement("text", { key: i, x: xOf(i), y: H - padB + 16, fontSize: mode === "period" ? 8.5 : 10, fill: C.inkSoft, textAnchor: "middle", fontFamily: "Inter" }, lab)
   ));
 
   return React.createElement("div", { className: "min-h-screen flex flex-col", style: { background: C.cream } },
@@ -7887,9 +7993,10 @@ function ClimateYieldReport({ onBack }) {
     React.createElement("div", { className: "p-4" },
       React.createElement("div", { className: "flex gap-2 mb-3" },
         React.createElement("button", { onClick: () => setMode("year"), className: "px-3 py-1.5 rounded-lg text-sm", style: mode === "year" ? { background: C.wine, color: "white", fontWeight: 700 } : { background: "white", color: C.ink, border: `1px solid ${C.line}` } }, "看年"),
-        React.createElement("button", { onClick: () => setMode("month"), className: "px-3 py-1.5 rounded-lg text-sm", style: mode === "month" ? { background: C.wine, color: "white", fontWeight: 700 } : { background: "white", color: C.ink, border: `1px solid ${C.line}` } }, "看月")
+        React.createElement("button", { onClick: () => setMode("month"), className: "px-3 py-1.5 rounded-lg text-sm", style: mode === "month" ? { background: C.wine, color: "white", fontWeight: 700 } : { background: "white", color: C.ink, border: `1px solid ${C.line}` } }, "看月"),
+        React.createElement("button", { onClick: () => setMode("period"), className: "px-3 py-1.5 rounded-lg text-sm", style: mode === "period" ? { background: C.wine, color: "white", fontWeight: 700 } : { background: "white", color: C.ink, border: `1px solid ${C.line}` } }, "看15天")
       ),
-      mode === "month" && React.createElement("div", { className: "flex gap-2 mb-3 items-center" },
+      (mode === "month" || mode === "period") && React.createElement("div", { className: "flex gap-2 mb-3 items-center" },
         React.createElement("span", { className: "text-xs", style: { color: C.inkSoft } }, "年度"),
         React.createElement("select", { value: year, onChange: (e) => setYear(Number(e.target.value)), className: "px-2 py-1.5 rounded-lg text-sm", style: { border: `1px solid ${C.line}` } },
           ...Array.from({ length: nowYear - startYear + 1 }, (_, i) => startYear + i).map((y) => React.createElement("option", { key: y, value: y }, `${y}年`)))
@@ -7901,17 +8008,21 @@ function ClimateYieldReport({ onBack }) {
           style: zoneSel === z ? { background: C.tableColor, color: "white", fontWeight: 700 } : { background: "white", color: C.ink, border: `1px solid ${C.line}` },
         }, z))
       ),
+      React.createElement("label", { className: "flex items-center gap-2 text-xs mb-3", style: { color: C.inkSoft, cursor: "pointer" } },
+        React.createElement("input", { type: "checkbox", checked: showLabels, onChange: (e) => setShowLabels(e.target.checked) }),
+        "顯示數值標籤"
+      ),
       loading && React.createElement("p", { className: "text-sm", style: { color: C.inkSoft } }, `讀取中…${progress ? `（${progress}）` : ""}`),
       error && React.createElement("p", { className: "text-sm", style: { color: C.alert } }, error),
       data && React.createElement("div", { className: "mt-2" },
         React.createElement("div", { className: "flex gap-4 flex-wrap text-xs mb-2", style: { fontFamily: "Inter" } },
-          React.createElement("span", null, React.createElement("span", { style: { display: "inline-block", width: 10, height: 10, background: `${C.brandBlue}55`, marginRight: 4 } }), "雨量(mm)｜左軸"),
-          React.createElement("span", null, React.createElement("span", { style: { display: "inline-block", width: 10, height: 2, background: C.coral, marginRight: 4 } }), "最高/最低溫(℃)｜右內軸"),
+          React.createElement("span", null, React.createElement("span", { style: { display: "inline-block", width: 10, height: 10, background: `${C.brandBlue}55`, marginRight: 4 } }), "雨量(mm)｜左軸・0~300正常刻度，300~1000壓縮顯示"),
+          React.createElement("span", null, React.createElement("span", { style: { display: "inline-block", width: 10, height: 2, background: C.coral, marginRight: 4 } }), "最高/最低溫(℃)｜右內軸・固定5~40℃"),
           React.createElement("span", null, React.createElement("span", { style: { display: "inline-block", width: 10, height: 2, background: C.tableColor, marginRight: 4 } }), `產能(kg)・${zoneSel}｜右外軸`)
         ),
         React.createElement("div", { style: { overflowX: "auto", maxWidth: "100%" } },
           React.createElement("svg", { viewBox: `0 0 ${W} ${H}`, style: { width: W, height: H, display: "block" } },
-            gridY, bars, rainAxisTicks, tempAxisTicks, yieldAxisTicks, xTicks,
+            rainAxisGrid, bars, rainAxisTicks, tempAxisTicks, yieldAxisTicks, xTicks,
             lineOf(data.tMax, yTemp, C.coral),
             lineOf(data.tMin, yTemp, C.coralSoft),
             lineOf(data.yield, yYield, C.tableColor)
