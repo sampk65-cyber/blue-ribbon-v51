@@ -717,7 +717,7 @@ const C = {
   tiffanyLight: "#B8ECE5",
   tiffanyText: "#2E8577",
 };
-const APP_VERSION = 'V5.1.C81';
+const APP_VERSION = 'V5.1.C82';
 const FONT_LINK = "https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,600;9..144,700&family=Inter:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap";
 
 const WORK_ITEMS = [
@@ -7554,11 +7554,20 @@ function getYieldDb() {
   }
   return { db: _yieldDbApp.firestore(), authReady: _yieldDbAuthPromise };
 }
+// C82/V5.024：加上快取——看15天/看週時，同一個(分區,年度)的封存文件會被很多個
+// 區間重複用到（例如一整年52週共用同一份年度封存），不快取的話會對同一份文件重複讀取幾十次。
+const _yieldArchiveCache = new Map();
 async function loadYieldArchiveDoc(db, zone, year) {
-  const id = `${YIELD_DB_PREFIX}priv__yieldArchive:${zone}:${year}`;
-  const snap = await db.collection(YIELD_DB_COLLECTION).doc(id).get();
-  if (!snap.exists) return {};
-  try { return JSON.parse(snap.data().value) || {}; } catch (e) { return {}; }
+  const cacheKey = `${zone}:${year}`;
+  if (_yieldArchiveCache.has(cacheKey)) return _yieldArchiveCache.get(cacheKey);
+  const promise = (async () => {
+    const id = `${YIELD_DB_PREFIX}priv__yieldArchive:${zone}:${year}`;
+    const snap = await db.collection(YIELD_DB_COLLECTION).doc(id).get();
+    if (!snap.exists) return {};
+    try { return JSON.parse(snap.data().value) || {}; } catch (e) { return {}; }
+  })();
+  _yieldArchiveCache.set(cacheKey, promise);
+  return promise;
 }
 async function loadYieldDayDoc(db, zone, dateStr) {
   const id = `${YIELD_DB_PREFIX}priv__yield:${zone}:${dateStr}`;
@@ -8070,24 +8079,33 @@ function zwDayFromStamp(stamp) {
   if (!y || !m || !d) return null;
   return `${y}-${String(m).padStart(2, "0")}-${String(d).padStart(2, "0")}`;
 }
+// C82/V5.024：模組層級快取——同一個(分區,年月)只真的打一次 Firestore，之後不管是
+// 切分區、算單一分區顯示值、還是算跨分區的座標軸上限，都共用同一份結果，不用重複讀取。
+const _zoneworkMonthCache = new Map();
 async function fetchZoneworkConfirmedByDay(zoneName, ym) {
   const zoneId = ZONEWORK_ID_BY_NAME[zoneName] || zoneName;
-  const out = {};
-  try {
-    const res = await window.storage.get(`zonework:${zoneId}:${ym}`, true);
-    if (!res) return out;
-    const zdata = JSON.parse(res.value);
-    (zdata.confirmHistory || []).forEach((h) => {
-      if (!h || !h.rowKey) return;
-      const qty = parseFloat(h.qty);
-      if (isNaN(qty) || qty <= 0) return;
-      const dateStr = zwDayFromStamp(h.at);
-      if (!dateStr) return;
-      if (!out[dateStr]) out[dateStr] = {};
-      out[dateStr][h.rowKey] = (out[dateStr][h.rowKey] || 0) + qty;
-    });
-  } catch (e) { /* 讀不到就當這個月沒有資料 */ }
-  return out;
+  const cacheKey = `${zoneId}:${ym}`;
+  if (_zoneworkMonthCache.has(cacheKey)) return _zoneworkMonthCache.get(cacheKey);
+  const promise = (async () => {
+    const out = {};
+    try {
+      const res = await window.storage.get(`zonework:${zoneId}:${ym}`, true);
+      if (!res) return out;
+      const zdata = JSON.parse(res.value);
+      (zdata.confirmHistory || []).forEach((h) => {
+        if (!h || !h.rowKey) return;
+        const qty = parseFloat(h.qty);
+        if (isNaN(qty) || qty <= 0) return;
+        const dateStr = zwDayFromStamp(h.at);
+        if (!dateStr) return;
+        if (!out[dateStr]) out[dateStr] = {};
+        out[dateStr][h.rowKey] = (out[dateStr][h.rowKey] || 0) + qty;
+      });
+    } catch (e) { /* 讀不到就當這個月沒有資料 */ }
+    return out;
+  })();
+  _zoneworkMonthCache.set(cacheKey, promise);
+  return promise;
 }
 function zwSumKeys(bucket, keys) {
   let total = 0;
@@ -8095,7 +8113,9 @@ function zwSumKeys(bucket, keys) {
   return total;
 }
 // 任意日期區間(startDate~endDate，同一年內)的資材加總——年/月/15天/週共用同一支函式，
-// 差別只在傳進來的日期範圍，涵蓋到的月份各自的 zonework 文件只讀一次。
+// 差別只在傳進來的日期範圍，涵蓋到的月份各自的 zonework 文件只讀一次（且跨呼叫共用快取）。
+// 液體肥回傳逐項資材明細(liquidByMaterial)而不是先加總好的單一數字，讓呼叫端可以自行
+// 決定要看哪幾項資材的加總（拆開看／複選加總都用同一份資料，不用重新查詢）。
 async function fetchZoneworkRange(zoneName, startDate, endDate) {
   const months = [];
   let d = new Date(startDate + "T00:00:00");
@@ -8105,7 +8125,9 @@ async function fetchZoneworkRange(zoneName, startDate, endDate) {
     if (!months.includes(ym)) months.push(ym);
     d.setDate(d.getDate() + 1);
   }
-  let tons = 0, minutes = 0, solid = 0, liquid = 0;
+  let tons = 0, minutes = 0, solid = 0;
+  const liquidByMaterial = {};
+  LIQUID_KEYS.forEach((k) => { liquidByMaterial[k] = 0; });
   for (const ym of months) {
     const byDay = await fetchZoneworkConfirmedByDay(zoneName, ym);
     for (const dateStr of Object.keys(byDay)) {
@@ -8114,10 +8136,11 @@ async function fetchZoneworkRange(zoneName, startDate, endDate) {
       tons += zwSumKeys(bucket, WATER_TONS_KEYS);
       minutes += zwSumKeys(bucket, WATER_MIN_KEYS);
       solid += zwSumKeys(bucket, SOLID_KEYS);
-      liquid += zwSumKeys(bucket, LIQUID_KEYS);
+      LIQUID_KEYS.forEach((k) => { liquidByMaterial[k] += Number(bucket[k]) || 0; });
     }
   }
-  return { tons: Math.round(tons * 10) / 10, minutes: Math.round(minutes * 10) / 10, solid: Math.round(solid * 10) / 10, liquid: Math.round(liquid * 10) / 10 };
+  Object.keys(liquidByMaterial).forEach((k) => { liquidByMaterial[k] = Math.round(liquidByMaterial[k] * 10) / 10; });
+  return { tons: Math.round(tons * 10) / 10, minutes: Math.round(minutes * 10) / 10, solid: Math.round(solid * 10) / 10, liquidByMaterial };
 }
 function weekPeriodsOfYear(year) {
   const periods = [];
@@ -8151,10 +8174,11 @@ function ZoneMaterialYieldReport({ onBack }) {
   const [zone, setZone] = useState(YIELD_DB_ZONES[0]);
   const [year, setYear] = useState(new Date().getFullYear());
   const [showLabels, setShowLabels] = useState(true);
+  const [selectedMaterials, setSelectedMaterials] = useState(() => [...LIQUID_KEYS]); // 液體肥可複選資材
   const [loading, setLoading] = useState(false);
   const [progress, setProgress] = useState("");
   const [error, setError] = useState("");
-  const [data, setData] = useState(null); // { labels[], tons[], minutes[], solid[], liquid[], yield[] }
+  const [data, setData] = useState(null); // { labels[], perZone: { [zoneName]: {tons[],minutes[],solid[],liquid[],yield[]} } }
   const startYear = 2020;
   const nowYear = new Date().getFullYear();
   const todayStr = new Date().toISOString().slice(0, 10);
@@ -8185,26 +8209,41 @@ function ZoneMaterialYieldReport({ onBack }) {
     setLoading(true); setError(""); setData(null);
     try {
       const periods = periodsForMode();
-      const labels = [], tons = [], minutes = [], solid = [], liquid = [], yieldArr = [];
+      const labels = [];
+      const perZone = {};
+      YIELD_DB_ZONES.forEach((z) => { perZone[z] = { tons: [], minutes: [], solid: [], liquid: [], yield: [] }; });
       for (let i = 0; i < periods.length; i++) {
         const p = periods[i];
-        if (!p) { labels.push(""); tons.push(null); minutes.push(null); solid.push(null); liquid.push(null); yieldArr.push(null); continue; }
+        if (!p) {
+          labels.push("");
+          YIELD_DB_ZONES.forEach((z) => { perZone[z].tons.push(null); perZone[z].minutes.push(null); perZone[z].solid.push(null); perZone[z].liquid.push(null); perZone[z].yield.push(null); });
+          continue;
+        }
         setProgress(`${i + 1}/${periods.length}`);
-        const [zw, y] = await Promise.all([
-          fetchZoneworkRange(zone, p.start, p.end),
-          fetchYieldZonesPeriodTotal([zone], p.start, p.end),
-        ]);
         labels.push(p.label);
-        tons.push(zw.tons); minutes.push(zw.minutes); solid.push(zw.solid); liquid.push(zw.liquid);
-        yieldArr.push(y);
+        // 同一個時間點，一次把六個分區都抓齊——這樣切換分區時軸的上限才能保持一致
+        // （上限是「所有分區裡的最大值」，不是只看目前選到的那一區，才能真的互相比較）。
+        const results = await Promise.all(YIELD_DB_ZONES.map(async (z) => {
+          const [zw, y] = await Promise.all([
+            fetchZoneworkRange(z, p.start, p.end),
+            fetchYieldZonesPeriodTotal([z], p.start, p.end),
+          ]);
+          const liquidSum = Math.round(selectedMaterials.reduce((s, k) => s + (zw.liquidByMaterial[k] || 0), 0) * 10) / 10;
+          return { z, tons: zw.tons, minutes: zw.minutes, solid: zw.solid, liquid: liquidSum, yield: y };
+        }));
+        results.forEach((r) => {
+          perZone[r.z].tons.push(r.tons); perZone[r.z].minutes.push(r.minutes);
+          perZone[r.z].solid.push(r.solid); perZone[r.z].liquid.push(r.liquid); perZone[r.z].yield.push(r.yield);
+        });
       }
-      setData({ labels, tons, minutes, solid, liquid, yield: yieldArr });
+      setData({ labels, perZone });
     } catch (e) { setError("讀取失敗：" + (e.message || e)); }
     setLoading(false); setProgress("");
   };
 
-  useEffect(() => { run(); }, [mode, zone, year]);
+  useEffect(() => { run(); }, [mode, year, selectedMaterials]);
 
+  const zoneData = data ? data.perZone[zone] : null;
   const labels = data ? data.labels : [];
   const n = labels.length;
   const perPoint = (mode === "period" || mode === "week") ? 44 : 70;
@@ -8213,12 +8252,19 @@ function ZoneMaterialYieldReport({ onBack }) {
   const xOf = (i) => padL + (n <= 1 ? plotW / 2 : (i / (n - 1)) * plotW);
   const barW = Math.min(26, (plotW / Math.max(1, n)) * 0.42);
 
-  const maxOf = (arr) => data ? Math.max(10, ...arr.filter((v) => v != null)) : 10;
-  const tonsMax = data ? maxOf(data.tons) : 10;
-  const minutesMax = data ? maxOf(data.minutes) : 10;
-  const solidMax = data ? maxOf(data.solid) : 10;
-  const liquidMax = data ? maxOf(data.liquid) : 10;
-  const yieldMax = data ? maxOf(data.yield) : 10;
+  // 座標軸上限固定用「所有分區裡的最大值」，不是目前顯示分區自己的最大值——
+  // 這樣同一個時間模式下，不管切到哪個分區，軸的高度都一樣，才能真的用「同一把尺」比較。
+  const maxAcrossZones = (key) => {
+    if (!data) return 10;
+    let m = 10;
+    YIELD_DB_ZONES.forEach((z) => { (data.perZone[z][key] || []).forEach((v) => { if (v != null && v > m) m = v; }); });
+    return m;
+  };
+  const tonsMax = maxAcrossZones("tons");
+  const minutesMax = maxAcrossZones("minutes");
+  const solidMax = maxAcrossZones("solid");
+  const liquidMax = maxAcrossZones("liquid");
+  const yieldMax = maxAcrossZones("yield");
   const yOfMax = (max) => (v) => padT + (1 - v / max) * plotH;
   const yTons = yOfMax(tonsMax), yMinutes = yOfMax(minutesMax), ySolid = yOfMax(solidMax), yLiquid = yOfMax(liquidMax), yYield = yOfMax(yieldMax);
 
@@ -8258,19 +8304,20 @@ function ZoneMaterialYieldReport({ onBack }) {
       React.createElement("span", { key: "m" }, React.createElement("span", { style: { display: "inline-block", width: 10, height: 10, background: `${C.leaf}66`, marginRight: 4 } }), "噴灌(分鐘)｜右內軸"),
     ];
     paramChart = React.createElement(React.Fragment, null,
-      barsOf(data && data.tons, yTons, `${C.brandBlue}66`, 0),
-      barsOf(data && data.minutes, yMinutes, `${C.leaf}66`, barW)
+      barsOf(zoneData && zoneData.tons, yTons, `${C.brandBlue}66`, 0),
+      barsOf(zoneData && zoneData.minutes, yMinutes, `${C.leaf}66`, barW)
     );
     paramAxisTicksLeft = axisTicksLeft(tonsMax, C.brandBlue, "噸");
     paramAxisTicksRight2 = axisTicksRight(minutesMax, C.leaf, W - padR + 52, "分");
   } else if (param === "solid") {
     paramLegend = [React.createElement("span", { key: "s" }, React.createElement("span", { style: { display: "inline-block", width: 10, height: 10, background: `${C.coral}66`, marginRight: 4 } }), "固體肥(包)｜左軸")];
-    paramChart = barsOf(data && data.solid, ySolid, `${C.coral}66`, barW / 2);
+    paramChart = barsOf(zoneData && zoneData.solid, ySolid, `${C.coral}66`, barW / 2);
     paramAxisTicksLeft = axisTicksLeft(solidMax, C.coral, "包");
     paramAxisTicksRight2 = null;
   } else {
-    paramLegend = [React.createElement("span", { key: "l" }, React.createElement("span", { style: { display: "inline-block", width: 10, height: 10, background: `${C.leafSoft}88`, marginRight: 4 } }), "液體肥(kg)｜左軸")];
-    paramChart = barsOf(data && data.liquid, yLiquid, `${C.leafSoft}88`, barW / 2);
+    const matLabel = selectedMaterials.length === LIQUID_KEYS.length ? "全部資材" : selectedMaterials.join("+") || "未選擇資材";
+    paramLegend = [React.createElement("span", { key: "l" }, React.createElement("span", { style: { display: "inline-block", width: 10, height: 10, background: `${C.leafSoft}88`, marginRight: 4 } }), `液體肥(kg)・${matLabel}｜左軸`)];
+    paramChart = barsOf(zoneData && zoneData.liquid, yLiquid, `${C.leafSoft}88`, barW / 2);
     paramAxisTicksLeft = axisTicksLeft(liquidMax, C.leafSoft, "kg");
     paramAxisTicksRight2 = null;
   }
@@ -8281,7 +8328,8 @@ function ZoneMaterialYieldReport({ onBack }) {
     React.createElement("div", { className: "px-4 py-3", style: { borderBottom: `1px solid ${C.line}` } },
       React.createElement("div", { style: { fontFamily: "Inter", fontWeight: 700, fontSize: 17, color: C.ink } }, "表八・分區資材投入與產能對比"),
       React.createElement("div", { className: "text-xs mt-1", style: { color: C.inkSoft, fontFamily: "Inter" } }, `${startYear}年~${nowYear}年（純讀取，不寫入資料）；各分區狀況不同，僅能單選一區查看，不提供全場加總`),
-      React.createElement("div", { className: "text-xs mt-1", style: { color: C.inkSoft, fontFamily: "Inter" } }, "依「回報確認」的實際日期(跟表三同一份紀錄)計算，只有已回報確認過的數量才算數")
+      React.createElement("div", { className: "text-xs mt-1", style: { color: C.inkSoft, fontFamily: "Inter" } }, "依「回報確認」的實際日期(跟表三同一份紀錄)計算，只有已回報確認過的數量才算數"),
+      React.createElement("div", { className: "text-xs mt-1", style: { color: C.inkSoft, fontFamily: "Inter" } }, "座標軸高度固定取六個分區裡的最大值，切換分區時軸不會跟著縮放，方便互相比較")
     ),
     React.createElement("div", { className: "p-4" },
       React.createElement("div", { className: "text-xs mb-2", style: { color: C.inkSoft } }, "查看參數"),
@@ -8290,6 +8338,22 @@ function ZoneMaterialYieldReport({ onBack }) {
           key: p, onClick: () => setParam(p), className: "px-3 py-1.5 rounded-lg text-sm",
           style: param === p ? { background: C.wine, color: "white", fontWeight: 700 } : { background: "white", color: C.ink, border: `1px solid ${C.line}` },
         }, `${YIELD_PARAM_DEFS[p].label}（${YIELD_PARAM_DEFS[p].unitLabel}）`))
+      ),
+      param === "liquid" && React.createElement("div", { className: "mb-3" },
+        React.createElement("div", { className: "text-xs mb-1.5", style: { color: C.inkSoft } }, "液體肥資材（可複選加總，取消勾選＝拆開排除）"),
+        React.createElement("div", { className: "flex gap-2 flex-wrap" },
+          ...LIQUID_KEYS.map((k) => {
+            const checked = selectedMaterials.includes(k);
+            return React.createElement("button", {
+              key: k,
+              onClick: () => setSelectedMaterials((prev) => checked ? prev.filter((x) => x !== k) : [...prev, k]),
+              className: "px-2.5 py-1 rounded-full text-xs",
+              style: checked ? { background: C.leafSoft, color: "white", fontWeight: 700 } : { background: "white", color: C.inkSoft, border: `1px solid ${C.line}` },
+            }, k);
+          }),
+          React.createElement("button", { onClick: () => setSelectedMaterials([...LIQUID_KEYS]), className: "px-2.5 py-1 rounded-full text-xs", style: { background: C.cream, color: C.inkSoft, border: `1px solid ${C.line}` } }, "全選"),
+          React.createElement("button", { onClick: () => setSelectedMaterials([]), className: "px-2.5 py-1 rounded-full text-xs", style: { background: C.cream, color: C.inkSoft, border: `1px solid ${C.line}` } }, "清空")
+        )
       ),
       React.createElement("div", { className: "flex gap-2 mb-3 flex-wrap" },
         React.createElement("button", { onClick: () => setMode("year"), className: "px-3 py-1.5 rounded-lg text-sm", style: mode === "year" ? { background: C.wine, color: "white", fontWeight: 700 } : { background: "white", color: C.ink, border: `1px solid ${C.line}` } }, "看年"),
@@ -8324,7 +8388,7 @@ function ZoneMaterialYieldReport({ onBack }) {
           React.createElement("svg", { viewBox: `0 0 ${W} ${H}`, style: { width: W, height: H, display: "block" } },
             gridY, paramChart, paramAxisTicksLeft, paramAxisTicksRight2,
             axisTicksRight(yieldMax, C.tableColor, yieldAxisX, "kg"), xTicks,
-            lineOf(data.yield, yYield, C.tableColor)
+            lineOf(zoneData && zoneData.yield, yYield, C.tableColor)
           )
         )
       )
