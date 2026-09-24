@@ -717,7 +717,7 @@ const C = {
   tiffanyLight: "#B8ECE5",
   tiffanyText: "#2E8577",
 };
-const APP_VERSION = 'V5.1.C72';
+const APP_VERSION = 'V5.1.C73';
 const FONT_LINK = "https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,600;9..144,700&family=Inter:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap";
 
 const WORK_ITEMS = [
@@ -7519,6 +7519,187 @@ function LoginAuditReport({ year, month, onBack }) {
   );
 }
 
+/* =========================================================
+   表七：長週期產能趨勢（2020~現在，每15天一筆，橫跨多年連續呈現）
+   C73/V5.017 新增。
+   這裡的產能資料實際存在另一個 Firebase 專案（figdata-d2737，跟功能3「產能」
+   模組是同一個資料庫），跟本檔案主要使用的 figapi-d24dc 不是同一個專案。
+   因為只是讀取、不寫入，用具名的第二個 Firebase App 實例連過去即可，不影響
+   本檔案原本對 figapi-d24dc 的連線與任何寫入邏輯。
+   ========================================================= */
+const YIELD_DB_CONFIG = {
+  apiKey: "AIzaSyBoHlZFS3fuhuS6MjYH8cPE3djbA--lJLY",
+  authDomain: "figdata-d2737.firebaseapp.com",
+  projectId: "figdata-d2737",
+  storageBucket: "figdata-d2737.firebasestorage.app",
+  messagingSenderId: "46163670891",
+  appId: "1:46163670891:web:c496942014d47ea19c7e2e",
+};
+const YIELD_DB_COLLECTION = "fbrfA_data";
+const YIELD_DB_PREFIX = "fbrfA_";
+const YIELD_DB_ARCHIVE_CUTOFF = "2026-08-01";
+const YIELD_DB_ZONES = ["一期", "二期", "三期", "四南", "四北", "五期"];
+let _yieldDbApp = null, _yieldDbAuthPromise = null;
+function getYieldDb() {
+  if (!_yieldDbApp) {
+    _yieldDbApp = firebase.apps.find((a) => a.name === "yielddata") || firebase.initializeApp(YIELD_DB_CONFIG, "yielddata");
+  }
+  if (!_yieldDbAuthPromise) {
+    _yieldDbAuthPromise = new Promise((resolve) => {
+      const auth = _yieldDbApp.auth();
+      auth.onAuthStateChanged((user) => { if (user) resolve(); });
+      auth.signInAnonymously().catch((e) => { console.error("[yielddata auth]", e); resolve(); });
+      setTimeout(resolve, 6000);
+    });
+  }
+  return { db: _yieldDbApp.firestore(), authReady: _yieldDbAuthPromise };
+}
+async function loadYieldArchiveDoc(db, zone, year) {
+  const id = `${YIELD_DB_PREFIX}shared__yieldArchive:${zone}:${year}`;
+  const snap = await db.collection(YIELD_DB_COLLECTION).doc(id).get();
+  if (!snap.exists) return {};
+  try { return JSON.parse(snap.data().value) || {}; } catch (e) { return {}; }
+}
+async function loadYieldDayDoc(db, zone, dateStr) {
+  const id = `${YIELD_DB_PREFIX}shared__yield:${zone}:${dateStr}`;
+  const snap = await db.collection(YIELD_DB_COLLECTION).doc(id).get();
+  if (!snap.exists) return null;
+  try { return JSON.parse(snap.data().value); } catch (e) { return null; }
+}
+function sumYieldRecordKg(rec) {
+  if (!rec) return 0;
+  let total = 0;
+  for (const q of ["A", "B", "D", "NG"]) {
+    (rec[q] || []).forEach((e) => { total += Number(e && e.net) || 0; });
+  }
+  return Math.round(total * 100) / 100;
+}
+function yieldPeriodsAcrossYears(startYear, endYear) {
+  const periods = [];
+  const todayStr = new Date().toISOString().slice(0, 10);
+  for (let year = startYear; year <= endYear; year++) {
+    for (let m = 1; m <= 12; m++) {
+      const mm = String(m).padStart(2, "0");
+      const lastDay = new Date(year, m, 0).getDate();
+      const p1start = `${year}-${mm}-01`;
+      if (p1start > todayStr) break;
+      periods.push({ label: `${year}/${m}/1`, start: p1start, end: `${year}-${mm}-15` });
+      const p2start = `${year}-${mm}-16`;
+      if (p2start > todayStr) break;
+      periods.push({ label: `${year}/${m}/16`, start: p2start, end: `${year}-${mm}-${String(lastDay).padStart(2, "0")}` });
+    }
+  }
+  return periods;
+}
+async function fetchYieldLongTermSeries(zone, startYear, endYear, onProgress) {
+  const { db, authReady } = getYieldDb();
+  await authReady;
+  const periods = yieldPeriodsAcrossYears(startYear, endYear);
+  const archiveCache = {};
+  const values = [];
+  let done = 0;
+  for (const p of periods) {
+    let sum = 0;
+    if (p.start < YIELD_DB_ARCHIVE_CUTOFF) {
+      const cacheKey = p.start.slice(0, 4);
+      if (!(cacheKey in archiveCache)) archiveCache[cacheKey] = await loadYieldArchiveDoc(db, zone, cacheKey);
+      const archive = archiveCache[cacheKey];
+      for (const dateStr of Object.keys(archive)) {
+        if (dateStr >= p.start && dateStr <= p.end) sum += sumYieldRecordKg(archive[dateStr]);
+      }
+    } else {
+      const tasks = [];
+      let d = new Date(p.start + "T00:00:00");
+      const endD = new Date(p.end + "T00:00:00");
+      while (d <= endD) { tasks.push(d.toISOString().slice(0, 10)); d.setDate(d.getDate() + 1); }
+      const recs = await Promise.all(tasks.map((ds) => loadYieldDayDoc(db, zone, ds)));
+      recs.forEach((rec) => { sum += sumYieldRecordKg(rec); });
+    }
+    values.push(Math.round(sum * 10) / 10);
+    done++;
+    if (onProgress) onProgress(done, periods.length);
+  }
+  return { periods, values };
+}
+
+function YieldLongTermReport({ onBack }) {
+  const [zone, setZone] = useState("一期");
+  const [loading, setLoading] = useState(false);
+  const [progress, setProgress] = useState("");
+  const [result, setResult] = useState(null);
+  const [error, setError] = useState("");
+  const startYear = 2020;
+  const endYear = new Date().getFullYear();
+
+  const run = async () => {
+    setLoading(true); setError(""); setResult(null); setProgress("");
+    try {
+      const r = await fetchYieldLongTermSeries(zone, startYear, endYear, (d, t) => setProgress(`${d}/${t}`));
+      setResult(r);
+    } catch (e) {
+      setError("讀取失敗：" + (e.message || e));
+    }
+    setLoading(false);
+  };
+
+  const maxVal = result ? Math.max(10, ...result.values) : 10;
+  const n = result ? result.periods.length : 0;
+  const W = Math.max(900, n * 26), H = 340, padL = 48, padR = 16, padT = 20, padB = 60;
+  const xOf = (i) => padL + (n <= 1 ? 0 : (i / (n - 1)) * (W - padL - padR));
+  const yOf = (v) => padT + (1 - v / maxVal) * (H - padT - padB);
+  const gridLines = result ? [0, 0.25, 0.5, 0.75, 1].map((f) => {
+    const val = maxVal * f;
+    return React.createElement("g", { key: f },
+      React.createElement("line", { x1: padL, y1: yOf(val), x2: W - padR, y2: yOf(val), stroke: C.line, strokeWidth: 1 }),
+      React.createElement("text", { x: padL - 6, y: yOf(val) + 3, fontSize: 10, fill: C.inkSoft, textAnchor: "end", fontFamily: "IBM Plex Mono, monospace" }, val.toFixed(0))
+    );
+  }) : null;
+  const xTicks = result ? result.periods.map((p, i) => (
+    i % 2 === 0 ? React.createElement("text", {
+      key: i, x: xOf(i), y: H - padB + 14, fontSize: 8.5, fill: C.inkSoft, textAnchor: "end",
+      fontFamily: "IBM Plex Mono, monospace", transform: `rotate(-45 ${xOf(i)} ${H - padB + 14})`,
+    }, p.label) : null
+  )) : null;
+  const linePoints = result ? result.values.map((v, i) => `${xOf(i).toFixed(1)},${yOf(v).toFixed(1)}`).join(" ") : "";
+  const dots = result ? result.values.map((v, i) => (
+    React.createElement("circle", { key: i, cx: xOf(i), cy: yOf(v), r: 2.2, fill: C.tableColor })
+  )) : null;
+
+  return React.createElement("div", { className: "min-h-screen flex flex-col", style: { background: C.cream } },
+    React.createElement(NavBar, { backLabel: "耗材與報表", onBack }),
+    React.createElement("div", { className: "px-4 py-3", style: { borderBottom: `1px solid ${C.line}` } },
+      React.createElement("div", { style: { fontFamily: "Inter", fontWeight: 700, fontSize: 17, color: C.ink } }, "表七・長週期產能趨勢"),
+      React.createElement("div", { className: "text-xs mt-1", style: { color: C.inkSoft, fontFamily: "Inter" } }, `${startYear}年~${endYear}年，每15天一筆，橫跨多年連續呈現（純讀取，不寫入資料）`)
+    ),
+    React.createElement("div", { className: "p-4" },
+      React.createElement("div", { className: "text-xs mb-2", style: { color: C.inkSoft, fontFamily: "Inter" } }, "選擇分區"),
+      React.createElement("div", { className: "flex gap-2 flex-wrap mb-4" },
+        ...YIELD_DB_ZONES.map((z) => React.createElement("button", {
+          key: z, onClick: () => setZone(z),
+          className: "px-3 py-1.5 rounded-full text-sm",
+          style: zone === z
+            ? { background: C.wine, color: "white", fontFamily: "Inter", fontWeight: 700 }
+            : { background: "white", color: C.ink, border: `1px solid ${C.line}`, fontFamily: "Inter" },
+        }, z))
+      ),
+      React.createElement("button", {
+        onClick: run, disabled: loading,
+        className: "px-4 py-2 rounded-lg text-sm",
+        style: { background: C.tableColor, color: "white", fontFamily: "Inter", fontWeight: 700, opacity: loading ? 0.6 : 1 },
+      }, loading ? `讀取中…${progress ? `（${progress}）` : ""}` : "查詢"),
+      error && React.createElement("p", { className: "text-sm mt-3", style: { color: C.alert } }, error),
+      result && React.createElement("div", { className: "mt-4" },
+        React.createElement("p", { className: "text-sm mb-2", style: { color: C.wine, fontFamily: "Inter", fontWeight: 600 } }, `${zone}・${startYear}~${endYear}年 每15天產能趨勢（單位：kg）`),
+        React.createElement("div", { style: { overflowX: "auto", maxWidth: "100%" } },
+          React.createElement("svg", { viewBox: `0 0 ${W} ${H}`, style: { width: W, height: H, display: "block" } },
+            gridLines, React.createElement("polyline", { points: linePoints, fill: "none", stroke: C.tableColor, strokeWidth: 2 }), dots, xTicks
+          )
+        )
+      )
+    )
+  );
+}
+
 const REPORT_SLOTS = [
   { no: "一", label: "耗材匯總表", key: "materials", ready: true },
   { no: "二", label: "年度計畫表", key: "annual", ready: true },
@@ -7526,7 +7707,7 @@ const REPORT_SLOTS = [
   { no: "四", label: "留言版內容", key: "noticeBoard", ready: true },
   { no: "五", label: "氣候資料", key: "climateData", ready: true },
   { no: "六", label: "施肥用量統計", key: "fertilizerUsage", ready: true },
-  { no: "七", label: "尚未設計", key: null, ready: false },
+  { no: "七", label: "長週期產能趨勢", key: "yieldLongTerm", ready: true },
   { no: "八", label: "尚未設計", key: null, ready: false },
   { no: "九", label: "尚未設計", key: null, ready: false },
   { no: "十", label: "登入 IP 與時間", key: "loginAudit", ready: true },
@@ -7561,6 +7742,9 @@ function ReportsHub({ onBack, loggedInId, calendarRole, shortcutKey = null }) {
   }
   if (openKey === "loginAudit") {
     return React.createElement(LoginAuditReport, { year: yearSel, month: monthSel, onBack: () => setOpenKey(null),} );
+  }
+  if (openKey === "yieldLongTerm") {
+    return React.createElement(YieldLongTermReport, { onBack: () => shortcutKey ? onBack() : setOpenKey(null),} );
   }
 
   return (
