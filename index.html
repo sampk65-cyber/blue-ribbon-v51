@@ -717,7 +717,7 @@ const C = {
   tiffanyLight: "#B8ECE5",
   tiffanyText: "#2E8577",
 };
-const APP_VERSION = 'V5.1.C74';
+const APP_VERSION = 'V5.1.C76';
 const FONT_LINK = "https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,600;9..144,700&family=Inter:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap";
 
 const WORK_ITEMS = [
@@ -7631,16 +7631,19 @@ function YieldLongTermReport({ onBack }) {
   const startYear = 2020;
   const endYear = new Date().getFullYear();
 
-  const run = async () => {
+  const run = async (targetZone) => {
     setLoading(true); setError(""); setResult(null); setProgress("");
     try {
-      const r = await fetchYieldLongTermSeries(zone, startYear, endYear, (d, t) => setProgress(`${d}/${t}`));
+      const r = await fetchYieldLongTermSeries(targetZone, startYear, endYear, (d, t) => setProgress(`${d}/${t}`));
       setResult(r);
     } catch (e) {
       setError("讀取失敗：" + (e.message || e));
     }
     setLoading(false);
   };
+
+  // C75/V5.018：進頁面、或切換分區時自動載入資料，不用先按查詢鈕才看得到圖。
+  useEffect(() => { run(zone); }, [zone]);
 
   const maxVal = result ? Math.max(10, ...result.values) : 10;
   const n = result ? result.periods.length : 0;
@@ -7684,16 +7687,234 @@ function YieldLongTermReport({ onBack }) {
         }, z))
       ),
       React.createElement("button", {
-        onClick: run, disabled: loading,
+        onClick: () => run(zone), disabled: loading,
         className: "px-4 py-2 rounded-lg text-sm",
         style: { background: C.tableColor, color: "white", fontFamily: "Inter", fontWeight: 700, opacity: loading ? 0.6 : 1 },
-      }, loading ? `讀取中…${progress ? `（${progress}）` : ""}` : "查詢"),
+      }, loading ? `讀取中…${progress ? `（${progress}）` : ""}` : "重新查詢"),
       error && React.createElement("p", { className: "text-sm mt-3", style: { color: C.alert } }, error),
       result && React.createElement("div", { className: "mt-4" },
         React.createElement("p", { className: "text-sm mb-2", style: { color: C.wine, fontFamily: "Inter", fontWeight: 600 } }, `${zone}・${startYear}~${endYear}年 每15天產能趨勢（單位：kg）`),
         React.createElement("div", { style: { overflowX: "auto", maxWidth: "100%" } },
           React.createElement("svg", { viewBox: `0 0 ${W} ${H}`, style: { width: W, height: H, display: "block" } },
             gridLines, React.createElement("polyline", { points: linePoints, fill: "none", stroke: C.tableColor, strokeWidth: 2 }), dots, xTicks
+          )
+        )
+      )
+    )
+  );
+}
+
+/* =========================================================
+   表九：氣候變遷與產能（2020~現在，長週期，看年／看月）
+   C76/V5.019 新增。純讀取：氣候資料走本檔案原本的 window.storage（figapi-d24dc），
+   產能資料沿用表七已經接好的第二個 Firebase App（figdata-d2737），完全不寫入。
+   ========================================================= */
+const CLIMATE_N = (v) => { if (v === null || v === undefined || v === "") return null; const x = Number(v); return Number.isFinite(x) && x > -90 ? x : null; };
+async function fetchClimateMonthAgg(year, month) {
+  const ym = `${year}-${String(month).padStart(2, "0")}`;
+  try {
+    await window.firebaseReady;
+    const listRes = await window.storage.list(`environment:outdoor:hour:${ym}`);
+    const keys = (listRes && listRes.keys) || [];
+    if (!keys.length) return { tMax: null, tMin: null, rainTotal: 0 };
+    const recs = await runWithLimit(keys, 6, async (k) => {
+      try { const res = await window.storage.get(k); return res ? JSON.parse(res.value) : null; } catch (e) { return null; }
+    });
+    let tMax = null, tMin = null;
+    const rainByDay = {};
+    recs.filter(Boolean).forEach((r) => {
+      const temp = CLIMATE_N(r.temperature ?? r.temp ?? r.AirTemperature ?? r.TEMP);
+      if (temp != null) { if (tMax == null || temp > tMax) tMax = temp; if (tMin == null || temp < tMin) tMin = temp; }
+      const rain = CLIMATE_N(r.rainfall ?? r.rain ?? r.precipitation ?? r.Precipitation ?? r.H_24R);
+      const day = String(r.hourKey || r.observedAt || "").slice(0, 10);
+      // 跟表五同一套邏輯：H_24R本身是24小時累積雨量，當天取最大值，不逐小時相加避免重複計算。
+      if (rain != null && day) rainByDay[day] = Math.max(rainByDay[day] || 0, rain);
+    });
+    const rainTotal = Object.values(rainByDay).reduce((s, v) => s + v, 0);
+    return { tMax, tMin, rainTotal: Math.round(rainTotal * 10) / 10 };
+  } catch (e) {
+    return { tMax: null, tMin: null, rainTotal: 0 };
+  }
+}
+async function fetchClimateYearAgg(year) {
+  const now = new Date();
+  const maxMonth = year === now.getFullYear() ? now.getMonth() + 1 : 12;
+  let tMax = null, tMin = null, rainTotal = 0;
+  for (let m = 1; m <= maxMonth; m++) {
+    const agg = await fetchClimateMonthAgg(year, m);
+    if (agg.tMax != null) tMax = tMax == null ? agg.tMax : Math.max(tMax, agg.tMax);
+    if (agg.tMin != null) tMin = tMin == null ? agg.tMin : Math.min(tMin, agg.tMin);
+    rainTotal += agg.rainTotal || 0;
+  }
+  return { tMax, tMin, rainTotal: Math.round(rainTotal * 10) / 10 };
+}
+async function fetchYieldYearMonthlyBreakdown(zone, year) {
+  const { db, authReady } = getYieldDb();
+  await authReady;
+  const nowStr = new Date().toISOString().slice(0, 10);
+  const monthTotals = new Array(12).fill(0);
+  if (`${year}-01-01` < YIELD_DB_ARCHIVE_CUTOFF) {
+    const archive = await loadYieldArchiveDoc(db, zone, year);
+    for (const dateStr of Object.keys(archive)) {
+      if (dateStr > nowStr) continue;
+      const m = Number(dateStr.slice(5, 7));
+      if (m >= 1 && m <= 12) monthTotals[m - 1] += sumYieldRecordKg(archive[dateStr]);
+    }
+  }
+  if (`${year}-12-31` >= YIELD_DB_ARCHIVE_CUTOFF) {
+    let d = new Date(Math.max(new Date(`${year}-01-01T00:00:00`), new Date(YIELD_DB_ARCHIVE_CUTOFF + "T00:00:00")));
+    const endD = new Date(Math.min(new Date(`${year}-12-31T00:00:00`), new Date(nowStr + "T00:00:00")));
+    const days = [];
+    while (d <= endD) { days.push(d.toISOString().slice(0, 10)); d.setDate(d.getDate() + 1); }
+    const recs = await Promise.all(days.map((ds) => loadYieldDayDoc(db, zone, ds)));
+    days.forEach((ds, i) => { const m = Number(ds.slice(5, 7)); monthTotals[m - 1] += sumYieldRecordKg(recs[i]); });
+  }
+  return monthTotals.map((v) => Math.round(v * 10) / 10);
+}
+async function fetchYieldZonesYearMonthlyBreakdown(zones, year) {
+  const perZone = await Promise.all(zones.map((z) => fetchYieldYearMonthlyBreakdown(z, year)));
+  const combined = new Array(12).fill(0);
+  perZone.forEach((arr) => arr.forEach((v, i) => { combined[i] += v; }));
+  return combined.map((v) => Math.round(v * 10) / 10);
+}
+
+function ClimateYieldReport({ onBack }) {
+  const [mode, setMode] = useState("year"); // "year" | "month"
+  const [zoneSel, setZoneSel] = useState("全場");
+  const [year, setYear] = useState(new Date().getFullYear());
+  const [loading, setLoading] = useState(false);
+  const [progress, setProgress] = useState("");
+  const [error, setError] = useState("");
+  const [yearData, setYearData] = useState(null); // { years, rain[], tMax[], tMin[], yield[] }
+  const [monthData, setMonthData] = useState(null); // { months(1-12), rain[], tMax[], tMin[], yield[] }
+  const startYear = 2020;
+  const nowYear = new Date().getFullYear();
+  const zoneOptions = ["全場", ...YIELD_DB_ZONES];
+  const zonesForFetch = zoneSel === "全場" ? YIELD_DB_ZONES : [zoneSel];
+
+  const runYear = async () => {
+    setLoading(true); setError(""); setYearData(null);
+    try {
+      const years = [];
+      for (let y = startYear; y <= nowYear; y++) years.push(y);
+      const rain = [], tMax = [], tMin = [], yieldArr = [];
+      for (let i = 0; i < years.length; i++) {
+        setProgress(`${i + 1}/${years.length}`);
+        const [climate, yieldMonths] = await Promise.all([
+          fetchClimateYearAgg(years[i]),
+          fetchYieldZonesYearMonthlyBreakdown(zonesForFetch, years[i]),
+        ]);
+        rain.push(climate.rainTotal); tMax.push(climate.tMax); tMin.push(climate.tMin);
+        yieldArr.push(Math.round(yieldMonths.reduce((s, v) => s + v, 0) * 10) / 10);
+      }
+      setYearData({ years, rain, tMax, tMin, yield: yieldArr });
+    } catch (e) { setError("讀取失敗：" + (e.message || e)); }
+    setLoading(false); setProgress("");
+  };
+
+  const runMonth = async () => {
+    setLoading(true); setError(""); setMonthData(null);
+    try {
+      const months = Array.from({ length: 12 }, (_, i) => i + 1);
+      const nowM = year === nowYear ? new Date().getMonth() + 1 : 12;
+      const rain = [], tMax = [], tMin = [];
+      const yieldArr = await fetchYieldZonesYearMonthlyBreakdown(zonesForFetch, year);
+      for (let m = 1; m <= 12; m++) {
+        if (m > nowM) { rain.push(null); tMax.push(null); tMin.push(null); continue; }
+        setProgress(`${m}/${nowM}`);
+        const agg = await fetchClimateMonthAgg(year, m);
+        rain.push(agg.rainTotal); tMax.push(agg.tMax); tMin.push(agg.tMin);
+      }
+      setMonthData({ months, rain, tMax, tMin, yield: yieldArr });
+    } catch (e) { setError("讀取失敗：" + (e.message || e)); }
+    setLoading(false); setProgress("");
+  };
+
+  useEffect(() => { if (mode === "year") runYear(); else runMonth(); }, [mode, zoneSel, year]);
+
+  const data = mode === "year" ? yearData : monthData;
+  const labels = data ? (mode === "year" ? data.years.map(String) : data.months.map((m) => `${m}月`)) : [];
+  const n = labels.length;
+
+  // 三個獨立座標軸：左＝雨量(mm)，右內＝溫度(℃)，右外＝產能(kg)
+  const W = Math.max(700, n * 70), H = 360, padL = 56, padR = 100, padT = 24, padB = 46;
+  const plotW = W - padL - padR;
+  const rainMax = data ? Math.max(10, ...data.rain.filter((v) => v != null)) : 10;
+  const tempVals = data ? [...data.tMax, ...data.tMin].filter((v) => v != null) : [];
+  const tMaxAxis = tempVals.length ? Math.max(...tempVals) + 3 : 35;
+  const tMinAxis = tempVals.length ? Math.min(...tempVals) - 3 : 0;
+  const yieldMax = data ? Math.max(10, ...data.yield.filter((v) => v != null)) : 10;
+  const xOf = (i) => padL + (n <= 1 ? plotW / 2 : (i / (n - 1)) * plotW);
+  const barW = Math.min(28, plotW / Math.max(1, n) * 0.5);
+  const yRain = (v) => padT + (1 - v / rainMax) * (H - padT - padB);
+  const yTemp = (v) => padT + (1 - (v - tMinAxis) / (tMaxAxis - tMinAxis || 1)) * (H - padT - padB);
+  const yYield = (v) => padT + (1 - v / yieldMax) * (H - padT - padB);
+
+  const bars = data ? data.rain.map((v, i) => v == null ? null :
+    React.createElement("rect", { key: i, x: xOf(i) - barW / 2, y: yRain(v), width: barW, height: (H - padB) - yRain(v), fill: `${C.brandBlue}55`, rx: 2 })
+  ) : null;
+  const lineOf = (arr, yfn, color) => {
+    const pts = arr.map((v, i) => (v == null ? null : `${xOf(i).toFixed(1)},${yfn(v).toFixed(1)}`)).filter(Boolean).join(" ");
+    const dots = arr.map((v, i) => v == null ? null : React.createElement("circle", { key: i, cx: xOf(i), cy: yfn(v), r: 2.6, fill: color }));
+    return React.createElement(React.Fragment, null,
+      React.createElement("polyline", { points: pts, fill: "none", stroke: color, strokeWidth: 2 }), dots);
+  };
+  const rainAxisTicks = data ? [0, 0.5, 1].map((f) => {
+    const val = rainMax * f;
+    return React.createElement("text", { key: f, x: padL - 8, y: yRain(val) + 3, fontSize: 9.5, fill: C.brandBlue, textAnchor: "end", fontFamily: "IBM Plex Mono, monospace" }, val.toFixed(0));
+  }) : null;
+  const tempAxisTicks = data ? [0, 0.5, 1].map((f) => {
+    const val = tMinAxis + (tMaxAxis - tMinAxis) * f;
+    return React.createElement("text", { key: f, x: W - padR + 8, y: yTemp(val) + 3, fontSize: 9.5, fill: C.coral, textAnchor: "start", fontFamily: "IBM Plex Mono, monospace" }, val.toFixed(0) + "℃");
+  }) : null;
+  const yieldAxisTicks = data ? [0, 0.5, 1].map((f) => {
+    const val = yieldMax * f;
+    return React.createElement("text", { key: f, x: W - padR + 46, y: yYield(val) + 3, fontSize: 9.5, fill: C.tableColor, textAnchor: "start", fontFamily: "IBM Plex Mono, monospace" }, val.toFixed(0));
+  }) : null;
+  const xTicks = data ? labels.map((lab, i) => (
+    React.createElement("text", { key: i, x: xOf(i), y: H - padB + 16, fontSize: 10, fill: C.inkSoft, textAnchor: "middle", fontFamily: "Inter" }, lab)
+  )) : null;
+  const gridY = [0, 0.25, 0.5, 0.75, 1].map((f) => (
+    React.createElement("line", { key: f, x1: padL, y1: padT + f * (H - padT - padB), x2: W - padR, y2: padT + f * (H - padT - padB), stroke: C.line, strokeWidth: 1 })
+  ));
+
+  return React.createElement("div", { className: "min-h-screen flex flex-col", style: { background: C.cream } },
+    React.createElement(NavBar, { backLabel: "耗材與報表", onBack }),
+    React.createElement("div", { className: "px-4 py-3", style: { borderBottom: `1px solid ${C.line}` } },
+      React.createElement("div", { style: { fontFamily: "Inter", fontWeight: 700, fontSize: 17, color: C.ink } }, "表九・氣候變遷與產能"),
+      React.createElement("div", { className: "text-xs mt-1", style: { color: C.inkSoft, fontFamily: "Inter" } }, `${startYear}年~${nowYear}年（純讀取，不寫入資料）；氣候資料自2026年9月起才有紀錄，之前年月雨量/溫度會是空白`)
+    ),
+    React.createElement("div", { className: "p-4" },
+      React.createElement("div", { className: "flex gap-2 mb-3" },
+        React.createElement("button", { onClick: () => setMode("year"), className: "px-3 py-1.5 rounded-lg text-sm", style: mode === "year" ? { background: C.wine, color: "white", fontWeight: 700 } : { background: "white", color: C.ink, border: `1px solid ${C.line}` } }, "看年"),
+        React.createElement("button", { onClick: () => setMode("month"), className: "px-3 py-1.5 rounded-lg text-sm", style: mode === "month" ? { background: C.wine, color: "white", fontWeight: 700 } : { background: "white", color: C.ink, border: `1px solid ${C.line}` } }, "看月")
+      ),
+      mode === "month" && React.createElement("div", { className: "flex gap-2 mb-3 items-center" },
+        React.createElement("span", { className: "text-xs", style: { color: C.inkSoft } }, "年度"),
+        React.createElement("select", { value: year, onChange: (e) => setYear(Number(e.target.value)), className: "px-2 py-1.5 rounded-lg text-sm", style: { border: `1px solid ${C.line}` } },
+          ...Array.from({ length: nowYear - startYear + 1 }, (_, i) => startYear + i).map((y) => React.createElement("option", { key: y, value: y }, `${y}年`)))
+      ),
+      React.createElement("div", { className: "text-xs mb-2", style: { color: C.inkSoft } }, "分區（產能）"),
+      React.createElement("div", { className: "flex gap-2 flex-wrap mb-3" },
+        ...zoneOptions.map((z) => React.createElement("button", {
+          key: z, onClick: () => setZoneSel(z), className: "px-3 py-1.5 rounded-full text-sm",
+          style: zoneSel === z ? { background: C.tableColor, color: "white", fontWeight: 700 } : { background: "white", color: C.ink, border: `1px solid ${C.line}` },
+        }, z))
+      ),
+      loading && React.createElement("p", { className: "text-sm", style: { color: C.inkSoft } }, `讀取中…${progress ? `（${progress}）` : ""}`),
+      error && React.createElement("p", { className: "text-sm", style: { color: C.alert } }, error),
+      data && React.createElement("div", { className: "mt-2" },
+        React.createElement("div", { className: "flex gap-4 flex-wrap text-xs mb-2", style: { fontFamily: "Inter" } },
+          React.createElement("span", null, React.createElement("span", { style: { display: "inline-block", width: 10, height: 10, background: `${C.brandBlue}55`, marginRight: 4 } }), "雨量(mm)｜左軸"),
+          React.createElement("span", null, React.createElement("span", { style: { display: "inline-block", width: 10, height: 2, background: C.coral, marginRight: 4 } }), "最高/最低溫(℃)｜右內軸"),
+          React.createElement("span", null, React.createElement("span", { style: { display: "inline-block", width: 10, height: 2, background: C.tableColor, marginRight: 4 } }), `產能(kg)・${zoneSel}｜右外軸`)
+        ),
+        React.createElement("div", { style: { overflowX: "auto", maxWidth: "100%" } },
+          React.createElement("svg", { viewBox: `0 0 ${W} ${H}`, style: { width: W, height: H, display: "block" } },
+            gridY, bars, rainAxisTicks, tempAxisTicks, yieldAxisTicks, xTicks,
+            lineOf(data.tMax, yTemp, C.coral),
+            lineOf(data.tMin, yTemp, C.coralSoft),
+            lineOf(data.yield, yYield, C.tableColor)
           )
         )
       )
@@ -7710,7 +7931,7 @@ const REPORT_SLOTS = [
   { no: "六", label: "施肥用量統計", key: "fertilizerUsage", ready: true },
   { no: "七", label: "長週期產能趨勢", key: "yieldLongTerm", ready: true },
   { no: "八", label: "尚未設計", key: null, ready: false },
-  { no: "九", label: "尚未設計", key: null, ready: false },
+  { no: "九", label: "氣候變遷與產能", key: "climateYield", ready: true },
   { no: "十", label: "登入 IP 與時間", key: "loginAudit", ready: true },
 ];
 
@@ -7746,6 +7967,9 @@ function ReportsHub({ onBack, loggedInId, calendarRole, shortcutKey = null }) {
   }
   if (openKey === "yieldLongTerm") {
     return React.createElement(YieldLongTermReport, { onBack: () => shortcutKey ? onBack() : setOpenKey(null),} );
+  }
+  if (openKey === "climateYield") {
+    return React.createElement(ClimateYieldReport, { onBack: () => shortcutKey ? onBack() : setOpenKey(null),} );
   }
 
   return (
