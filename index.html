@@ -717,7 +717,7 @@ const C = {
   tiffanyLight: "#B8ECE5",
   tiffanyText: "#2E8577",
 };
-const APP_VERSION = 'V5.1.C73';
+const APP_VERSION = 'V5.1.C74';
 const FONT_LINK = "https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,600;9..144,700&family=Inter:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap";
 
 const WORK_ITEMS = [
@@ -7555,13 +7555,13 @@ function getYieldDb() {
   return { db: _yieldDbApp.firestore(), authReady: _yieldDbAuthPromise };
 }
 async function loadYieldArchiveDoc(db, zone, year) {
-  const id = `${YIELD_DB_PREFIX}shared__yieldArchive:${zone}:${year}`;
+  const id = `${YIELD_DB_PREFIX}priv__yieldArchive:${zone}:${year}`;
   const snap = await db.collection(YIELD_DB_COLLECTION).doc(id).get();
   if (!snap.exists) return {};
   try { return JSON.parse(snap.data().value) || {}; } catch (e) { return {}; }
 }
 async function loadYieldDayDoc(db, zone, dateStr) {
-  const id = `${YIELD_DB_PREFIX}shared__yield:${zone}:${dateStr}`;
+  const id = `${YIELD_DB_PREFIX}priv__yield:${zone}:${dateStr}`;
   const snap = await db.collection(YIELD_DB_COLLECTION).doc(id).get();
   if (!snap.exists) return null;
   try { return JSON.parse(snap.data().value); } catch (e) { return null; }
@@ -7669,7 +7669,8 @@ function YieldLongTermReport({ onBack }) {
     React.createElement(NavBar, { backLabel: "耗材與報表", onBack }),
     React.createElement("div", { className: "px-4 py-3", style: { borderBottom: `1px solid ${C.line}` } },
       React.createElement("div", { style: { fontFamily: "Inter", fontWeight: 700, fontSize: 17, color: C.ink } }, "表七・長週期產能趨勢"),
-      React.createElement("div", { className: "text-xs mt-1", style: { color: C.inkSoft, fontFamily: "Inter" } }, `${startYear}年~${endYear}年，每15天一筆，橫跨多年連續呈現（純讀取，不寫入資料）`)
+      React.createElement("div", { className: "text-xs mt-1", style: { color: C.inkSoft, fontFamily: "Inter" } }, `${startYear}年~${endYear}年，每15天一筆，橫跨多年連續呈現（純讀取，不寫入資料）`),
+      React.createElement("div", { className: "text-xs mt-1", style: { color: C.tableColor, fontFamily: "Inter" } }, "📱 資料範圍長，建議將手機轉為橫式觀看，或用手指左右滑動圖表")
     ),
     React.createElement("div", { className: "p-4" },
       React.createElement("div", { className: "text-xs mb-2", style: { color: C.inkSoft, fontFamily: "Inter" } }, "選擇分區"),
