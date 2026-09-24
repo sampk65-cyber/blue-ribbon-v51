@@ -717,7 +717,7 @@ const C = {
   tiffanyLight: "#B8ECE5",
   tiffanyText: "#2E8577",
 };
-const APP_VERSION = 'V5.1.C77';
+const APP_VERSION = 'V5.1.C79';
 const FONT_LINK = "https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,600;9..144,700&family=Inter:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap";
 
 const WORK_ITEMS = [
@@ -8033,6 +8033,243 @@ function ClimateYieldReport({ onBack }) {
   );
 }
 
+/* =========================================================
+   表八：分區資材投入與產能對比（水分/固體肥/液體肥，各分區獨立查看）
+   C78/V5.021 新增。純讀取：zonework 資料跟本檔案主要的 window.storage 同一個
+   專案(figapi-d24dc)，不用像產能那樣跨專案；產能沿用表七/表九已接好的連線。
+
+   重要限制（已跟使用者說明）：zonework:{zone}:{ym} 是「每個分區每個月一份文件」，
+   6/7/8 的數值是該月的目前值，不是逐日/逐週的歷史紀錄——同一個月內如果重新指派/
+   修正過，舊數字會被新數字取代，沒有留存「這個月哪一天/哪一週用了多少」的紀錄。
+   所以看15天、看週在目前資料結構下無法提供真正的期間加總，這裡先只做看年／看月。
+   ========================================================= */
+// C79/V5.022 修正：zonework 用的是內部代號(p1/p2/zone3/south4/north4/zone5)，
+// 不是「一期/二期/三期/四南/四北/五期」這種顯示名稱（產能資料庫才是用顯示名稱）。
+// 兩套系統代號不同，查詢zonework前一定要先轉換，否則查到的key根本不存在。
+const ZONEWORK_ID_BY_NAME = { "一期": "p1", "二期": "p2", "三期": "zone3", "四南": "south4", "四北": "north4", "五期": "zone5" };
+async function loadZoneworkMonth(zoneName, ym) {
+  const zoneId = ZONEWORK_ID_BY_NAME[zoneName] || zoneName;
+  try {
+    const res = await window.storage.get(`zonework:${zoneId}:${ym}`, true);
+    return res ? JSON.parse(res.value) : null;
+  } catch (e) { return null; }
+}
+function zwWater(rec) {
+  const e6 = ((rec && rec.extra) || {})[6] || {};
+  return { tons: Number(e6.tons) || 0, minutes: Number(e6.minutes) || 0 };
+}
+function zwSolidFert(rec) {
+  const e7 = ((rec && rec.extra) || {})[7] || {};
+  const keys = Object.keys(e7).filter((k) => k !== "bags");
+  let total = 0;
+  if (keys.length) keys.forEach((k) => { total += Number(e7[k]) || 0; });
+  else if (e7.bags) total = Number(e7.bags) || 0;
+  return Math.round(total * 10) / 10;
+}
+function zwLiquidFert(rec) {
+  const e8 = (rec && rec.extra8) || {};
+  let total = 0;
+  Object.values(e8).forEach((v) => { total += Number(v) || 0; });
+  return Math.round(total * 10) / 10;
+}
+async function fetchZoneworkYearMonthly(zone, year) {
+  const months = Array.from({ length: 12 }, (_, i) => i + 1);
+  const nowY = new Date().getFullYear(), nowM = new Date().getMonth() + 1;
+  const maxM = year === nowY ? nowM : 12;
+  const tons = [], minutes = [], solid = [], liquid = [];
+  for (const m of months) {
+    if (m > maxM) { tons.push(null); minutes.push(null); solid.push(null); liquid.push(null); continue; }
+    const ym = `${year}-${String(m).padStart(2, "0")}`;
+    const rec = await loadZoneworkMonth(zone, ym);
+    const w = zwWater(rec);
+    tons.push(w.tons); minutes.push(w.minutes);
+    solid.push(zwSolidFert(rec));
+    liquid.push(zwLiquidFert(rec));
+  }
+  return { tons, minutes, solid, liquid };
+}
+
+const YIELD_PARAM_DEFS = {
+  water: { label: "水分", unitLabel: "溝灌(噸)／噴灌(分鐘)" },
+  solid: { label: "固體肥", unitLabel: "包" },
+  liquid: { label: "液體肥", unitLabel: "kg" },
+};
+
+function ZoneMaterialYieldReport({ onBack }) {
+  const [mode, setMode] = useState("year"); // "year" | "month"
+  const [param, setParam] = useState("water"); // "water" | "solid" | "liquid"
+  const [zone, setZone] = useState(YIELD_DB_ZONES[0]);
+  const [year, setYear] = useState(new Date().getFullYear());
+  const [showLabels, setShowLabels] = useState(true);
+  const [loading, setLoading] = useState(false);
+  const [progress, setProgress] = useState("");
+  const [error, setError] = useState("");
+  const [yearData, setYearData] = useState(null); // { years, tons/minutes/solid/liquid[], yield[] }
+  const [monthData, setMonthData] = useState(null); // { months, tons/minutes/solid/liquid[], yield[] }
+  const startYear = 2020;
+  const nowYear = new Date().getFullYear();
+
+  const runYear = async () => {
+    setLoading(true); setError(""); setYearData(null);
+    try {
+      const years = [];
+      for (let y = startYear; y <= nowYear; y++) years.push(y);
+      const tons = [], minutes = [], solid = [], liquid = [], yieldArr = [];
+      for (let i = 0; i < years.length; i++) {
+        setProgress(`${i + 1}/${years.length}`);
+        const [zw, yieldMonths] = await Promise.all([
+          fetchZoneworkYearMonthly(zone, years[i]),
+          fetchYieldYearMonthlyBreakdown(zone, years[i]),
+        ]);
+        const sum = (arr) => Math.round(arr.filter((v) => v != null).reduce((s, v) => s + v, 0) * 10) / 10;
+        tons.push(sum(zw.tons)); minutes.push(sum(zw.minutes)); solid.push(sum(zw.solid)); liquid.push(sum(zw.liquid));
+        yieldArr.push(sum(yieldMonths));
+      }
+      setYearData({ years, tons, minutes, solid, liquid, yield: yieldArr });
+    } catch (e) { setError("讀取失敗：" + (e.message || e)); }
+    setLoading(false); setProgress("");
+  };
+
+  const runMonth = async () => {
+    setLoading(true); setError(""); setMonthData(null);
+    try {
+      const [zw, yieldMonths] = await Promise.all([
+        fetchZoneworkYearMonthly(zone, year),
+        fetchYieldYearMonthlyBreakdown(zone, year),
+      ]);
+      setMonthData({ months: Array.from({ length: 12 }, (_, i) => i + 1), ...zw, yield: yieldMonths });
+    } catch (e) { setError("讀取失敗：" + (e.message || e)); }
+    setLoading(false); setProgress("");
+  };
+
+  useEffect(() => { if (mode === "year") runYear(); else runMonth(); }, [mode, zone, year]);
+
+  const data = mode === "year" ? yearData : monthData;
+  const labels = data ? (mode === "year" ? data.years.map(String) : data.months.map((m) => `${m}月`)) : [];
+  const n = labels.length;
+
+  const W = Math.max(700, n * 70), H = 380, padL = 60, padR = param === "water" ? 130 : 100, padT = 24, padB = 46;
+  const plotW = W - padL - padR, plotH = H - padT - padB;
+  const xOf = (i) => padL + (n <= 1 ? plotW / 2 : (i / (n - 1)) * plotW);
+  const barW = Math.min(26, (plotW / Math.max(1, n)) * 0.42);
+
+  const maxOf = (arr) => data ? Math.max(10, ...arr.filter((v) => v != null)) : 10;
+  const tonsMax = data ? maxOf(data.tons) : 10;
+  const minutesMax = data ? maxOf(data.minutes) : 10;
+  const solidMax = data ? maxOf(data.solid) : 10;
+  const liquidMax = data ? maxOf(data.liquid) : 10;
+  const yieldMax = data ? maxOf(data.yield) : 10;
+  const yOfMax = (max) => (v) => padT + (1 - v / max) * plotH;
+  const yTons = yOfMax(tonsMax), yMinutes = yOfMax(minutesMax), ySolid = yOfMax(solidMax), yLiquid = yOfMax(liquidMax), yYield = yOfMax(yieldMax);
+
+  const fmtN = (v, d = 1) => v == null ? "" : Number(v).toFixed(d);
+  const barsOf = (arr, yfn, color, offset) => arr ? arr.map((v, i) => v == null ? null :
+    React.createElement("g", { key: i },
+      React.createElement("rect", { x: xOf(i) - barW + offset, y: yfn(v), width: barW, height: (H - padB) - yfn(v), fill: color, rx: 2 }),
+      showLabels && v > 0 && React.createElement("text", { x: xOf(i) - barW / 2 + offset, y: yfn(v) - 4, fontSize: 8, fill: color, textAnchor: "middle", fontFamily: "IBM Plex Mono, monospace" }, fmtN(v))
+    )
+  ) : null;
+  const lineOf = (arr, yfn, color) => {
+    if (!arr) return null;
+    const pts = arr.map((v, i) => (v == null ? null : `${xOf(i).toFixed(1)},${yfn(v).toFixed(1)}`)).filter(Boolean).join(" ");
+    const dots = arr.map((v, i) => v == null ? null : React.createElement("g", { key: i },
+      React.createElement("circle", { cx: xOf(i), cy: yfn(v), r: 2.6, fill: color }),
+      showLabels && React.createElement("text", { x: xOf(i), y: yfn(v) - 6, fontSize: 8, fill: color, textAnchor: "middle", fontFamily: "IBM Plex Mono, monospace" }, fmtN(v))
+    ));
+    return React.createElement(React.Fragment, null, React.createElement("polyline", { points: pts, fill: "none", stroke: color, strokeWidth: 2 }), dots);
+  };
+  const axisTicksLeft = (max, color) => [0, 0.5, 1].map((f) => (
+    React.createElement("text", { key: f, x: padL - 8, y: yOfMax(max)(max * f) + 3, fontSize: 9, fill: color, textAnchor: "end", fontFamily: "IBM Plex Mono, monospace" }, (max * f).toFixed(1))
+  ));
+  const axisTicksRight = (max, color, x) => [0, 0.5, 1].map((f) => (
+    React.createElement("text", { key: f, x, y: yOfMax(max)(max * f) + 3, fontSize: 9, fill: color, textAnchor: "start", fontFamily: "IBM Plex Mono, monospace" }, (max * f).toFixed(1))
+  ));
+  const xTicks = labels.map((lab, i) => (
+    React.createElement("text", { key: i, x: xOf(i), y: H - padB + 16, fontSize: 10, fill: C.inkSoft, textAnchor: "middle", fontFamily: "Inter" }, lab)
+  ));
+  const gridY = [0, 0.25, 0.5, 0.75, 1].map((f) => (
+    React.createElement("line", { key: f, x1: padL, y1: padT + f * plotH, x2: W - padR, y2: padT + f * plotH, stroke: C.line, strokeWidth: 1 })
+  ));
+
+  let paramLegend, paramChart, paramAxisTicksLeft, paramAxisTicksRight2;
+  if (param === "water") {
+    paramLegend = [
+      React.createElement("span", { key: "t" }, React.createElement("span", { style: { display: "inline-block", width: 10, height: 10, background: `${C.brandBlue}66`, marginRight: 4 } }), "溝灌(噸)｜左軸"),
+      React.createElement("span", { key: "m" }, React.createElement("span", { style: { display: "inline-block", width: 10, height: 10, background: `${C.leaf}66`, marginRight: 4 } }), "噴灌(分鐘)｜右內軸"),
+    ];
+    paramChart = React.createElement(React.Fragment, null,
+      barsOf(data && data.tons, yTons, `${C.brandBlue}66`, 0),
+      barsOf(data && data.minutes, yMinutes, `${C.leaf}66`, barW)
+    );
+    paramAxisTicksLeft = axisTicksLeft(tonsMax, C.brandBlue);
+    paramAxisTicksRight2 = axisTicksRight(minutesMax, C.leaf, W - padR + 46);
+  } else if (param === "solid") {
+    paramLegend = [React.createElement("span", { key: "s" }, React.createElement("span", { style: { display: "inline-block", width: 10, height: 10, background: `${C.coral}66`, marginRight: 4 } }), "固體肥(包)｜左軸")];
+    paramChart = barsOf(data && data.solid, ySolid, `${C.coral}66`, barW / 2);
+    paramAxisTicksLeft = axisTicksLeft(solidMax, C.coral);
+    paramAxisTicksRight2 = null;
+  } else {
+    paramLegend = [React.createElement("span", { key: "l" }, React.createElement("span", { style: { display: "inline-block", width: 10, height: 10, background: `${C.leafSoft}88`, marginRight: 4 } }), "液體肥(kg)｜左軸")];
+    paramChart = barsOf(data && data.liquid, yLiquid, `${C.leafSoft}88`, barW / 2);
+    paramAxisTicksLeft = axisTicksLeft(liquidMax, C.leafSoft);
+    paramAxisTicksRight2 = null;
+  }
+  const yieldAxisX = param === "water" ? W - padR + 86 : W - padR + 46;
+
+  return React.createElement("div", { className: "min-h-screen flex flex-col", style: { background: C.cream } },
+    React.createElement(NavBar, { backLabel: "耗材與報表", onBack }),
+    React.createElement("div", { className: "px-4 py-3", style: { borderBottom: `1px solid ${C.line}` } },
+      React.createElement("div", { style: { fontFamily: "Inter", fontWeight: 700, fontSize: 17, color: C.ink } }, "表八・分區資材投入與產能對比"),
+      React.createElement("div", { className: "text-xs mt-1", style: { color: C.inkSoft, fontFamily: "Inter" } }, `${startYear}年~${nowYear}年（純讀取，不寫入資料）；各分區狀況不同，僅能單選一區查看，不提供全場加總`),
+      React.createElement("div", { className: "text-xs mt-1", style: { color: C.alert, fontFamily: "Inter" } }, "⚠ 資材資料是「每月一筆目前值」，不是逐日/逐週紀錄，所以目前只提供看年／看月，暫不支援看15天／看週")
+    ),
+    React.createElement("div", { className: "p-4" },
+      React.createElement("div", { className: "text-xs mb-2", style: { color: C.inkSoft } }, "查看參數"),
+      React.createElement("div", { className: "flex gap-2 mb-3" },
+        ...Object.keys(YIELD_PARAM_DEFS).map((p) => React.createElement("button", {
+          key: p, onClick: () => setParam(p), className: "px-3 py-1.5 rounded-lg text-sm",
+          style: param === p ? { background: C.wine, color: "white", fontWeight: 700 } : { background: "white", color: C.ink, border: `1px solid ${C.line}` },
+        }, `${YIELD_PARAM_DEFS[p].label}（${YIELD_PARAM_DEFS[p].unitLabel}）`))
+      ),
+      React.createElement("div", { className: "flex gap-2 mb-3" },
+        React.createElement("button", { onClick: () => setMode("year"), className: "px-3 py-1.5 rounded-lg text-sm", style: mode === "year" ? { background: C.wine, color: "white", fontWeight: 700 } : { background: "white", color: C.ink, border: `1px solid ${C.line}` } }, "看年"),
+        React.createElement("button", { onClick: () => setMode("month"), className: "px-3 py-1.5 rounded-lg text-sm", style: mode === "month" ? { background: C.wine, color: "white", fontWeight: 700 } : { background: "white", color: C.ink, border: `1px solid ${C.line}` } }, "看月")
+      ),
+      mode === "month" && React.createElement("div", { className: "flex gap-2 mb-3 items-center" },
+        React.createElement("span", { className: "text-xs", style: { color: C.inkSoft } }, "年度"),
+        React.createElement("select", { value: year, onChange: (e) => setYear(Number(e.target.value)), className: "px-2 py-1.5 rounded-lg text-sm", style: { border: `1px solid ${C.line}` } },
+          ...Array.from({ length: nowYear - startYear + 1 }, (_, i) => startYear + i).map((y) => React.createElement("option", { key: y, value: y }, `${y}年`)))
+      ),
+      React.createElement("div", { className: "text-xs mb-2", style: { color: C.inkSoft } }, "分區（單選）"),
+      React.createElement("div", { className: "flex gap-2 flex-wrap mb-3" },
+        ...YIELD_DB_ZONES.map((z) => React.createElement("button", {
+          key: z, onClick: () => setZone(z), className: "px-3 py-1.5 rounded-full text-sm",
+          style: zone === z ? { background: C.tableColor, color: "white", fontWeight: 700 } : { background: "white", color: C.ink, border: `1px solid ${C.line}` },
+        }, z))
+      ),
+      React.createElement("label", { className: "flex items-center gap-2 text-xs mb-3", style: { color: C.inkSoft, cursor: "pointer" } },
+        React.createElement("input", { type: "checkbox", checked: showLabels, onChange: (e) => setShowLabels(e.target.checked) }),
+        "顯示數值標籤"
+      ),
+      loading && React.createElement("p", { className: "text-sm", style: { color: C.inkSoft } }, `讀取中…${progress ? `（${progress}）` : ""}`),
+      error && React.createElement("p", { className: "text-sm", style: { color: C.alert } }, error),
+      data && React.createElement("div", { className: "mt-2" },
+        React.createElement("div", { className: "flex gap-4 flex-wrap text-xs mb-2", style: { fontFamily: "Inter" } },
+          ...paramLegend,
+          React.createElement("span", { key: "y" }, React.createElement("span", { style: { display: "inline-block", width: 10, height: 2, background: C.tableColor, marginRight: 4 } }), `產能(kg)・${zone}｜右外軸`)
+        ),
+        React.createElement("div", { style: { overflowX: "auto", maxWidth: "100%" } },
+          React.createElement("svg", { viewBox: `0 0 ${W} ${H}`, style: { width: W, height: H, display: "block" } },
+            gridY, paramChart, paramAxisTicksLeft, paramAxisTicksRight2,
+            axisTicksRight(yieldMax, C.tableColor, yieldAxisX), xTicks,
+            lineOf(data.yield, yYield, C.tableColor)
+          )
+        )
+      )
+    )
+  );
+}
+
 const REPORT_SLOTS = [
   { no: "一", label: "耗材匯總表", key: "materials", ready: true },
   { no: "二", label: "年度計畫表", key: "annual", ready: true },
@@ -8041,7 +8278,7 @@ const REPORT_SLOTS = [
   { no: "五", label: "氣候資料", key: "climateData", ready: true },
   { no: "六", label: "施肥用量統計", key: "fertilizerUsage", ready: true },
   { no: "七", label: "長週期產能趨勢", key: "yieldLongTerm", ready: true },
-  { no: "八", label: "尚未設計", key: null, ready: false },
+  { no: "八", label: "分區資材投入與產能對比", key: "zoneMaterialYield", ready: true },
   { no: "九", label: "氣候變遷與產能", key: "climateYield", ready: true },
   { no: "十", label: "登入 IP 與時間", key: "loginAudit", ready: true },
 ];
@@ -8081,6 +8318,9 @@ function ReportsHub({ onBack, loggedInId, calendarRole, shortcutKey = null }) {
   }
   if (openKey === "climateYield") {
     return React.createElement(ClimateYieldReport, { onBack: () => shortcutKey ? onBack() : setOpenKey(null),} );
+  }
+  if (openKey === "zoneMaterialYield") {
+    return React.createElement(ZoneMaterialYieldReport, { onBack: () => shortcutKey ? onBack() : setOpenKey(null),} );
   }
 
   return (
