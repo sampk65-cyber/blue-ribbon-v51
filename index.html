@@ -717,7 +717,7 @@ const C = {
   tiffanyLight: "#B8ECE5",
   tiffanyText: "#2E8577",
 };
-const APP_VERSION = 'V5.1.C79';
+const APP_VERSION = 'V5.1.C80';
 const FONT_LINK = "https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,600;9..144,700&family=Inter:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap";
 
 const WORK_ITEMS = [
@@ -7647,19 +7647,19 @@ function YieldLongTermReport({ onBack }) {
 
   const maxVal = result ? Math.max(10, ...result.values) : 10;
   const n = result ? result.periods.length : 0;
-  const W = Math.max(900, n * 26), H = 340, padL = 48, padR = 16, padT = 20, padB = 60;
+  const W = Math.max(900, n * 26), H = 340, padL = 62, padR = 16, padT = 20, padB = 60;
   const xOf = (i) => padL + (n <= 1 ? 0 : (i / (n - 1)) * (W - padL - padR));
   const yOf = (v) => padT + (1 - v / maxVal) * (H - padT - padB);
   const gridLines = result ? [0, 0.25, 0.5, 0.75, 1].map((f) => {
     const val = maxVal * f;
     return React.createElement("g", { key: f },
       React.createElement("line", { x1: padL, y1: yOf(val), x2: W - padR, y2: yOf(val), stroke: C.line, strokeWidth: 1 }),
-      React.createElement("text", { x: padL - 6, y: yOf(val) + 3, fontSize: 10, fill: C.inkSoft, textAnchor: "end", fontFamily: "IBM Plex Mono, monospace" }, val.toFixed(0))
+      React.createElement("text", { x: padL - 6, y: yOf(val) + 3, fontSize: 12, fill: C.inkSoft, textAnchor: "end", fontFamily: "IBM Plex Mono, monospace" }, val.toFixed(0) + "kg")
     );
   }) : null;
   const xTicks = result ? result.periods.map((p, i) => (
     i % 2 === 0 ? React.createElement("text", {
-      key: i, x: xOf(i), y: H - padB + 14, fontSize: 8.5, fill: C.inkSoft, textAnchor: "end",
+      key: i, x: xOf(i), y: H - padB + 14, fontSize: 10, fill: C.inkSoft, textAnchor: "end",
       fontFamily: "IBM Plex Mono, monospace", transform: `rotate(-45 ${xOf(i)} ${H - padB + 14})`,
     }, p.label) : null
   )) : null;
@@ -7930,8 +7930,8 @@ function ClimateYieldReport({ onBack }) {
   const n = labels.length;
 
   // 三個獨立座標軸：左＝雨量(mm，分段刻度應付極端降雨)，右內＝溫度(℃，固定5~40)，右外＝產能(kg)
-  const perPoint = mode === "period" ? 46 : 70;
-  const W = Math.max(700, n * perPoint), H = 380, padL = 56, padR = 100, padT = 24, padB = 46;
+  const perPoint = mode === "period" ? 50 : 76;
+  const W = Math.max(760, n * perPoint), H = 380, padL = 66, padR = 118, padT = 24, padB = 50;
   const plotW = W - padL - padR;
   const plotH = H - padT - padB;
   const xOf = (i) => padL + (n <= 1 ? plotW / 2 : (i / (n - 1)) * plotW);
@@ -7955,33 +7955,33 @@ function ClimateYieldReport({ onBack }) {
   const bars = data ? data.rain.map((v, i) => v == null ? null :
     React.createElement("g", { key: i },
       React.createElement("rect", { x: xOf(i) - barW / 2, y: yRain(v), width: barW, height: (H - padB) - yRain(v), fill: `${C.brandBlue}55`, rx: 2 }),
-      showLabels && v > 0 && React.createElement("text", { x: xOf(i), y: yRain(v) - 4, fontSize: 8.5, fill: C.brandBlue, textAnchor: "middle", fontFamily: "IBM Plex Mono, monospace" }, fmtN(v))
+      showLabels && v > 0 && React.createElement("text", { x: xOf(i), y: yRain(v) - 5, fontSize: 10.5, fill: C.brandBlue, textAnchor: "middle", fontFamily: "IBM Plex Mono, monospace" }, fmtN(v))
     )
   ) : null;
   const lineOf = (arr, yfn, color) => {
     const pts = arr.map((v, i) => (v == null ? null : `${xOf(i).toFixed(1)},${yfn(v).toFixed(1)}`)).filter(Boolean).join(" ");
     const dots = arr.map((v, i) => v == null ? null : React.createElement("g", { key: i },
       React.createElement("circle", { cx: xOf(i), cy: yfn(v), r: 2.6, fill: color }),
-      showLabels && React.createElement("text", { x: xOf(i), y: yfn(v) - 6, fontSize: 8.5, fill: color, textAnchor: "middle", fontFamily: "IBM Plex Mono, monospace" }, fmtN(v))
+      showLabels && React.createElement("text", { x: xOf(i), y: yfn(v) - 7, fontSize: 10.5, fill: color, textAnchor: "middle", fontFamily: "IBM Plex Mono, monospace" }, fmtN(v))
     ));
     return React.createElement(React.Fragment, null,
       React.createElement("polyline", { points: pts, fill: "none", stroke: color, strokeWidth: 2 }), dots);
   };
   const rainAxisTicks = [0, 100, 200, 300, 500, 1000].map((val) => (
-    React.createElement("text", { key: val, x: padL - 8, y: yRain(val) + 3, fontSize: 9, fill: C.brandBlue, textAnchor: "end", fontFamily: "IBM Plex Mono, monospace" }, val)
+    React.createElement("text", { key: val, x: padL - 8, y: yRain(val) + 4, fontSize: 11.5, fill: C.brandBlue, textAnchor: "end", fontFamily: "IBM Plex Mono, monospace" }, val + (val === 1000 ? "mm" : ""))
   ));
   const rainAxisGrid = [0, 100, 200, 300, 500, 1000].map((val) => (
     React.createElement("line", { key: val, x1: padL, y1: yRain(val), x2: W - padR, y2: yRain(val), stroke: val === RAIN_BREAK ? C.brandBlue : C.line, strokeDasharray: val === RAIN_BREAK ? "4,3" : undefined, strokeWidth: 1 })
   ));
   const tempAxisTicks = [5, 20, 40].map((val) => (
-    React.createElement("text", { key: val, x: W - padR + 8, y: yTemp(val) + 3, fontSize: 9, fill: C.coral, textAnchor: "start", fontFamily: "IBM Plex Mono, monospace" }, val + "℃")
+    React.createElement("text", { key: val, x: W - padR + 8, y: yTemp(val) + 4, fontSize: 11.5, fill: C.coral, textAnchor: "start", fontFamily: "IBM Plex Mono, monospace" }, val + "℃")
   ));
   const yieldAxisTicks = [0, 0.5, 1].map((f) => {
     const val = yieldMax * f;
-    return React.createElement("text", { key: f, x: W - padR + 46, y: yYield(val) + 3, fontSize: 9, fill: C.tableColor, textAnchor: "start", fontFamily: "IBM Plex Mono, monospace" }, val.toFixed(0));
+    return React.createElement("text", { key: f, x: W - padR + 52, y: yYield(val) + 4, fontSize: 11.5, fill: C.tableColor, textAnchor: "start", fontFamily: "IBM Plex Mono, monospace" }, val.toFixed(0) + (f === 1 ? "kg" : ""));
   });
   const xTicks = labels.map((lab, i) => (
-    React.createElement("text", { key: i, x: xOf(i), y: H - padB + 16, fontSize: mode === "period" ? 8.5 : 10, fill: C.inkSoft, textAnchor: "middle", fontFamily: "Inter" }, lab)
+    React.createElement("text", { key: i, x: xOf(i), y: H - padB + 18, fontSize: mode === "period" ? 10 : 11.5, fill: C.inkSoft, textAnchor: "middle", fontFamily: "Inter" }, lab)
   ));
 
   return React.createElement("div", { className: "min-h-screen flex flex-col", style: { background: C.cream } },
@@ -8148,7 +8148,7 @@ function ZoneMaterialYieldReport({ onBack }) {
   const labels = data ? (mode === "year" ? data.years.map(String) : data.months.map((m) => `${m}月`)) : [];
   const n = labels.length;
 
-  const W = Math.max(700, n * 70), H = 380, padL = 60, padR = param === "water" ? 130 : 100, padT = 24, padB = 46;
+  const W = Math.max(700, n * 70), H = 380, padL = 68, padR = param === "water" ? 150 : 112, padT = 24, padB = 50;
   const plotW = W - padL - padR, plotH = H - padT - padB;
   const xOf = (i) => padL + (n <= 1 ? plotW / 2 : (i / (n - 1)) * plotW);
   const barW = Math.min(26, (plotW / Math.max(1, n)) * 0.42);
@@ -8166,7 +8166,7 @@ function ZoneMaterialYieldReport({ onBack }) {
   const barsOf = (arr, yfn, color, offset) => arr ? arr.map((v, i) => v == null ? null :
     React.createElement("g", { key: i },
       React.createElement("rect", { x: xOf(i) - barW + offset, y: yfn(v), width: barW, height: (H - padB) - yfn(v), fill: color, rx: 2 }),
-      showLabels && v > 0 && React.createElement("text", { x: xOf(i) - barW / 2 + offset, y: yfn(v) - 4, fontSize: 8, fill: color, textAnchor: "middle", fontFamily: "IBM Plex Mono, monospace" }, fmtN(v))
+      showLabels && v > 0 && React.createElement("text", { x: xOf(i) - barW / 2 + offset, y: yfn(v) - 5, fontSize: 10, fill: color, textAnchor: "middle", fontFamily: "IBM Plex Mono, monospace" }, fmtN(v))
     )
   ) : null;
   const lineOf = (arr, yfn, color) => {
@@ -8174,18 +8174,18 @@ function ZoneMaterialYieldReport({ onBack }) {
     const pts = arr.map((v, i) => (v == null ? null : `${xOf(i).toFixed(1)},${yfn(v).toFixed(1)}`)).filter(Boolean).join(" ");
     const dots = arr.map((v, i) => v == null ? null : React.createElement("g", { key: i },
       React.createElement("circle", { cx: xOf(i), cy: yfn(v), r: 2.6, fill: color }),
-      showLabels && React.createElement("text", { x: xOf(i), y: yfn(v) - 6, fontSize: 8, fill: color, textAnchor: "middle", fontFamily: "IBM Plex Mono, monospace" }, fmtN(v))
+      showLabels && React.createElement("text", { x: xOf(i), y: yfn(v) - 7, fontSize: 10.5, fill: color, textAnchor: "middle", fontFamily: "IBM Plex Mono, monospace" }, fmtN(v))
     ));
     return React.createElement(React.Fragment, null, React.createElement("polyline", { points: pts, fill: "none", stroke: color, strokeWidth: 2 }), dots);
   };
-  const axisTicksLeft = (max, color) => [0, 0.5, 1].map((f) => (
-    React.createElement("text", { key: f, x: padL - 8, y: yOfMax(max)(max * f) + 3, fontSize: 9, fill: color, textAnchor: "end", fontFamily: "IBM Plex Mono, monospace" }, (max * f).toFixed(1))
+  const axisTicksLeft = (max, color, unit) => [0, 0.5, 1].map((f) => (
+    React.createElement("text", { key: f, x: padL - 8, y: yOfMax(max)(max * f) + 4, fontSize: 11.5, fill: color, textAnchor: "end", fontFamily: "IBM Plex Mono, monospace" }, (max * f).toFixed(1) + (f === 1 ? unit : ""))
   ));
-  const axisTicksRight = (max, color, x) => [0, 0.5, 1].map((f) => (
-    React.createElement("text", { key: f, x, y: yOfMax(max)(max * f) + 3, fontSize: 9, fill: color, textAnchor: "start", fontFamily: "IBM Plex Mono, monospace" }, (max * f).toFixed(1))
+  const axisTicksRight = (max, color, x, unit) => [0, 0.5, 1].map((f) => (
+    React.createElement("text", { key: f, x, y: yOfMax(max)(max * f) + 4, fontSize: 11.5, fill: color, textAnchor: "start", fontFamily: "IBM Plex Mono, monospace" }, (max * f).toFixed(1) + (f === 1 ? unit : ""))
   ));
   const xTicks = labels.map((lab, i) => (
-    React.createElement("text", { key: i, x: xOf(i), y: H - padB + 16, fontSize: 10, fill: C.inkSoft, textAnchor: "middle", fontFamily: "Inter" }, lab)
+    React.createElement("text", { key: i, x: xOf(i), y: H - padB + 18, fontSize: 11.5, fill: C.inkSoft, textAnchor: "middle", fontFamily: "Inter" }, lab)
   ));
   const gridY = [0, 0.25, 0.5, 0.75, 1].map((f) => (
     React.createElement("line", { key: f, x1: padL, y1: padT + f * plotH, x2: W - padR, y2: padT + f * plotH, stroke: C.line, strokeWidth: 1 })
@@ -8201,20 +8201,20 @@ function ZoneMaterialYieldReport({ onBack }) {
       barsOf(data && data.tons, yTons, `${C.brandBlue}66`, 0),
       barsOf(data && data.minutes, yMinutes, `${C.leaf}66`, barW)
     );
-    paramAxisTicksLeft = axisTicksLeft(tonsMax, C.brandBlue);
-    paramAxisTicksRight2 = axisTicksRight(minutesMax, C.leaf, W - padR + 46);
+    paramAxisTicksLeft = axisTicksLeft(tonsMax, C.brandBlue, "噸");
+    paramAxisTicksRight2 = axisTicksRight(minutesMax, C.leaf, W - padR + 52, "分");
   } else if (param === "solid") {
     paramLegend = [React.createElement("span", { key: "s" }, React.createElement("span", { style: { display: "inline-block", width: 10, height: 10, background: `${C.coral}66`, marginRight: 4 } }), "固體肥(包)｜左軸")];
     paramChart = barsOf(data && data.solid, ySolid, `${C.coral}66`, barW / 2);
-    paramAxisTicksLeft = axisTicksLeft(solidMax, C.coral);
+    paramAxisTicksLeft = axisTicksLeft(solidMax, C.coral, "包");
     paramAxisTicksRight2 = null;
   } else {
     paramLegend = [React.createElement("span", { key: "l" }, React.createElement("span", { style: { display: "inline-block", width: 10, height: 10, background: `${C.leafSoft}88`, marginRight: 4 } }), "液體肥(kg)｜左軸")];
     paramChart = barsOf(data && data.liquid, yLiquid, `${C.leafSoft}88`, barW / 2);
-    paramAxisTicksLeft = axisTicksLeft(liquidMax, C.leafSoft);
+    paramAxisTicksLeft = axisTicksLeft(liquidMax, C.leafSoft, "kg");
     paramAxisTicksRight2 = null;
   }
-  const yieldAxisX = param === "water" ? W - padR + 86 : W - padR + 46;
+  const yieldAxisX = param === "water" ? W - padR + 92 : W - padR + 52;
 
   return React.createElement("div", { className: "min-h-screen flex flex-col", style: { background: C.cream } },
     React.createElement(NavBar, { backLabel: "耗材與報表", onBack }),
@@ -8261,7 +8261,7 @@ function ZoneMaterialYieldReport({ onBack }) {
         React.createElement("div", { style: { overflowX: "auto", maxWidth: "100%" } },
           React.createElement("svg", { viewBox: `0 0 ${W} ${H}`, style: { width: W, height: H, display: "block" } },
             gridY, paramChart, paramAxisTicksLeft, paramAxisTicksRight2,
-            axisTicksRight(yieldMax, C.tableColor, yieldAxisX), xTicks,
+            axisTicksRight(yieldMax, C.tableColor, yieldAxisX, "kg"), xTicks,
             lineOf(data.yield, yYield, C.tableColor)
           )
         )
