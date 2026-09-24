@@ -717,7 +717,7 @@ const C = {
   tiffanyLight: "#B8ECE5",
   tiffanyText: "#2E8577",
 };
-const APP_VERSION = 'V5.1.C80';
+const APP_VERSION = 'V5.1.C81';
 const FONT_LINK = "https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,600;9..144,700&family=Inter:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap";
 
 const WORK_ITEMS = [
@@ -8047,46 +8047,96 @@ function ClimateYieldReport({ onBack }) {
 // 不是「一期/二期/三期/四南/四北/五期」這種顯示名稱（產能資料庫才是用顯示名稱）。
 // 兩套系統代號不同，查詢zonework前一定要先轉換，否則查到的key根本不存在。
 const ZONEWORK_ID_BY_NAME = { "一期": "p1", "二期": "p2", "三期": "zone3", "四南": "south4", "四北": "north4", "五期": "zone5" };
-async function loadZoneworkMonth(zoneName, ym) {
+// C81/V5.023 修正：表三證明了 confirmHistory 裡每一筆回報確認都帶著真實日期(h.at)，
+// 不是只有「本月目前值」——是我之前漏看了，只看了 extra/extra8（那是「最新一次指定的值」，
+// 不是逐次回報的歷史）。改成跟表三同一套資料來源(confirmHistory)後，年/月/15天/週都做得到。
+const WATER_TONS_KEYS = ["溝灌"];
+const WATER_MIN_KEYS = ["噴灌"];
+const SOLID_KEYS = ["米糠", "金旺"];
+const LIQUID_KEYS = OTHER_MATERIALS;
+function zwDayFromStamp(stamp) {
+  if (!stamp) return null;
+  const s = String(stamp);
+  let y, m, d;
+  if (s.includes("/")) {
+    const p = s.split(" ")[0].split("/");
+    if (p.length < 3) return null;
+    y = Number(p[0]); m = Number(p[1]); d = Number(p[2]);
+  } else if (s.includes("-")) {
+    const p = s.split(" ")[0].split("T")[0].split("-");
+    if (p.length < 3) return null;
+    y = Number(p[0]); m = Number(p[1]); d = Number(p[2]);
+  } else return null;
+  if (!y || !m || !d) return null;
+  return `${y}-${String(m).padStart(2, "0")}-${String(d).padStart(2, "0")}`;
+}
+async function fetchZoneworkConfirmedByDay(zoneName, ym) {
   const zoneId = ZONEWORK_ID_BY_NAME[zoneName] || zoneName;
+  const out = {};
   try {
     const res = await window.storage.get(`zonework:${zoneId}:${ym}`, true);
-    return res ? JSON.parse(res.value) : null;
-  } catch (e) { return null; }
+    if (!res) return out;
+    const zdata = JSON.parse(res.value);
+    (zdata.confirmHistory || []).forEach((h) => {
+      if (!h || !h.rowKey) return;
+      const qty = parseFloat(h.qty);
+      if (isNaN(qty) || qty <= 0) return;
+      const dateStr = zwDayFromStamp(h.at);
+      if (!dateStr) return;
+      if (!out[dateStr]) out[dateStr] = {};
+      out[dateStr][h.rowKey] = (out[dateStr][h.rowKey] || 0) + qty;
+    });
+  } catch (e) { /* 讀不到就當這個月沒有資料 */ }
+  return out;
 }
-function zwWater(rec) {
-  const e6 = ((rec && rec.extra) || {})[6] || {};
-  return { tons: Number(e6.tons) || 0, minutes: Number(e6.minutes) || 0 };
-}
-function zwSolidFert(rec) {
-  const e7 = ((rec && rec.extra) || {})[7] || {};
-  const keys = Object.keys(e7).filter((k) => k !== "bags");
+function zwSumKeys(bucket, keys) {
   let total = 0;
-  if (keys.length) keys.forEach((k) => { total += Number(e7[k]) || 0; });
-  else if (e7.bags) total = Number(e7.bags) || 0;
-  return Math.round(total * 10) / 10;
+  keys.forEach((k) => { total += Number(bucket[k]) || 0; });
+  return total;
 }
-function zwLiquidFert(rec) {
-  const e8 = (rec && rec.extra8) || {};
-  let total = 0;
-  Object.values(e8).forEach((v) => { total += Number(v) || 0; });
-  return Math.round(total * 10) / 10;
-}
-async function fetchZoneworkYearMonthly(zone, year) {
-  const months = Array.from({ length: 12 }, (_, i) => i + 1);
-  const nowY = new Date().getFullYear(), nowM = new Date().getMonth() + 1;
-  const maxM = year === nowY ? nowM : 12;
-  const tons = [], minutes = [], solid = [], liquid = [];
-  for (const m of months) {
-    if (m > maxM) { tons.push(null); minutes.push(null); solid.push(null); liquid.push(null); continue; }
-    const ym = `${year}-${String(m).padStart(2, "0")}`;
-    const rec = await loadZoneworkMonth(zone, ym);
-    const w = zwWater(rec);
-    tons.push(w.tons); minutes.push(w.minutes);
-    solid.push(zwSolidFert(rec));
-    liquid.push(zwLiquidFert(rec));
+// 任意日期區間(startDate~endDate，同一年內)的資材加總——年/月/15天/週共用同一支函式，
+// 差別只在傳進來的日期範圍，涵蓋到的月份各自的 zonework 文件只讀一次。
+async function fetchZoneworkRange(zoneName, startDate, endDate) {
+  const months = [];
+  let d = new Date(startDate + "T00:00:00");
+  const endD = new Date(endDate + "T00:00:00");
+  while (d <= endD) {
+    const ym = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
+    if (!months.includes(ym)) months.push(ym);
+    d.setDate(d.getDate() + 1);
   }
-  return { tons, minutes, solid, liquid };
+  let tons = 0, minutes = 0, solid = 0, liquid = 0;
+  for (const ym of months) {
+    const byDay = await fetchZoneworkConfirmedByDay(zoneName, ym);
+    for (const dateStr of Object.keys(byDay)) {
+      if (dateStr < startDate || dateStr > endDate) continue;
+      const bucket = byDay[dateStr];
+      tons += zwSumKeys(bucket, WATER_TONS_KEYS);
+      minutes += zwSumKeys(bucket, WATER_MIN_KEYS);
+      solid += zwSumKeys(bucket, SOLID_KEYS);
+      liquid += zwSumKeys(bucket, LIQUID_KEYS);
+    }
+  }
+  return { tons: Math.round(tons * 10) / 10, minutes: Math.round(minutes * 10) / 10, solid: Math.round(solid * 10) / 10, liquid: Math.round(liquid * 10) / 10 };
+}
+function weekPeriodsOfYear(year) {
+  const periods = [];
+  const todayStr = new Date().toISOString().slice(0, 10);
+  let d = new Date(`${year}-01-01T00:00:00`);
+  const dow = d.getDay();
+  d.setDate(d.getDate() + (dow === 0 ? -6 : 1 - dow)); // 回推到當週週一
+  let idx = 1;
+  while (d.getFullYear() <= year && idx <= 54) {
+    const start = new Date(d);
+    const end = new Date(d); end.setDate(end.getDate() + 6);
+    const startStr = start.toISOString().slice(0, 10);
+    if (startStr > todayStr) break;
+    const endStr = end.toISOString().slice(0, 10) > todayStr ? todayStr : end.toISOString().slice(0, 10);
+    periods.push({ label: `W${idx}`, start: startStr, end: endStr });
+    idx++;
+    d.setDate(d.getDate() + 7);
+  }
+  return periods;
 }
 
 const YIELD_PARAM_DEFS = {
@@ -8096,7 +8146,7 @@ const YIELD_PARAM_DEFS = {
 };
 
 function ZoneMaterialYieldReport({ onBack }) {
-  const [mode, setMode] = useState("year"); // "year" | "month"
+  const [mode, setMode] = useState("year"); // "year" | "month" | "period" | "week"
   const [param, setParam] = useState("water"); // "water" | "solid" | "liquid"
   const [zone, setZone] = useState(YIELD_DB_ZONES[0]);
   const [year, setYear] = useState(new Date().getFullYear());
@@ -8104,51 +8154,61 @@ function ZoneMaterialYieldReport({ onBack }) {
   const [loading, setLoading] = useState(false);
   const [progress, setProgress] = useState("");
   const [error, setError] = useState("");
-  const [yearData, setYearData] = useState(null); // { years, tons/minutes/solid/liquid[], yield[] }
-  const [monthData, setMonthData] = useState(null); // { months, tons/minutes/solid/liquid[], yield[] }
+  const [data, setData] = useState(null); // { labels[], tons[], minutes[], solid[], liquid[], yield[] }
   const startYear = 2020;
   const nowYear = new Date().getFullYear();
+  const todayStr = new Date().toISOString().slice(0, 10);
 
-  const runYear = async () => {
-    setLoading(true); setError(""); setYearData(null);
-    try {
-      const years = [];
-      for (let y = startYear; y <= nowYear; y++) years.push(y);
-      const tons = [], minutes = [], solid = [], liquid = [], yieldArr = [];
-      for (let i = 0; i < years.length; i++) {
-        setProgress(`${i + 1}/${years.length}`);
-        const [zw, yieldMonths] = await Promise.all([
-          fetchZoneworkYearMonthly(zone, years[i]),
-          fetchYieldYearMonthlyBreakdown(zone, years[i]),
-        ]);
-        const sum = (arr) => Math.round(arr.filter((v) => v != null).reduce((s, v) => s + v, 0) * 10) / 10;
-        tons.push(sum(zw.tons)); minutes.push(sum(zw.minutes)); solid.push(sum(zw.solid)); liquid.push(sum(zw.liquid));
-        yieldArr.push(sum(yieldMonths));
+  const periodsForMode = () => {
+    if (mode === "year") {
+      const out = [];
+      for (let y = startYear; y <= nowYear; y++) out.push({ label: String(y), start: `${y}-01-01`, end: y === nowYear ? todayStr : `${y}-12-31` });
+      return out;
+    }
+    if (mode === "month") {
+      const out = [];
+      const maxM = year === nowYear ? new Date().getMonth() + 1 : 12;
+      for (let m = 1; m <= 12; m++) {
+        if (m > maxM) { out.push(null); continue; }
+        const mm = String(m).padStart(2, "0");
+        const lastDay = new Date(year, m, 0).getDate();
+        const end = `${year}-${mm}-${String(lastDay).padStart(2, "0")}`;
+        out.push({ label: `${m}月`, start: `${year}-${mm}-01`, end: end > todayStr ? todayStr : end });
       }
-      setYearData({ years, tons, minutes, solid, liquid, yield: yieldArr });
-    } catch (e) { setError("讀取失敗：" + (e.message || e)); }
-    setLoading(false); setProgress("");
+      return out;
+    }
+    if (mode === "period") return yieldPeriodsOfYear(year);
+    return weekPeriodsOfYear(year);
   };
 
-  const runMonth = async () => {
-    setLoading(true); setError(""); setMonthData(null);
+  const run = async () => {
+    setLoading(true); setError(""); setData(null);
     try {
-      const [zw, yieldMonths] = await Promise.all([
-        fetchZoneworkYearMonthly(zone, year),
-        fetchYieldYearMonthlyBreakdown(zone, year),
-      ]);
-      setMonthData({ months: Array.from({ length: 12 }, (_, i) => i + 1), ...zw, yield: yieldMonths });
+      const periods = periodsForMode();
+      const labels = [], tons = [], minutes = [], solid = [], liquid = [], yieldArr = [];
+      for (let i = 0; i < periods.length; i++) {
+        const p = periods[i];
+        if (!p) { labels.push(""); tons.push(null); minutes.push(null); solid.push(null); liquid.push(null); yieldArr.push(null); continue; }
+        setProgress(`${i + 1}/${periods.length}`);
+        const [zw, y] = await Promise.all([
+          fetchZoneworkRange(zone, p.start, p.end),
+          fetchYieldZonesPeriodTotal([zone], p.start, p.end),
+        ]);
+        labels.push(p.label);
+        tons.push(zw.tons); minutes.push(zw.minutes); solid.push(zw.solid); liquid.push(zw.liquid);
+        yieldArr.push(y);
+      }
+      setData({ labels, tons, minutes, solid, liquid, yield: yieldArr });
     } catch (e) { setError("讀取失敗：" + (e.message || e)); }
     setLoading(false); setProgress("");
   };
 
-  useEffect(() => { if (mode === "year") runYear(); else runMonth(); }, [mode, zone, year]);
+  useEffect(() => { run(); }, [mode, zone, year]);
 
-  const data = mode === "year" ? yearData : monthData;
-  const labels = data ? (mode === "year" ? data.years.map(String) : data.months.map((m) => `${m}月`)) : [];
+  const labels = data ? data.labels : [];
   const n = labels.length;
-
-  const W = Math.max(700, n * 70), H = 380, padL = 68, padR = param === "water" ? 150 : 112, padT = 24, padB = 50;
+  const perPoint = (mode === "period" || mode === "week") ? 44 : 70;
+  const W = Math.max(700, n * perPoint), H = 380, padL = 68, padR = param === "water" ? 150 : 112, padT = 24, padB = 50;
   const plotW = W - padL - padR, plotH = H - padT - padB;
   const xOf = (i) => padL + (n <= 1 ? plotW / 2 : (i / (n - 1)) * plotW);
   const barW = Math.min(26, (plotW / Math.max(1, n)) * 0.42);
@@ -8185,7 +8245,7 @@ function ZoneMaterialYieldReport({ onBack }) {
     React.createElement("text", { key: f, x, y: yOfMax(max)(max * f) + 4, fontSize: 11.5, fill: color, textAnchor: "start", fontFamily: "IBM Plex Mono, monospace" }, (max * f).toFixed(1) + (f === 1 ? unit : ""))
   ));
   const xTicks = labels.map((lab, i) => (
-    React.createElement("text", { key: i, x: xOf(i), y: H - padB + 18, fontSize: 11.5, fill: C.inkSoft, textAnchor: "middle", fontFamily: "Inter" }, lab)
+    React.createElement("text", { key: i, x: xOf(i), y: H - padB + 18, fontSize: (mode === "period" || mode === "week") ? 9.5 : 11.5, fill: C.inkSoft, textAnchor: "middle", fontFamily: "Inter" }, lab)
   ));
   const gridY = [0, 0.25, 0.5, 0.75, 1].map((f) => (
     React.createElement("line", { key: f, x1: padL, y1: padT + f * plotH, x2: W - padR, y2: padT + f * plotH, stroke: C.line, strokeWidth: 1 })
@@ -8221,7 +8281,7 @@ function ZoneMaterialYieldReport({ onBack }) {
     React.createElement("div", { className: "px-4 py-3", style: { borderBottom: `1px solid ${C.line}` } },
       React.createElement("div", { style: { fontFamily: "Inter", fontWeight: 700, fontSize: 17, color: C.ink } }, "表八・分區資材投入與產能對比"),
       React.createElement("div", { className: "text-xs mt-1", style: { color: C.inkSoft, fontFamily: "Inter" } }, `${startYear}年~${nowYear}年（純讀取，不寫入資料）；各分區狀況不同，僅能單選一區查看，不提供全場加總`),
-      React.createElement("div", { className: "text-xs mt-1", style: { color: C.alert, fontFamily: "Inter" } }, "⚠ 資材資料是「每月一筆目前值」，不是逐日/逐週紀錄，所以目前只提供看年／看月，暫不支援看15天／看週")
+      React.createElement("div", { className: "text-xs mt-1", style: { color: C.inkSoft, fontFamily: "Inter" } }, "依「回報確認」的實際日期(跟表三同一份紀錄)計算，只有已回報確認過的數量才算數")
     ),
     React.createElement("div", { className: "p-4" },
       React.createElement("div", { className: "text-xs mb-2", style: { color: C.inkSoft } }, "查看參數"),
@@ -8231,11 +8291,13 @@ function ZoneMaterialYieldReport({ onBack }) {
           style: param === p ? { background: C.wine, color: "white", fontWeight: 700 } : { background: "white", color: C.ink, border: `1px solid ${C.line}` },
         }, `${YIELD_PARAM_DEFS[p].label}（${YIELD_PARAM_DEFS[p].unitLabel}）`))
       ),
-      React.createElement("div", { className: "flex gap-2 mb-3" },
+      React.createElement("div", { className: "flex gap-2 mb-3 flex-wrap" },
         React.createElement("button", { onClick: () => setMode("year"), className: "px-3 py-1.5 rounded-lg text-sm", style: mode === "year" ? { background: C.wine, color: "white", fontWeight: 700 } : { background: "white", color: C.ink, border: `1px solid ${C.line}` } }, "看年"),
-        React.createElement("button", { onClick: () => setMode("month"), className: "px-3 py-1.5 rounded-lg text-sm", style: mode === "month" ? { background: C.wine, color: "white", fontWeight: 700 } : { background: "white", color: C.ink, border: `1px solid ${C.line}` } }, "看月")
+        React.createElement("button", { onClick: () => setMode("month"), className: "px-3 py-1.5 rounded-lg text-sm", style: mode === "month" ? { background: C.wine, color: "white", fontWeight: 700 } : { background: "white", color: C.ink, border: `1px solid ${C.line}` } }, "看月"),
+        React.createElement("button", { onClick: () => setMode("period"), className: "px-3 py-1.5 rounded-lg text-sm", style: mode === "period" ? { background: C.wine, color: "white", fontWeight: 700 } : { background: "white", color: C.ink, border: `1px solid ${C.line}` } }, "看15天"),
+        React.createElement("button", { onClick: () => setMode("week"), className: "px-3 py-1.5 rounded-lg text-sm", style: mode === "week" ? { background: C.wine, color: "white", fontWeight: 700 } : { background: "white", color: C.ink, border: `1px solid ${C.line}` } }, "看週")
       ),
-      mode === "month" && React.createElement("div", { className: "flex gap-2 mb-3 items-center" },
+      mode !== "year" && React.createElement("div", { className: "flex gap-2 mb-3 items-center" },
         React.createElement("span", { className: "text-xs", style: { color: C.inkSoft } }, "年度"),
         React.createElement("select", { value: year, onChange: (e) => setYear(Number(e.target.value)), className: "px-2 py-1.5 rounded-lg text-sm", style: { border: `1px solid ${C.line}` } },
           ...Array.from({ length: nowYear - startYear + 1 }, (_, i) => startYear + i).map((y) => React.createElement("option", { key: y, value: y }, `${y}年`)))
