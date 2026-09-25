@@ -717,7 +717,7 @@ const C = {
   tiffanyLight: "#B8ECE5",
   tiffanyText: "#2E8577",
 };
-const APP_VERSION = 'V5.1.C89';
+const APP_VERSION = 'V5.1.C90';
 const FONT_LINK = "https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,600;9..144,700&family=Inter:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap";
 
 const WORK_ITEMS = [
@@ -8678,17 +8678,18 @@ function ZoneUsageProfileReport({ onBack }) {
   const yFor = (k) => param === "water" ? (k === "溝灌" ? yTons : yMin) : ySingle;
 
   const fmtN = (v) => v == null ? "" : Number(v).toFixed(1);
-  const lineFor = (k) => {
+  const barGroupW = Math.min(30, (plotW / Math.max(1, n)) * 0.8);
+  const barW = barGroupW / Math.max(1, itemsForParam.length);
+  const barFor = (k, ki) => {
     const values = data ? data.series[k] : null;
     if (!values) return null;
     const yfn = yFor(k);
     const color = ZONEWORK_ITEM_COLORS[k];
-    const pts = values.map((v, i) => (v == null ? null : `${xOf(i).toFixed(1)},${yfn(v).toFixed(1)}`)).filter(Boolean).join(" ");
-    const dots = values.map((v, i) => v == null ? null : React.createElement("g", { key: i },
-      React.createElement("circle", { cx: xOf(i), cy: yfn(v), r: 2.5, fill: color }),
-      showLabels && v > 0 && React.createElement("text", { x: xOf(i), y: yfn(v) - 6, fontSize: 12.5, fill: color, textAnchor: "middle", fontFamily: "IBM Plex Mono, monospace" }, fmtN(v))
+    const offset = (ki - (itemsForParam.length - 1) / 2) * barW;
+    return values.map((v, i) => (v == null || v === 0) ? null : React.createElement("g", { key: `${k}-${i}` },
+      React.createElement("rect", { x: xOf(i) + offset - barW * 0.42, y: yfn(v), width: barW * 0.84, height: (H - padB) - yfn(v), fill: color, rx: 2 }),
+      showLabels && React.createElement("text", { x: xOf(i) + offset, y: yfn(v) - 5, fontSize: 10, fill: color, textAnchor: "middle", fontFamily: "IBM Plex Mono, monospace" }, fmtN(v))
     ));
-    return React.createElement(React.Fragment, { key: k }, React.createElement("polyline", { points: pts, fill: "none", stroke: color, strokeWidth: 2 }), dots);
   };
   const axisTicks = (max, color, x, unit, anchor) => [0, 0.5, 1].map((f) => (
     React.createElement("text", { key: f, x, y: yOfMax(max)(max * f) + 4, fontSize: 12.5, fill: color, textAnchor: anchor, fontFamily: "IBM Plex Mono, monospace" }, (max * f).toFixed(1) + (f === 1 ? unit : ""))
@@ -8751,7 +8752,7 @@ function ZoneUsageProfileReport({ onBack }) {
         React.createElement("div", { style: { overflowX: "auto", maxWidth: "100%" } },
           React.createElement("svg", { viewBox: `0 0 ${W} ${H}`, style: { width: W, height: H, display: "block" } },
             gridY,
-            ...itemsForParam.map((k) => lineFor(k)),
+            ...itemsForParam.map((k, ki) => barFor(k, ki)),
             param === "water"
               ? React.createElement(React.Fragment, null, axisTicks(tonsMax, "#2E5FA3", padL - 8, "噸", "end"), axisTicks(minMax, "#5C7A52", W - padR + 8, "分", "start"))
               : axisTicks(singleMax, C.inkSoft, padL - 8, param === "solid" ? "包" : "kg", "end"),
@@ -8814,16 +8815,17 @@ function ComponentZoneCompareReport({ onBack }) {
   const yOf = (v) => padT + (1 - v / maxVal) * plotH;
 
   const fmtN = (v) => v == null ? "" : Number(v).toFixed(1);
-  const lineFor = (z) => {
+  const barGroupW = Math.min(30, (plotW / Math.max(1, n)) * 0.8);
+  const barW = barGroupW / Math.max(1, zonesSel.length);
+  const barFor = (z, zi) => {
     const values = data ? data.perZone[z] : null;
     if (!values) return null;
     const color = ZONE_COLORS[z];
-    const pts = values.map((v, i) => (v == null ? null : `${xOf(i).toFixed(1)},${yOf(v).toFixed(1)}`)).filter(Boolean).join(" ");
-    const dots = values.map((v, i) => v == null ? null : React.createElement("g", { key: i },
-      React.createElement("circle", { cx: xOf(i), cy: yOf(v), r: 2.4, fill: color }),
-      showLabels && v > 0 && React.createElement("text", { x: xOf(i), y: yOf(v) - 6, fontSize: 12.5, fill: color, textAnchor: "middle", fontFamily: "IBM Plex Mono, monospace" }, fmtN(v))
+    const offset = (zi - (zonesSel.length - 1) / 2) * barW;
+    return values.map((v, i) => (v == null || v === 0) ? null : React.createElement("g", { key: `${z}-${i}` },
+      React.createElement("rect", { x: xOf(i) + offset - barW * 0.42, y: yOf(v), width: barW * 0.84, height: (H - padB) - yOf(v), fill: color, rx: 2 }),
+      showLabels && React.createElement("text", { x: xOf(i) + offset, y: yOf(v) - 5, fontSize: 10, fill: color, textAnchor: "middle", fontFamily: "IBM Plex Mono, monospace" }, fmtN(v))
     ));
-    return React.createElement(React.Fragment, { key: z }, React.createElement("polyline", { points: pts, fill: "none", stroke: color, strokeWidth: 2 }), dots);
   };
   const axisTicks = [0, 0.25, 0.5, 0.75, 1].map((f) => (
     React.createElement("text", { key: f, x: padL - 8, y: yOf(maxVal * f) + 4, fontSize: 12.5, fill: C.inkSoft, textAnchor: "end", fontFamily: "IBM Plex Mono, monospace" }, (maxVal * f).toFixed(1) + (f === 1 ? itemMeta.unit : ""))
@@ -8871,7 +8873,7 @@ function ComponentZoneCompareReport({ onBack }) {
         ),
         React.createElement("div", { style: { overflowX: "auto", maxWidth: "100%" } },
           React.createElement("svg", { viewBox: `0 0 ${W} ${H}`, style: { width: W, height: H, display: "block" } },
-            gridY, ...zonesSel.map((z) => lineFor(z)), axisTicks, xTicks
+            gridY, ...zonesSel.map((z, zi) => barFor(z, zi)), axisTicks, xTicks
           )
         )
       )
