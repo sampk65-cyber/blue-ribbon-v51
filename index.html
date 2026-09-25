@@ -717,7 +717,7 @@ const C = {
   tiffanyLight: "#B8ECE5",
   tiffanyText: "#2E8577",
 };
-const APP_VERSION = 'V5.1.C85';
+const APP_VERSION = 'V5.1.C89';
 const FONT_LINK = "https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,600;9..144,700&family=Inter:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap";
 
 const WORK_ITEMS = [
@@ -1081,7 +1081,7 @@ const STUB_MODULES = [
   { icon: ClipboardList, label: "4. 分區工項提示內容", key: "workfolders" },
   { icon: CalendarDays, label: "5. 工項行事曆／年度計畫", key: "calendar" },
   { icon: Camera, label: "6. 照片影像資料庫", key: "photos" },
-  { icon: Package, label: "7. 耗材使用\n報表檢視", key: "materials" },
+  { icon: Package, label: "7. 查看\n各項報表", key: "materials" },
   { icon: TreePine, label: "8. 果樹履歷（樹齡 / 高度 / 節間）", key: "trees" },
   { icon: Droplets, label: "9. 環境數據", key: "environment" },
   { icon: LogIn, label: "10. 上下班打卡", key: "attendance" },
@@ -8524,6 +8524,362 @@ function ZoneMaterialYieldReport({ onBack }) {
   );
 }
 
+/* =========================================================
+   表11/表12 共用的輔助資料與元件：資材細項清單、單一細項區間查詢、
+   時間模式產生器、時間切換UI。C87/V5.028。
+   ========================================================= */
+const ZONE_COLORS = { "一期": "#2E5FA3", "二期": "#E0785F", "三期": "#4E7C6B", "四南": "#5B2A45", "四北": "#C9A227", "五期": "#8B5FBF" };
+function dayPeriodsOfMonth(year, month) {
+  const out = [];
+  const todayStr = new Date().toISOString().slice(0, 10);
+  const lastDay = new Date(year, month, 0).getDate();
+  for (let d = 1; d <= lastDay; d++) {
+    const ds = `${year}-${String(month).padStart(2, "0")}-${String(d).padStart(2, "0")}`;
+    if (ds > todayStr) break;
+    out.push({ label: `${d}日`, start: ds, end: ds });
+  }
+  return out;
+}
+
+const ZONEWORK_ITEMS = [
+  { key: "溝灌", unit: "噸" },
+  { key: "噴灌", unit: "分鐘" },
+  { key: "米糠", unit: "包" },
+  { key: "金旺", unit: "包" },
+  { key: "黃豆", unit: "kg" },
+  { key: "水果", unit: "kg" },
+  { key: "硝酸鉀", unit: "kg" },
+  { key: "磷酸一鉀", unit: "kg" },
+  { key: "硫酸鉀", unit: "kg" },
+  { key: "鈣鎂粉", unit: "kg" },
+  { key: "微量元素", unit: "kg" },
+];
+const ZONEWORK_ITEM_COLORS = {
+  溝灌: "#2E5FA3", 噴灌: "#4E7C6B",
+  米糠: "#E0785F", 金旺: "#5B2A45",
+  黃豆: "#2E5FA3", 水果: "#E0785F", 硝酸鉀: "#4E7C6B", 磷酸一鉀: "#5B2A45", 硫酸鉀: "#C9A227", 鈣鎂粉: "#8B5FBF", 微量元素: "#2B2119",
+};
+async function fetchZoneworkItemRange(zoneName, itemKey, startDate, endDate) {
+  const months = [];
+  let d = new Date(startDate + "T00:00:00");
+  const endD = new Date(endDate + "T00:00:00");
+  while (d <= endD) {
+    const ym = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
+    if (!months.includes(ym)) months.push(ym);
+    d.setDate(d.getDate() + 1);
+  }
+  let total = 0;
+  for (const ym of months) {
+    const byDay = await fetchZoneworkConfirmedByDay(zoneName, ym);
+    for (const dateStr of Object.keys(byDay)) {
+      if (dateStr < startDate || dateStr > endDate) continue;
+      total += Number(byDay[dateStr][itemKey]) || 0;
+    }
+  }
+  return Math.round(total * 10) / 10;
+}
+function usagePeriodsForMode(mode, year, month) {
+  const todayStr = new Date().toISOString().slice(0, 10);
+  const nowYear = new Date().getFullYear();
+  if (mode === "year") {
+    const out = [];
+    for (let y = 2026; y <= nowYear; y++) out.push({ label: String(y), start: `${y}-01-01`, end: y === nowYear ? todayStr : `${y}-12-31` });
+    return out;
+  }
+  if (mode === "month") {
+    const out = [];
+    const maxM = year === nowYear ? new Date().getMonth() + 1 : 12;
+    for (let m = 1; m <= 12; m++) {
+      if (m > maxM) { out.push(null); continue; }
+      const mm = String(m).padStart(2, "0");
+      const lastDay = new Date(year, m, 0).getDate();
+      const end = `${year}-${mm}-${String(lastDay).padStart(2, "0")}`;
+      out.push({ label: `${m}月`, start: `${year}-${mm}-01`, end: end > todayStr ? todayStr : end });
+    }
+    return out;
+  }
+  if (mode === "week") return weekPeriodsOfYear(year);
+  return dayPeriodsOfMonth(year, month);
+}
+function UsageTimeModeControls({ mode, setMode, year, setYear, month, setMonth, nowYear }) {
+  return React.createElement(React.Fragment, null,
+    React.createElement("div", { className: "flex gap-2 mb-3 flex-wrap" },
+      ...[["year", "看年"], ["month", "看月"], ["week", "看週"], ["day", "看日"]].map(([m, lab]) =>
+        React.createElement("button", { key: m, onClick: () => setMode(m), className: "px-3 py-1.5 rounded-lg text-sm", style: mode === m ? { background: C.wine, color: "white", fontWeight: 700 } : { background: "white", color: C.ink, border: `1px solid ${C.line}` } }, lab))
+    ),
+    mode !== "year" && React.createElement("div", { className: "flex gap-2 mb-3 items-center flex-wrap" },
+      React.createElement("span", { className: "text-xs", style: { color: C.inkSoft } }, "年度"),
+      React.createElement("select", { value: year, onChange: (e) => setYear(Number(e.target.value)), className: "px-2 py-1.5 rounded-lg text-sm", style: { border: `1px solid ${C.line}` } },
+        ...Array.from({ length: nowYear - 2026 + 1 }, (_, i) => 2026 + i).map((y) => React.createElement("option", { key: y, value: y }, `${y}年`))),
+      mode === "day" && React.createElement("select", { value: month, onChange: (e) => setMonth(Number(e.target.value)), className: "px-2 py-1.5 rounded-lg text-sm", style: { border: `1px solid ${C.line}` } },
+        ...Array.from({ length: 12 }, (_, i) => i + 1).map((m) => React.createElement("option", { key: m, value: m }, `${m}月`)))
+    )
+  );
+}
+
+/* =========================================================
+   表11：溫室用量側寫——固定一個溫室，攤開它用了哪些細項（溝灌/噴灌/米糠/
+   金旺/7種其他資材，共11條），看這個溫室的長期使用組成。C87/V5.028 新增。
+   ========================================================= */
+function ZoneUsageProfileReport({ onBack }) {
+  const nowYear = new Date().getFullYear();
+  const [mode, setMode] = useState("month");
+  const [year, setYear] = useState(nowYear >= 2026 ? nowYear : 2026);
+  const [month, setMonth] = useState(new Date().getMonth() + 1);
+  const [zone, setZone] = useState(YIELD_DB_ZONES[0]);
+  const [param, setParam] = useState("water"); // "water" | "solid" | "liquid"——單位不同，分開看，不會11條擠在一起
+  const [selectedMaterials, setSelectedMaterials] = useState(() => [...LIQUID_KEYS]); // 液態肥7項可複選
+  const [showLabels, setShowLabels] = useState(true);
+  const [loading, setLoading] = useState(false);
+  const [progress, setProgress] = useState("");
+  const [error, setError] = useState("");
+  const [data, setData] = useState(null); // { labels[], series: { itemKey: [...] } }
+
+  const itemsForParam = param === "water" ? ["溝灌", "噴灌"] : param === "solid" ? ["米糠", "金旺"] : selectedMaterials;
+
+  const run = async () => {
+    setLoading(true); setError(""); setData(null);
+    try {
+      const periods = usagePeriodsForMode(mode, year, month);
+      const labels = [];
+      const series = {};
+      itemsForParam.forEach((k) => { series[k] = []; });
+      for (let i = 0; i < periods.length; i++) {
+        const p = periods[i];
+        if (!p) { labels.push(""); itemsForParam.forEach((k) => series[k].push(null)); continue; }
+        setProgress(`${i + 1}/${periods.length}`);
+        labels.push(p.label);
+        const vals = await Promise.all(itemsForParam.map((k) => fetchZoneworkItemRange(zone, k, p.start, p.end)));
+        itemsForParam.forEach((k, ki) => series[k].push(vals[ki]));
+      }
+      setData({ labels, series });
+    } catch (e) { setError("讀取失敗：" + (e.message || e)); }
+    setLoading(false); setProgress("");
+  };
+  useEffect(() => { if (itemsForParam.length) run(); else setData(null); }, [mode, year, month, zone, param, selectedMaterials]);
+
+  const labels = data ? data.labels : [];
+  const n = labels.length;
+  const perPoint = (mode === "week" || mode === "day") ? 44 : 70;
+  const W = Math.max(700, n * perPoint), H = 380, padL = 62, padR = param === "water" ? 130 : 96, padT = 24, padB = 56;
+  const plotW = W - padL - padR, plotH = H - padT - padB;
+  const xOf = (i) => padL + (n <= 1 ? plotW / 2 : (i / (n - 1)) * plotW);
+
+  const maxOf = (keys) => {
+    let m = 10;
+    keys.forEach((k) => (data && data.series[k] || []).forEach((v) => { if (v != null && v > m) m = v; }));
+    return m;
+  };
+  const tonsMax = maxOf(["溝灌"]);
+  const minMax = maxOf(["噴灌"]);
+  const singleMax = maxOf(itemsForParam); // solid/liquid 共用一個軸的上限
+  const yOfMax = (max) => (v) => padT + (1 - v / max) * plotH;
+  const yTons = yOfMax(tonsMax), yMin = yOfMax(minMax), ySingle = yOfMax(singleMax);
+  const yFor = (k) => param === "water" ? (k === "溝灌" ? yTons : yMin) : ySingle;
+
+  const fmtN = (v) => v == null ? "" : Number(v).toFixed(1);
+  const lineFor = (k) => {
+    const values = data ? data.series[k] : null;
+    if (!values) return null;
+    const yfn = yFor(k);
+    const color = ZONEWORK_ITEM_COLORS[k];
+    const pts = values.map((v, i) => (v == null ? null : `${xOf(i).toFixed(1)},${yfn(v).toFixed(1)}`)).filter(Boolean).join(" ");
+    const dots = values.map((v, i) => v == null ? null : React.createElement("g", { key: i },
+      React.createElement("circle", { cx: xOf(i), cy: yfn(v), r: 2.5, fill: color }),
+      showLabels && v > 0 && React.createElement("text", { x: xOf(i), y: yfn(v) - 6, fontSize: 12.5, fill: color, textAnchor: "middle", fontFamily: "IBM Plex Mono, monospace" }, fmtN(v))
+    ));
+    return React.createElement(React.Fragment, { key: k }, React.createElement("polyline", { points: pts, fill: "none", stroke: color, strokeWidth: 2 }), dots);
+  };
+  const axisTicks = (max, color, x, unit, anchor) => [0, 0.5, 1].map((f) => (
+    React.createElement("text", { key: f, x, y: yOfMax(max)(max * f) + 4, fontSize: 12.5, fill: color, textAnchor: anchor, fontFamily: "IBM Plex Mono, monospace" }, (max * f).toFixed(1) + (f === 1 ? unit : ""))
+  ));
+  const xTicks = labels.map((lab, i) => (
+    React.createElement("text", { key: i, x: xOf(i), y: H - padB + 18, fontSize: (mode === "week" || mode === "day") ? 11 : 12.5, fill: C.inkSoft, textAnchor: "middle", fontFamily: "Inter" }, lab)
+  ));
+  const gridY = [0, 0.25, 0.5, 0.75, 1].map((f) => (
+    React.createElement("line", { key: f, x1: padL, y1: padT + f * plotH, x2: W - padR, y2: padT + f * plotH, stroke: C.line, strokeWidth: 1 })
+  ));
+
+  return React.createElement("div", { className: "min-h-screen flex flex-col", style: { background: C.cream } },
+    React.createElement(NavBar, { backLabel: "查看各項報表", onBack }),
+    React.createElement("div", { className: "px-4 py-3", style: { borderBottom: `1px solid ${C.line}` } },
+      React.createElement("div", { style: { fontFamily: "Inter", fontWeight: 700, fontSize: 17, color: C.ink } }, "表11・溫室用量側寫"),
+      React.createElement("div", { className: "text-xs mt-1", style: { color: C.inkSoft, fontFamily: "Inter" } }, "2026年起（純讀取，不寫入資料）；固定一個溫室，依水分/固體肥/液體肥分開看——依「回報確認」的實際日期計算")
+    ),
+    React.createElement("div", { className: "p-4" },
+      React.createElement("div", { className: "text-xs mb-2", style: { color: C.inkSoft } }, "選擇溫室（單選）"),
+      React.createElement("div", { className: "flex gap-2 flex-wrap mb-3" },
+        ...YIELD_DB_ZONES.map((z) => React.createElement("button", {
+          key: z, onClick: () => setZone(z), className: "px-3 py-1.5 rounded-full text-sm",
+          style: zone === z ? { background: C.tableColor, color: "white", fontWeight: 700 } : { background: "white", color: C.ink, border: `1px solid ${C.line}` },
+        }, z))
+      ),
+      React.createElement("div", { className: "text-xs mb-2", style: { color: C.inkSoft } }, "查看類別"),
+      React.createElement("div", { className: "flex gap-2 mb-3" },
+        ...Object.keys(YIELD_PARAM_DEFS).map((p) => React.createElement("button", {
+          key: p, onClick: () => setParam(p), className: "px-3 py-1.5 rounded-lg text-sm",
+          style: param === p ? { background: C.wine, color: "white", fontWeight: 700 } : { background: "white", color: C.ink, border: `1px solid ${C.line}` },
+        }, `${YIELD_PARAM_DEFS[p].label}（${YIELD_PARAM_DEFS[p].unitLabel}）`))
+      ),
+      param === "liquid" && React.createElement("div", { className: "mb-3" },
+        React.createElement("div", { className: "text-xs mb-1.5", style: { color: C.inkSoft } }, "液體肥資材（可複選，各自一條線，不加總，單位皆為kg）"),
+        React.createElement("div", { className: "flex gap-2 flex-wrap" },
+          ...LIQUID_KEYS.map((k) => {
+            const checked = selectedMaterials.includes(k);
+            return React.createElement("button", {
+              key: k, onClick: () => setSelectedMaterials((prev) => checked ? prev.filter((x) => x !== k) : [...prev, k]),
+              className: "px-2.5 py-1 rounded-full text-xs",
+              style: checked ? { background: ZONEWORK_ITEM_COLORS[k], color: "white", fontWeight: 700 } : { background: "white", color: C.inkSoft, border: `1px solid ${C.line}` },
+            }, k);
+          })
+        )
+      ),
+      React.createElement(UsageTimeModeControls, { mode, setMode, year, setYear, month, setMonth, nowYear }),
+      React.createElement("label", { className: "flex items-center gap-2 text-xs mb-3", style: { color: C.inkSoft, cursor: "pointer" } },
+        React.createElement("input", { type: "checkbox", checked: showLabels, onChange: (e) => setShowLabels(e.target.checked) }),
+        "顯示數值標籤"
+      ),
+      param === "liquid" && !selectedMaterials.length && React.createElement("p", { className: "text-sm", style: { color: C.alert } }, "請至少選擇一項液體肥資材"),
+      loading && React.createElement("p", { className: "text-sm", style: { color: C.inkSoft } }, `讀取中…${progress ? `（${progress}）` : ""}`),
+      error && React.createElement("p", { className: "text-sm", style: { color: C.alert } }, error),
+      data && React.createElement("div", { className: "mt-2" },
+        React.createElement("div", { className: "flex gap-3 flex-wrap text-xs mb-2", style: { fontFamily: "Inter" } },
+          ...itemsForParam.map((k) => React.createElement("span", { key: k },
+            React.createElement("span", { style: { display: "inline-block", width: 10, height: 2, background: ZONEWORK_ITEM_COLORS[k], marginRight: 4 } }), k))
+        ),
+        param === "water" && React.createElement("p", { className: "text-xs mb-2", style: { color: C.inkSoft } }, "左軸＝溝灌(噸)，右軸＝噴灌(分鐘)，兩種單位分開"),
+        React.createElement("div", { style: { overflowX: "auto", maxWidth: "100%" } },
+          React.createElement("svg", { viewBox: `0 0 ${W} ${H}`, style: { width: W, height: H, display: "block" } },
+            gridY,
+            ...itemsForParam.map((k) => lineFor(k)),
+            param === "water"
+              ? React.createElement(React.Fragment, null, axisTicks(tonsMax, "#2E5FA3", padL - 8, "噸", "end"), axisTicks(minMax, "#5C7A52", W - padR + 8, "分", "start"))
+              : axisTicks(singleMax, C.inkSoft, padL - 8, param === "solid" ? "包" : "kg", "end"),
+            xTicks
+          )
+        )
+      )
+    )
+  );
+}
+
+function ComponentZoneCompareReport({ onBack }) {
+  const nowYear = new Date().getFullYear();
+  const [mode, setMode] = useState("month");
+  const [year, setYear] = useState(nowYear >= 2026 ? nowYear : 2026);
+  const [month, setMonth] = useState(new Date().getMonth() + 1);
+  const [item, setItem] = useState(ZONEWORK_ITEMS[0].key);
+  const [zonesSel, setZonesSel] = useState(() => [...YIELD_DB_ZONES]);
+  const [showLabels, setShowLabels] = useState(true);
+  const [loading, setLoading] = useState(false);
+  const [progress, setProgress] = useState("");
+  const [error, setError] = useState("");
+  const [data, setData] = useState(null); // { labels[], perZone: { zone: [...] } }
+  const itemMeta = ZONEWORK_ITEMS.find((it) => it.key === item) || ZONEWORK_ITEMS[0];
+
+  const run = async () => {
+    setLoading(true); setError(""); setData(null);
+    try {
+      const periods = usagePeriodsForMode(mode, year, month);
+      const labels = [];
+      const perZone = {};
+      zonesSel.forEach((z) => { perZone[z] = []; });
+      for (let i = 0; i < periods.length; i++) {
+        const p = periods[i];
+        if (!p) { labels.push(""); zonesSel.forEach((z) => perZone[z].push(null)); continue; }
+        setProgress(`${i + 1}/${periods.length}`);
+        labels.push(p.label);
+        const vals = await Promise.all(zonesSel.map((z) => fetchZoneworkItemRange(z, item, p.start, p.end)));
+        zonesSel.forEach((z, zi) => perZone[z].push(vals[zi]));
+      }
+      setData({ labels, perZone });
+    } catch (e) { setError("讀取失敗：" + (e.message || e)); }
+    setLoading(false); setProgress("");
+  };
+  useEffect(() => { if (zonesSel.length) run(); else setData(null); }, [mode, year, month, item, zonesSel]);
+
+  const toggleZone = (z) => setZonesSel((prev) => prev.includes(z) ? prev.filter((x) => x !== z) : [...prev, z]);
+
+  const labels = data ? data.labels : [];
+  const n = labels.length;
+  const perPoint = (mode === "week" || mode === "day") ? 44 : 70;
+  const W = Math.max(700, n * perPoint), H = 380, padL = 62, padR = 20, padT = 24, padB = 56;
+  const plotW = W - padL - padR, plotH = H - padT - padB;
+  const xOf = (i) => padL + (n <= 1 ? plotW / 2 : (i / (n - 1)) * plotW);
+  const maxVal = (() => {
+    let m = 10;
+    zonesSel.forEach((z) => (data && data.perZone[z] || []).forEach((v) => { if (v != null && v > m) m = v; }));
+    return m;
+  })();
+  const yOf = (v) => padT + (1 - v / maxVal) * plotH;
+
+  const fmtN = (v) => v == null ? "" : Number(v).toFixed(1);
+  const lineFor = (z) => {
+    const values = data ? data.perZone[z] : null;
+    if (!values) return null;
+    const color = ZONE_COLORS[z];
+    const pts = values.map((v, i) => (v == null ? null : `${xOf(i).toFixed(1)},${yOf(v).toFixed(1)}`)).filter(Boolean).join(" ");
+    const dots = values.map((v, i) => v == null ? null : React.createElement("g", { key: i },
+      React.createElement("circle", { cx: xOf(i), cy: yOf(v), r: 2.4, fill: color }),
+      showLabels && v > 0 && React.createElement("text", { x: xOf(i), y: yOf(v) - 6, fontSize: 12.5, fill: color, textAnchor: "middle", fontFamily: "IBM Plex Mono, monospace" }, fmtN(v))
+    ));
+    return React.createElement(React.Fragment, { key: z }, React.createElement("polyline", { points: pts, fill: "none", stroke: color, strokeWidth: 2 }), dots);
+  };
+  const axisTicks = [0, 0.25, 0.5, 0.75, 1].map((f) => (
+    React.createElement("text", { key: f, x: padL - 8, y: yOf(maxVal * f) + 4, fontSize: 12.5, fill: C.inkSoft, textAnchor: "end", fontFamily: "IBM Plex Mono, monospace" }, (maxVal * f).toFixed(1) + (f === 1 ? itemMeta.unit : ""))
+  ));
+  const xTicks = labels.map((lab, i) => (
+    React.createElement("text", { key: i, x: xOf(i), y: H - padB + 18, fontSize: (mode === "week" || mode === "day") ? 11 : 12.5, fill: C.inkSoft, textAnchor: "middle", fontFamily: "Inter" }, lab)
+  ));
+  const gridY = [0, 0.25, 0.5, 0.75, 1].map((f) => (
+    React.createElement("line", { key: f, x1: padL, y1: padT + f * plotH, x2: W - padR, y2: padT + f * plotH, stroke: C.line, strokeWidth: 1 })
+  ));
+
+  return React.createElement("div", { className: "min-h-screen flex flex-col", style: { background: C.cream } },
+    React.createElement(NavBar, { backLabel: "查看各項報表", onBack }),
+    React.createElement("div", { className: "px-4 py-3", style: { borderBottom: `1px solid ${C.line}` } },
+      React.createElement("div", { style: { fontFamily: "Inter", fontWeight: 700, fontSize: 17, color: C.ink } }, "表12・細項跨溫室對比"),
+      React.createElement("div", { className: "text-xs mt-1", style: { color: C.inkSoft, fontFamily: "Inter" } }, "2026年起（純讀取，不寫入資料）；固定一個細項，攤開六個溫室誰用得多——依「回報確認」的實際日期計算")
+    ),
+    React.createElement("div", { className: "p-4" },
+      React.createElement("div", { className: "text-xs mb-2", style: { color: C.inkSoft } }, "選擇細項（單選）"),
+      React.createElement("div", { className: "flex gap-2 flex-wrap mb-3" },
+        ...ZONEWORK_ITEMS.map((it) => React.createElement("button", {
+          key: it.key, onClick: () => setItem(it.key), className: "px-2.5 py-1.5 rounded-full text-sm",
+          style: item === it.key ? { background: ZONEWORK_ITEM_COLORS[it.key], color: "white", fontWeight: 700 } : { background: "white", color: C.ink, border: `1px solid ${C.line}` },
+        }, `${it.key}(${it.unit})`))
+      ),
+      React.createElement(UsageTimeModeControls, { mode, setMode, year, setYear, month, setMonth, nowYear }),
+      React.createElement("div", { className: "text-xs mb-2", style: { color: C.inkSoft } }, "溫室（可複選，預設全選）"),
+      React.createElement("div", { className: "flex gap-2 flex-wrap mb-3" },
+        ...YIELD_DB_ZONES.map((z) => React.createElement("button", {
+          key: z, onClick: () => toggleZone(z), className: "px-3 py-1.5 rounded-full text-sm",
+          style: zonesSel.includes(z) ? { background: ZONE_COLORS[z], color: "white", fontWeight: 700 } : { background: "white", color: C.ink, border: `1px solid ${C.line}` },
+        }, z))
+      ),
+      React.createElement("label", { className: "flex items-center gap-2 text-xs mb-3", style: { color: C.inkSoft, cursor: "pointer" } },
+        React.createElement("input", { type: "checkbox", checked: showLabels, onChange: (e) => setShowLabels(e.target.checked) }),
+        "顯示數值標籤"
+      ),
+      !zonesSel.length && React.createElement("p", { className: "text-sm", style: { color: C.alert } }, "請至少選擇一個溫室"),
+      loading && React.createElement("p", { className: "text-sm", style: { color: C.inkSoft } }, `讀取中…${progress ? `（${progress}）` : ""}`),
+      error && React.createElement("p", { className: "text-sm", style: { color: C.alert } }, error),
+      data && React.createElement("div", { className: "mt-2" },
+        React.createElement("div", { className: "flex gap-3 flex-wrap text-xs mb-2", style: { fontFamily: "Inter" } },
+          ...zonesSel.map((z) => React.createElement("span", { key: z },
+            React.createElement("span", { style: { display: "inline-block", width: 10, height: 2, background: ZONE_COLORS[z], marginRight: 4 } }), z))
+        ),
+        React.createElement("div", { style: { overflowX: "auto", maxWidth: "100%" } },
+          React.createElement("svg", { viewBox: `0 0 ${W} ${H}`, style: { width: W, height: H, display: "block" } },
+            gridY, ...zonesSel.map((z) => lineFor(z)), axisTicks, xTicks
+          )
+        )
+      )
+    )
+  );
+}
+
+
 const REPORT_SLOTS = [
   { no: "一", label: "耗材匯總表", key: "materials", ready: true },
   { no: "二", label: "年度計畫表", key: "annual", ready: true },
@@ -8535,6 +8891,8 @@ const REPORT_SLOTS = [
   { no: "八", label: "分區資材投入與產能對比", key: "zoneMaterialYield", ready: true },
   { no: "九", label: "氣候變遷與產能", key: "climateYield", ready: true },
   { no: "十", label: "登入 IP 與時間", key: "loginAudit", ready: true },
+  { no: "十一", label: "溫室用量側寫", key: "zoneUsageProfile", ready: true },
+  { no: "十二", label: "細項跨溫室對比", key: "componentZoneCompare", ready: true },
 ];
 
 // 耗材與報表主入口：年份資料夾 → 月份資料夾 → 10個表格選項（表一~表十）
@@ -8575,6 +8933,12 @@ function ReportsHub({ onBack, loggedInId, calendarRole, shortcutKey = null }) {
   }
   if (openKey === "zoneMaterialYield") {
     return React.createElement(ZoneMaterialYieldReport, { onBack: () => shortcutKey ? onBack() : setOpenKey(null),} );
+  }
+  if (openKey === "zoneUsageProfile") {
+    return React.createElement(ZoneUsageProfileReport, { onBack: () => shortcutKey ? onBack() : setOpenKey(null),} );
+  }
+  if (openKey === "componentZoneCompare") {
+    return React.createElement(ComponentZoneCompareReport, { onBack: () => shortcutKey ? onBack() : setOpenKey(null),} );
   }
 
   return (
