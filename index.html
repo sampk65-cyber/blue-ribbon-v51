@@ -717,7 +717,7 @@ const C = {
   tiffanyLight: "#B8ECE5",
   tiffanyText: "#2E8577",
 };
-const APP_VERSION = 'V5.1.C90';
+const APP_VERSION = 'V5.1.C92';
 const FONT_LINK = "https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,600;9..144,700&family=Inter:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap";
 
 const WORK_ITEMS = [
@@ -7527,6 +7527,16 @@ function LoginAuditReport({ year, month, onBack }) {
    因為只是讀取、不寫入，用具名的第二個 Firebase App 實例連過去即可，不影響
    本檔案原本對 figapi-d24dc 的連線與任何寫入邏輯。
    ========================================================= */
+// C92/V5.1.C92：本地日期字串。toISOString() 是UTC，台灣(UTC+8)本地午夜會被轉成前一天，
+// 造成逐日讀取時整段往前錯一天（漏掉最後一天、多讀前一天），週區間也會從週一變成週日。
+function localYMD(d) {
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+}
+function yieldDayBefore(dateStr) {
+  const d = new Date(dateStr + "T00:00:00");
+  d.setDate(d.getDate() - 1);
+  return localYMD(d);
+}
 const YIELD_DB_CONFIG = {
   apiKey: "AIzaSyBoHlZFS3fuhuS6MjYH8cPE3djbA--lJLY",
   authDomain: "figdata-d2737.firebaseapp.com",
@@ -7587,7 +7597,7 @@ function sumYieldRecordKg(rec, grades) {
 }
 function yieldPeriodsAcrossYears(startYear, endYear) {
   const periods = [];
-  const todayStr = new Date().toISOString().slice(0, 10);
+  const todayStr = localYMD(new Date());
   for (let year = startYear; year <= endYear; year++) {
     for (let m = 1; m <= 12; m++) {
       const mm = String(m).padStart(2, "0");
@@ -7622,7 +7632,7 @@ async function fetchYieldLongTermSeries(zone, startYear, endYear, onProgress, gr
       const tasks = [];
       let d = new Date(p.start + "T00:00:00");
       const endD = new Date(p.end + "T00:00:00");
-      while (d <= endD) { tasks.push(d.toISOString().slice(0, 10)); d.setDate(d.getDate() + 1); }
+      while (d <= endD) { tasks.push(localYMD(d)); d.setDate(d.getDate() + 1); }
       const recs = await Promise.all(tasks.map((ds) => loadYieldDayDoc(db, zone, ds)));
       recs.forEach((rec) => { sum += sumYieldRecordKg(rec, grades); });
     }
@@ -7635,7 +7645,9 @@ async function fetchYieldLongTermSeries(zone, startYear, endYear, onProgress, gr
 
 const YIELD_GRADE_COLORS = { A: "#4E7C6B", B: "#2E5FA3", D: "#E0785F", NG: "#5B2A45" };
 function YieldLongTermReport({ onBack }) {
-  const [zone, setZone] = useState("一期");
+  // C91/V5.1.C91：分區改為可複選。多選時每個溫室各自一張圖、上下並列，
+  // 縱軸共用同一個上限（取所有已選溫室中的最高值），左右滑動時各圖同步。
+  const [zones, setZones] = useState(["一期"]);
   const [gradeSel, setGradeSel] = useState(() => [...YIELD_GRADES]);
   const [gradeMode, setGradeMode] = useState("sum"); // "sum"=加總成一條線 | "separate"=各品級各自一條線並列比較
   const [loading, setLoading] = useState(false);
@@ -7644,65 +7656,102 @@ function YieldLongTermReport({ onBack }) {
   const [error, setError] = useState("");
   const startYear = 2020;
   const endYear = new Date().getFullYear();
+  const runIdRef = useRef(0);
+  const scrollRefs = useRef({});
+  const activeScrollRef = useRef(null);
 
-  const run = async (targetZone, grades, mode) => {
+  const toggleZone = (z) => {
+    setZones((prev) => {
+      if (prev.includes(z)) return prev.length > 1 ? prev.filter((x) => x !== z) : prev;
+      return YIELD_DB_ZONES.filter((x) => x === z || prev.includes(x));
+    });
+  };
+
+  const run = async (targetZones, grades, mode) => {
+    const myId = ++runIdRef.current;
     setLoading(true); setError(""); setResult(null); setProgress("");
     try {
-      if (mode === "separate") {
-        const gs = grades.length ? grades : YIELD_GRADES;
-        let periods = null;
-        const seriesByGrade = {};
-        for (let gi = 0; gi < gs.length; gi++) {
-          const g = gs[gi];
-          const r = await fetchYieldLongTermSeries(targetZone, startYear, endYear, (d, t) => setProgress(`${g}：${d}/${t}`), [g]);
+      let periods = null;
+      const byZone = {};
+      for (const zn of targetZones) {
+        if (mode === "separate") {
+          const gs = grades.length ? grades : YIELD_GRADES;
+          const seriesByGrade = {};
+          for (const g of gs) {
+            const r = await fetchYieldLongTermSeries(zn, startYear, endYear, (d, t) => { if (runIdRef.current === myId) setProgress(`${zn} ${g}：${d}/${t}`); }, [g]);
+            if (runIdRef.current !== myId) return;
+            periods = r.periods;
+            seriesByGrade[g] = r.values;
+          }
+          byZone[zn] = { seriesByGrade };
+        } else {
+          const r = await fetchYieldLongTermSeries(zn, startYear, endYear, (d, t) => { if (runIdRef.current === myId) setProgress(`${zn}：${d}/${t}`); }, grades);
+          if (runIdRef.current !== myId) return;
           periods = r.periods;
-          seriesByGrade[g] = r.values;
+          byZone[zn] = { values: r.values };
         }
-        setResult({ periods, seriesByGrade });
-      } else {
-        const r = await fetchYieldLongTermSeries(targetZone, startYear, endYear, (d, t) => setProgress(`${d}/${t}`), grades);
-        setResult({ periods: r.periods, values: r.values });
       }
+      if (runIdRef.current !== myId) return;
+      setResult({ periods: periods || [], byZone, zones: [...targetZones], mode });
     } catch (e) {
-      setError("讀取失敗：" + (e.message || e));
+      if (runIdRef.current === myId) setError("讀取失敗：" + (e.message || e));
     }
-    setLoading(false);
+    if (runIdRef.current === myId) setLoading(false);
   };
 
   // C75/V5.018：進頁面、或切換分區時自動載入資料，不用先按查詢鈕才看得到圖。
   // C84/V5.025：加入品級(A/B/D/NG)複選，切換品級也自動重新查詢。
   // C85/V5.026：加入「加總／並列」切換——並列時各品級各自一條線，用不同顏色比較。
-  useEffect(() => { run(zone, gradeSel, gradeMode); }, [zone, gradeSel, gradeMode]);
+  // C91/V5.1.C91：分區可複選，各溫室分別一張圖上下並列。
+  useEffect(() => { run(zones, gradeSel, gradeMode); }, [zones, gradeSel, gradeMode]);
 
-  const allValues = result ? (result.values || Object.values(result.seriesByGrade || {}).flat()) : [];
+  // 同步滑動：以使用者正在操作的那張圖為準，把其他圖捲到同一位置
+  const onChartScroll = (zn) => (e) => {
+    if (activeScrollRef.current && activeScrollRef.current !== zn) return;
+    const left = e.currentTarget.scrollLeft;
+    Object.entries(scrollRefs.current).forEach(([k, el]) => {
+      if (k !== zn && el && Math.abs(el.scrollLeft - left) > 1) el.scrollLeft = left;
+    });
+  };
+  const markActive = (zn) => () => { activeScrollRef.current = zn; };
+
+  const zoneSeriesValues = (zr) => (zr ? (zr.values || Object.values(zr.seriesByGrade || {}).flat()) : []);
+  const allValues = result ? result.zones.flatMap((zn) => zoneSeriesValues(result.byZone[zn])) : [];
   const maxVal = result ? Math.max(10, ...allValues.filter((v) => v != null)) : 10;
   const n = result ? result.periods.length : 0;
-  const W = Math.max(900, n * 26), H = 340, padL = 62, padR = 16, padT = 20, padB = 60;
+  const multi = result ? result.zones.length > 1 : false;
+  const W = Math.max(900, n * 26), H = multi ? 280 : 340, padL = 62, padR = 16, padT = 20, padB = 60;
   const xOf = (i) => padL + (n <= 1 ? 0 : (i / (n - 1)) * (W - padL - padR));
   const yOf = (v) => padT + (1 - v / maxVal) * (H - padT - padB);
-  const gridLines = result ? [0, 0.25, 0.5, 0.75, 1].map((f) => {
+  const gridLines = () => [0, 0.25, 0.5, 0.75, 1].map((f) => {
     const val = maxVal * f;
     return React.createElement("g", { key: f },
       React.createElement("line", { x1: padL, y1: yOf(val), x2: W - padR, y2: yOf(val), stroke: C.line, strokeWidth: 1 }),
       React.createElement("text", { x: padL - 6, y: yOf(val) + 3, fontSize: 12, fill: C.inkSoft, textAnchor: "end", fontFamily: "IBM Plex Mono, monospace" }, val.toFixed(0) + "kg")
     );
-  }) : null;
-  const xTicks = result ? result.periods.map((p, i) => (
+  });
+  const xTicks = () => result.periods.map((p, i) => (
     i % 2 === 0 ? React.createElement("text", {
       key: i, x: xOf(i), y: H - padB + 14, fontSize: 10, fill: C.inkSoft, textAnchor: "end",
       fontFamily: "IBM Plex Mono, monospace", transform: `rotate(-45 ${xOf(i)} ${H - padB + 14})`,
     }, p.label) : null
-  )) : null;
+  ));
   const lineFor = (values, color) => {
     const points = values.map((v, i) => `${xOf(i).toFixed(1)},${yOf(v).toFixed(1)}`).join(" ");
     const dots = values.map((v, i) => React.createElement("circle", { key: i, cx: xOf(i), cy: yOf(v), r: 2.2, fill: color }));
     return React.createElement(React.Fragment, null, React.createElement("polyline", { points, fill: "none", stroke: color, strokeWidth: 2 }), dots);
   };
-  const chartLines = result
-    ? (gradeMode === "separate"
-        ? gradeSel.map((g) => React.createElement(React.Fragment, { key: g }, lineFor(result.seriesByGrade[g] || [], YIELD_GRADE_COLORS[g])))
-        : lineFor(result.values || [], C.tableColor))
-    : null;
+  const chartLinesFor = (zr) => {
+    if (!zr) return null;
+    return result.mode === "separate"
+      ? gradeSel.map((g) => React.createElement(React.Fragment, { key: g }, lineFor((zr.seriesByGrade || {})[g] || [], YIELD_GRADE_COLORS[g])))
+      : lineFor(zr.values || [], C.tableColor);
+  };
+  const zoneTotal = (zr) => Math.round(zoneSeriesValues(zr).reduce((s, v) => s + (Number(v) || 0), 0));
+
+  const gradeText = gradeMode === "separate"
+    ? `各品級並列（${gradeSel.join("、") || "未選品級"}）`
+    : (gradeSel.length === YIELD_GRADES.length ? "全品級" : gradeSel.join("+") || "未選品級");
 
   return React.createElement("div", { className: "min-h-screen flex flex-col", style: { background: C.cream } },
     React.createElement(NavBar, { backLabel: "耗材與報表", onBack }),
@@ -7712,12 +7761,12 @@ function YieldLongTermReport({ onBack }) {
       React.createElement("div", { className: "text-xs mt-1", style: { color: C.tableColor, fontFamily: "Inter" } }, "📱 資料範圍長，建議將手機轉為橫式觀看，或用手指左右滑動圖表")
     ),
     React.createElement("div", { className: "p-4" },
-      React.createElement("div", { className: "text-xs mb-2", style: { color: C.inkSoft, fontFamily: "Inter" } }, "選擇分區"),
+      React.createElement("div", { className: "text-xs mb-2", style: { color: C.inkSoft, fontFamily: "Inter" } }, "選擇分區（可複選，多選時各溫室分別一張圖、縱軸共用同一上限）"),
       React.createElement("div", { className: "flex gap-2 flex-wrap mb-4" },
         ...YIELD_DB_ZONES.map((z) => React.createElement("button", {
-          key: z, onClick: () => setZone(z),
+          key: z, onClick: () => toggleZone(z),
           className: "px-3 py-1.5 rounded-full text-sm",
-          style: zone === z
+          style: zones.includes(z)
             ? { background: C.wine, color: "white", fontFamily: "Inter", fontWeight: 700 }
             : { background: "white", color: C.ink, border: `1px solid ${C.line}`, fontFamily: "Inter" },
         }, z))
@@ -7740,25 +7789,36 @@ function YieldLongTermReport({ onBack }) {
         React.createElement("button", { onClick: () => setGradeMode("separate"), className: "px-3 py-1.5 rounded-lg text-sm", style: gradeMode === "separate" ? { background: C.wine, color: "white", fontWeight: 700 } : { background: "white", color: C.ink, border: `1px solid ${C.line}` } }, "各品級並列比較")
       ),
       React.createElement("button", {
-        onClick: () => run(zone, gradeSel, gradeMode), disabled: loading,
+        onClick: () => run(zones, gradeSel, gradeMode), disabled: loading,
         className: "px-4 py-2 rounded-lg text-sm",
         style: { background: C.tableColor, color: "white", fontFamily: "Inter", fontWeight: 700, opacity: loading ? 0.6 : 1 },
       }, loading ? `讀取中…${progress ? `（${progress}）` : ""}` : "重新查詢"),
       error && React.createElement("p", { className: "text-sm mt-3", style: { color: C.alert } }, error),
       result && React.createElement("div", { className: "mt-4" },
         React.createElement("p", { className: "text-sm mb-2", style: { color: C.wine, fontFamily: "Inter", fontWeight: 600 } },
-          gradeMode === "separate"
-            ? `${zone}・各品級並列（${gradeSel.join("、") || "未選品級"}）・${startYear}~${endYear}年 每15天產能趨勢（單位：kg）`
-            : `${zone}・${gradeSel.length === YIELD_GRADES.length ? "全品級" : gradeSel.join("+") || "未選品級"}・${startYear}~${endYear}年 每15天產能趨勢（單位：kg）`),
-        gradeMode === "separate" && React.createElement("div", { className: "flex gap-3 flex-wrap text-xs mb-2", style: { fontFamily: "Inter" } },
+          `${result.zones.join("、")}・${gradeText}・${startYear}~${endYear}年 每15天產能趨勢（單位：kg）`),
+        multi && React.createElement("p", { className: "text-xs mb-2", style: { color: C.inkSoft, fontFamily: "Inter" } },
+          `各圖縱軸統一上限 ${maxVal.toFixed(0)}kg，左右滑動任一張圖，其他圖會同步移動`),
+        result.mode === "separate" && React.createElement("div", { className: "flex gap-3 flex-wrap text-xs mb-2", style: { fontFamily: "Inter" } },
           ...gradeSel.map((g) => React.createElement("span", { key: g },
             React.createElement("span", { style: { display: "inline-block", width: 10, height: 2, background: YIELD_GRADE_COLORS[g], marginRight: 4 } }), g))
         ),
-        React.createElement("div", { style: { overflowX: "auto", maxWidth: "100%" } },
-          React.createElement("svg", { viewBox: `0 0 ${W} ${H}`, style: { width: W, height: H, display: "block" } },
-            gridLines, chartLines, xTicks
+        ...result.zones.map((zn) => React.createElement("div", { key: zn, className: multi ? "mb-4" : "" },
+          multi && React.createElement("div", { className: "flex items-baseline gap-2 mb-1", style: { fontFamily: "Inter" } },
+            React.createElement("span", { style: { fontWeight: 700, fontSize: 15, color: C.ink } }, zn),
+            React.createElement("span", { className: "text-xs", style: { color: C.inkSoft } }, `期間合計 ${zoneTotal(result.byZone[zn]).toLocaleString()}kg`)
+          ),
+          React.createElement("div", {
+            ref: (el) => { if (el) scrollRefs.current[zn] = el; else delete scrollRefs.current[zn]; },
+            onScroll: onChartScroll(zn),
+            onTouchStart: markActive(zn), onPointerDown: markActive(zn), onWheel: markActive(zn), onMouseEnter: markActive(zn),
+            style: { overflowX: "auto", maxWidth: "100%", borderTop: multi ? `1px solid ${C.line}` : "none" },
+          },
+            React.createElement("svg", { viewBox: `0 0 ${W} ${H}`, style: { width: W, height: H, display: "block" } },
+              gridLines(), chartLinesFor(result.byZone[zn]), xTicks()
+            )
           )
-        )
+        ))
       )
     )
   );
@@ -7811,7 +7871,7 @@ async function fetchClimateYearAgg(year) {
 async function fetchYieldYearMonthlyBreakdown(zone, year, grades) {
   const { db, authReady } = getYieldDb();
   await authReady;
-  const nowStr = new Date().toISOString().slice(0, 10);
+  const nowStr = localYMD(new Date());
   const monthTotals = new Array(12).fill(0);
   if (`${year}-01-01` < YIELD_DB_ARCHIVE_CUTOFF) {
     const archive = await loadYieldArchiveDoc(db, zone, year);
@@ -7825,7 +7885,7 @@ async function fetchYieldYearMonthlyBreakdown(zone, year, grades) {
     let d = new Date(Math.max(new Date(`${year}-01-01T00:00:00`), new Date(YIELD_DB_ARCHIVE_CUTOFF + "T00:00:00")));
     const endD = new Date(Math.min(new Date(`${year}-12-31T00:00:00`), new Date(nowStr + "T00:00:00")));
     const days = [];
-    while (d <= endD) { days.push(d.toISOString().slice(0, 10)); d.setDate(d.getDate() + 1); }
+    while (d <= endD) { days.push(localYMD(d)); d.setDate(d.getDate() + 1); }
     const recs = await Promise.all(days.map((ds) => loadYieldDayDoc(db, zone, ds)));
     days.forEach((ds, i) => { const m = Number(ds.slice(5, 7)); monthTotals[m - 1] += sumYieldRecordKg(recs[i], grades); });
   }
@@ -7867,7 +7927,7 @@ async function fetchClimatePeriodAgg(startDate, endDate) {
 }
 function yieldPeriodsOfYear(year) {
   const periods = [];
-  const todayStr = new Date().toISOString().slice(0, 10);
+  const todayStr = localYMD(new Date());
   for (let m = 1; m <= 12; m++) {
     const mm = String(m).padStart(2, "0");
     const lastDay = new Date(year, m, 0).getDate();
@@ -7880,21 +7940,32 @@ function yieldPeriodsOfYear(year) {
   }
   return periods;
 }
+// C92/V5.1.C92 修正：原本只要「起始日」早於封存切換日(2026-08-01)就只讀年度封存，
+// 導致跨過切換日的區間（例如「看年」的2026-01-01～今天、跨月的週）8/1以後的每日資料
+// 全部漏算，四南2026年只剩7月的93.5kg。改成把區間切成「封存段」與「每日段」分別加總。
 async function fetchYieldZonesPeriodTotal(zones, startDate, endDate, grades) {
   const { db, authReady } = getYieldDb();
   await authReady;
   let sum = 0;
+  const cutoff = YIELD_DB_ARCHIVE_CUTOFF;
   for (const zone of zones) {
-    if (startDate < YIELD_DB_ARCHIVE_CUTOFF) {
-      const archive = await loadYieldArchiveDoc(db, zone, startDate.slice(0, 4));
-      for (const dateStr of Object.keys(archive)) {
-        if (dateStr >= startDate && dateStr <= endDate) sum += sumYieldRecordKg(archive[dateStr], grades);
+    // 封存段：startDate ～ min(endDate, 切換日前一天)，可能跨年，逐年讀取
+    if (startDate < cutoff) {
+      const archEnd = endDate < cutoff ? endDate : yieldDayBefore(cutoff);
+      for (let y = Number(startDate.slice(0, 4)); y <= Number(archEnd.slice(0, 4)); y++) {
+        const archive = await loadYieldArchiveDoc(db, zone, String(y));
+        for (const dateStr of Object.keys(archive)) {
+          if (dateStr >= startDate && dateStr <= archEnd) sum += sumYieldRecordKg(archive[dateStr], grades);
+        }
       }
-    } else {
+    }
+    // 每日段：max(startDate, 切換日) ～ endDate
+    if (endDate >= cutoff) {
+      const dayStart = startDate >= cutoff ? startDate : cutoff;
       const days = [];
-      let d = new Date(startDate + "T00:00:00");
+      let d = new Date(dayStart + "T00:00:00");
       const endD = new Date(endDate + "T00:00:00");
-      while (d <= endD) { days.push(d.toISOString().slice(0, 10)); d.setDate(d.getDate() + 1); }
+      while (d <= endD) { days.push(localYMD(d)); d.setDate(d.getDate() + 1); }
       const recs = await Promise.all(days.map((ds) => loadYieldDayDoc(db, zone, ds)));
       recs.forEach((r) => { sum += sumYieldRecordKg(r, grades); });
     }
@@ -8207,7 +8278,7 @@ async function fetchZoneworkRange(zoneName, startDate, endDate) {
 }
 function weekPeriodsOfYear(year) {
   const periods = [];
-  const todayStr = new Date().toISOString().slice(0, 10);
+  const todayStr = localYMD(new Date());
   let d = new Date(`${year}-01-01T00:00:00`);
   const dow = d.getDay();
   d.setDate(d.getDate() + (dow === 0 ? -6 : 1 - dow)); // 回推到當週週一
@@ -8215,9 +8286,9 @@ function weekPeriodsOfYear(year) {
   while (d.getFullYear() <= year && idx <= 54) {
     const start = new Date(d);
     const end = new Date(d); end.setDate(end.getDate() + 6);
-    const startStr = start.toISOString().slice(0, 10);
+    const startStr = localYMD(start);
     if (startStr > todayStr) break;
-    const endStr = end.toISOString().slice(0, 10) > todayStr ? todayStr : end.toISOString().slice(0, 10);
+    const endStr = localYMD(end) > todayStr ? todayStr : localYMD(end);
     periods.push({ label: `W${idx}`, start: startStr, end: endStr });
     idx++;
     d.setDate(d.getDate() + 7);
@@ -8247,7 +8318,7 @@ function ZoneMaterialYieldReport({ onBack }) {
   const [data, setData] = useState(null); // { labels[], perZone: { [zoneName]: {tons[],minutes[],solid[],liquid[],yield[]} } }
   const startYear = 2020;
   const nowYear = new Date().getFullYear();
-  const todayStr = new Date().toISOString().slice(0, 10);
+  const todayStr = localYMD(new Date());
 
   const periodsForMode = () => {
     if (mode === "year") {
@@ -8531,7 +8602,7 @@ function ZoneMaterialYieldReport({ onBack }) {
 const ZONE_COLORS = { "一期": "#2E5FA3", "二期": "#E0785F", "三期": "#4E7C6B", "四南": "#5B2A45", "四北": "#C9A227", "五期": "#8B5FBF" };
 function dayPeriodsOfMonth(year, month) {
   const out = [];
-  const todayStr = new Date().toISOString().slice(0, 10);
+  const todayStr = localYMD(new Date());
   const lastDay = new Date(year, month, 0).getDate();
   for (let d = 1; d <= lastDay; d++) {
     const ds = `${year}-${String(month).padStart(2, "0")}-${String(d).padStart(2, "0")}`;
@@ -8579,7 +8650,7 @@ async function fetchZoneworkItemRange(zoneName, itemKey, startDate, endDate) {
   return Math.round(total * 10) / 10;
 }
 function usagePeriodsForMode(mode, year, month) {
-  const todayStr = new Date().toISOString().slice(0, 10);
+  const todayStr = localYMD(new Date());
   const nowYear = new Date().getFullYear();
   if (mode === "year") {
     const out = [];
