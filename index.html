@@ -717,7 +717,7 @@ const C = {
   tiffanyLight: "#B8ECE5",
   tiffanyText: "#2E8577",
 };
-const APP_VERSION = 'V5.1.C106';
+const APP_VERSION = 'V5.1.C107';
 const FONT_LINK = "https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,600;9..144,700&family=Inter:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap";
 
 const WORK_ITEMS = [
@@ -13093,6 +13093,63 @@ function saveSession(session) {
   } catch (e39) {}
 }
 
+// C107：自動偵測新版本。每次切回 App、以及每 10 分鐘，在背景讀取網站上最新 index.html 的前段
+// （只讀到版本號就中止下載，約 40KB，不會每次下載整個檔案），版本不同就顯示提示條；
+// 不自動強制重新整理，避免正在輸入回報時被打斷。
+async function fetchDeployedVersion() {
+  try {
+    const url = location.origin + location.pathname + (location.pathname.endsWith("/") || /\.html$/.test(location.pathname) ? "" : "") + "?vcheck=" + Date.now();
+    const res = await fetch(url, { cache: "no-store", headers: { Range: "bytes=0-131071" } }); // 只要前 128KB；伺服器不支援時也會在讀到版本號後中止
+    if (!(res.ok || res.status === 206) || !res.body) return null;
+    const reader = res.body.getReader();
+    const dec = new TextDecoder();
+    let txt = "";
+    while (txt.length < 300000) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      txt += dec.decode(value, { stream: true });
+      const m = txt.match(/const APP_VERSION = '([^']+)'/);
+      if (m) { reader.cancel().catch(() => {}); return m[1]; }
+    }
+    reader.cancel().catch(() => {});
+  } catch (e) { console.warn("version check failed", e); }
+  return null;
+}
+function UpdateNotice() {
+  const [newVer, setNewVer] = useState(null);
+  const [hiddenFor, setHiddenFor] = useState(null);
+  useEffect(() => {
+    let alive = true, busy = false;
+    const check = async () => {
+      if (busy || document.visibilityState === "hidden") return;
+      busy = true;
+      const v = await fetchDeployedVersion();
+      busy = false;
+      if (alive && v && v !== APP_VERSION) setNewVer(v);
+    };
+    const first = setTimeout(check, 8000);
+    const timer = setInterval(check, 10 * 60 * 1000);
+    const onVis = () => { if (document.visibilityState === "visible") check(); };
+    document.addEventListener("visibilitychange", onVis);
+    return () => { alive = false; clearTimeout(first); clearInterval(timer); document.removeEventListener("visibilitychange", onVis); };
+  }, []);
+  if (!newVer || hiddenFor === newVer) return null;
+  return React.createElement('div', {
+      style: { position: "fixed", left: 0, right: 0, top: 0, zIndex: 10050, paddingTop: "env(safe-area-inset-top, 0px)", background: C.tableColor, color: "white", boxShadow: "0 2px 10px rgba(0,0,0,.18)" },
+    },
+    React.createElement('div', { style: { display: "flex", alignItems: "center", gap: 8, padding: "10px 14px", fontFamily: "Inter", fontSize: 14 } },
+      React.createElement('button', {
+        onClick: () => { try { location.reload(); } catch (_) {} },
+        style: { flex: 1, textAlign: "left", background: "transparent", border: 0, color: "white", fontWeight: 700, fontSize: 14, padding: 0 },
+      }, `🔄 有新版本 ${newVer}（目前 ${APP_VERSION}），點此更新`),
+      React.createElement('button', {
+        onClick: () => setHiddenFor(newVer), "aria-label": "稍後",
+        style: { background: "rgba(255,255,255,.2)", border: 0, color: "white", borderRadius: 8, padding: "4px 10px", fontSize: 13 },
+      }, "稍後")
+    )
+  );
+}
+
 function App() {
   const [session, setSessionState] = useState(() => loadSavedSession());
 
@@ -13109,10 +13166,12 @@ function App() {
     setSessionState(null);
   };
 
-  if (!session) {
-    return React.createElement(LoginSplash, { onLogin: login,} );
-  }
-  return React.createElement(AppMain, { initialRole: session.role, initialId: session.id, onLogoutToSplash: logout,} );
+  return React.createElement(React.Fragment, null,
+    !session
+      ? React.createElement(LoginSplash, { onLogin: login,} )
+      : React.createElement(AppMain, { initialRole: session.role, initialId: session.id, onLogoutToSplash: logout,} ),
+    React.createElement(UpdateNotice, null)
+  );
 }
 
 
