@@ -717,7 +717,7 @@ const C = {
   tiffanyLight: "#B8ECE5",
   tiffanyText: "#2E8577",
 };
-const APP_VERSION = 'V5.1.C94';
+const APP_VERSION = 'V5.1.C96';
 const FONT_LINK = "https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,600;9..144,700&family=Inter:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap";
 
 const WORK_ITEMS = [
@@ -5598,6 +5598,22 @@ function PermissionEditor({ person, editable, onClose, onSaved }) {
 // 指定工項後「是否回報」捷徑對話框（V4.5 / V5.1C8.5）
 // 僅新增導航捷徑，不改動既有工項、權限、打卡與資料儲存邏輯。
 // ============================================================
+// C96：數字鍵盤右下「✓」(Enter) 原本沒有任何作用。改為：
+// 還有下一格就跳到下一格；已是最後一格就收起鍵盤，並把「回報確認」按鈕捲到畫面中。
+// 不會自動送出，避免誤觸造成用量重複累加。
+function qtyInputEnter(e) {
+  if (!(e.key === "Enter" || e.keyCode === 13)) return;
+  e.preventDefault();
+  const el = e.currentTarget;
+  const scope = el.closest("[data-qty-scope]") || el.closest(".fixed") || document.body;
+  const inputs = Array.from(scope.querySelectorAll("input[data-qty-input]"))
+    .filter((x) => !x.disabled && x.offsetParent !== null);
+  const i = inputs.indexOf(el);
+  if (i >= 0 && i < inputs.length - 1) { inputs[i + 1].focus(); return; }
+  el.blur();
+  const btn = scope.querySelector("[data-qty-submit]");
+  if (btn) window.setTimeout(() => { try { btn.scrollIntoView({ block: "center", behavior: "smooth" }); } catch (_) {} }, 280);
+}
 function showReportShortcutDialog(onYes) {
   const old = document.getElementById("report-shortcut-dialog");
   if (old) old.remove();
@@ -5618,7 +5634,7 @@ function showReportShortcutDialog(onYes) {
   title.textContent = "是否回報？";
   Object.assign(title.style, { fontWeight: "800", fontSize: "20px", color: "#2B2119", marginBottom: "8px" });
   const hint = document.createElement("div");
-  hint.textContent = "按「是」直接前往功能表4的溫室選單進行回報。";
+  hint.textContent = "按「是」直接開啟這筆指定進行回報。";
   Object.assign(hint.style, { fontSize: "13px", lineHeight: "1.6", color: "#6B5D50", marginBottom: "18px" });
   const row = document.createElement("div");
   Object.assign(row.style, { display: "grid", gridTemplateColumns: "1fr 1fr", gap: "10px" });
@@ -5957,8 +5973,8 @@ function CellWorkTable({ zone, cellId, role, onClose, ym, workDate, loggedInId, 
       const {cellIds,zoneIds}=safety.validateAssignment(cellDraft,zoneDraft);
       const stamp=workStampForDate(workDate);
       const updates=[];
-      let nextData=cellDraft,nextZone=zoneDraft,zoneEventId=null;
-      if(cellIds.length){nextData=safety.buildAssignment(context.work.data,cellDraft,cellIds,newWorkEventId(),stamp,true,recipientDirtyRef.current);updates.push({scope:"work",next:nextData});}
+      let nextData=cellDraft,nextZone=zoneDraft,zoneEventId=null,cellEventId=null;
+      if(cellIds.length){cellEventId=newWorkEventId();nextData=safety.buildAssignment(context.work.data,cellDraft,cellIds,cellEventId,stamp,true,recipientDirtyRef.current);updates.push({scope:"work",next:nextData});}
       if(zoneIds.length){zoneEventId=newWorkEventId();nextZone=safety.buildAssignment(context.zone.data,zoneDraft,zoneIds,zoneEventId,stamp,false);updates.push({scope:"zone",next:nextZone});}
       if(!cellIds.length && recipientDirtyRef.current){
         if(Object.values(context.work.data.pending||{}).some(Boolean) && safety.stable(context.work.data.recipientIds||[])!==safety.stable(cellDraft.recipientIds||[])) throw new Error("其他工作仍待回報，請沿用原受文對象或先完成原工作。");
@@ -5974,7 +5990,9 @@ function CellWorkTable({ zone, cellId, role, onClose, ym, workDate, loggedInId, 
       const freshData=cleanForNewAssignment(context.work.data,blank),freshZone=cleanForNewAssignment(context.zone.data,blankZone);
       dataRef.current=freshData;zoneDataRef.current=freshZone;setData(freshData);setZoneData(freshZone);
       assignmentDirtyRef.current=false;recipientDirtyRef.current=false;
-      showReportShortcutDialog(()=>{ if(typeof onGoReport==="function") onGoReport(); });
+      // C95：回報捷徑直接帶這次指定的事件，進功能4後直接打開這筆，不用再選年／月／事件。
+      const reportTarget={zoneId:zone.id,cellId,ym,historyDate:String(stamp).trim().split(" ")[0].replace(/\//g,"-"),historyEventId:cellEventId||zoneEventId};
+      showReportShortcutDialog(()=>{ if(typeof onGoReport==="function") onGoReport(reportTarget); });
       return true;
     } catch(error) { return showWorkError(error); }
     finally { assignmentBusyRef.current=false; }
@@ -6764,21 +6782,21 @@ function CellWorkTable({ zone, cellId, role, onClose, ym, workDate, loggedInId, 
                   , quickSelected.includes(6) && selected67(6).map((opt) => (
                     React.createElement('div', { key: `q6-${opt}`, className: "flex items-center gap-2" },
                       React.createElement('span', { className: "text-xs flex-shrink-0", style: { width: 70, fontFamily: "Inter", color: C.ink } }, "6.", opt),
-                      React.createElement('input', { type: "number", value: quickQty8[`6:${opt}`] ?? qty67(6,opt), onChange: (e) => setQuickQty8((q) => ({ ...q, [`6:${opt}`]: e.target.value })), className: "flex-1 px-2 py-1.5 rounded text-xs", style: { border: `1px solid ${C.line}`, fontFamily: "IBM Plex Mono" } }),
+                      React.createElement('input', { type: "number", "data-qty-input": "1", inputMode: "decimal", enterKeyHint: "next", onKeyDown: qtyInputEnter, value: quickQty8[`6:${opt}`] ?? qty67(6,opt), onChange: (e) => setQuickQty8((q) => ({ ...q, [`6:${opt}`]: e.target.value })), className: "flex-1 px-2 py-1.5 rounded text-xs", style: { border: `1px solid ${C.line}`, fontFamily: "IBM Plex Mono" } }),
                       React.createElement('span', { className: "text-xs flex-shrink-0", style: { color: C.inkSoft, fontFamily: "Inter" } }, opt === "噴灌" ? "分鐘" : "噸")
                     )
                   ))
                   , quickSelected.includes(7) && selected67(7).map((opt) => (
                     React.createElement('div', { key: `q7-${opt}`, className: "flex items-center gap-2" },
                       React.createElement('span', { className: "text-xs flex-shrink-0", style: { width: 70, fontFamily: "Inter", color: C.ink } }, "7.", opt === "金旺" ? "金旺特" : opt),
-                      React.createElement('input', { type: "number", value: quickQty8[`7:${opt}`] ?? qty67(7,opt), onChange: (e) => setQuickQty8((q) => ({ ...q, [`7:${opt}`]: e.target.value })), className: "flex-1 px-2 py-1.5 rounded text-xs", style: { border: `1px solid ${C.line}`, fontFamily: "IBM Plex Mono" } }),
+                      React.createElement('input', { type: "number", "data-qty-input": "1", inputMode: "decimal", enterKeyHint: "next", onKeyDown: qtyInputEnter, value: quickQty8[`7:${opt}`] ?? qty67(7,opt), onChange: (e) => setQuickQty8((q) => ({ ...q, [`7:${opt}`]: e.target.value })), className: "flex-1 px-2 py-1.5 rounded text-xs", style: { border: `1px solid ${C.line}`, fontFamily: "IBM Plex Mono" } }),
                       React.createElement('span', { className: "text-xs flex-shrink-0", style: { color: C.inkSoft, fontFamily: "Inter" } }, "包")
                     )
                   ))
                   , quickSelected.includes(8) && (zoneData.multi8Main || []).map((opt) => (
                     React.createElement('div', { key: opt, className: "flex items-center gap-2"  ,}
                       , React.createElement('span', { className: "text-xs flex-shrink-0" , style: { width: 60, fontFamily: "Inter", color: C.ink },}, "8.", opt)
-                      , React.createElement('input', { type: "number", value: _nullishCoalesce(quickQty8[opt], () => ( "")), onChange: (e) => setQuickQty8((q) => ({ ...q, [opt]: e.target.value })), className: "flex-1 px-2 py-1.5 rounded text-xs"    , style: { border: `1px solid ${C.line}`, fontFamily: "IBM Plex Mono" },} )
+                      , React.createElement('input', { type: "number", "data-qty-input": "1", inputMode: "decimal", enterKeyHint: "next", onKeyDown: qtyInputEnter, value: _nullishCoalesce(quickQty8[opt], () => ( "")), onChange: (e) => setQuickQty8((q) => ({ ...q, [opt]: e.target.value })), className: "flex-1 px-2 py-1.5 rounded text-xs"    , style: { border: `1px solid ${C.line}`, fontFamily: "IBM Plex Mono" },} )
                       , React.createElement('span', { className: "text-xs flex-shrink-0" , style: { color: C.inkSoft, fontFamily: "Inter" },}, "kg")
                     )
                   ))
@@ -6786,6 +6804,7 @@ function CellWorkTable({ zone, cellId, role, onClose, ym, workDate, loggedInId, 
               )
 
               , React.createElement('button', {
+                "data-qty-submit": "1",
                 onClick: submitQuickConfirm,
                 disabled: !quickPersonId || quickSelected.length === 0,
                 className: "w-full py-2.5 rounded-lg text-sm"   ,
@@ -7087,7 +7106,7 @@ function CellWorkTable({ zone, cellId, role, onClose, ym, workDate, loggedInId, 
                     React.createElement('div', { key: opt, className: "flex items-center gap-2"  ,}
                       , React.createElement('span', { className: "text-sm flex-shrink-0" , style: { width: 64, fontFamily: "Inter", color: C.ink },}, opt)
                       , React.createElement('input', {
-                        type: "number",
+                        type: "number", "data-qty-input": "1", inputMode: "decimal", enterKeyHint: "next", onKeyDown: qtyInputEnter, 
                         value: _nullishCoalesce(reportedQty8[opt], () => ( "")),
                         onChange: (e) => setReportedQty8((cur) => ({ ...cur, [opt]: e.target.value })),
                         placeholder: `原訂 ${_optionalChain([zoneData, 'access', _154 => _154.extra8, 'optionalAccess', _155 => _155[opt]]) || "-"}kg`,
@@ -7103,6 +7122,7 @@ function CellWorkTable({ zone, cellId, role, onClose, ym, workDate, loggedInId, 
                 )
                 , React.createElement('button', {
                   disabled: !confirmerPick,
+                  "data-qty-submit": "1",
                   onClick: () => reportQty8Item(confirmerPick, reportedQty8),
                   className: "w-full py-3 rounded-xl text-sm"   ,
                   style: { background: C.tableColor, color: "white", fontFamily: "Inter", fontWeight: 700, opacity: confirmerPick ? 1 : 0.4 },}
@@ -7118,7 +7138,7 @@ function CellWorkTable({ zone, cellId, role, onClose, ym, workDate, loggedInId, 
                       React.createElement('div', { key: opt, className: "flex items-center gap-2" },
                         React.createElement('span', { className: "text-sm flex-shrink-0", style: { width: 68, fontFamily: "Inter", color: C.ink } }, opt === "金旺" ? "金旺特" : opt),
                         React.createElement('input', {
-                          type: "number",
+                          type: "number", "data-qty-input": "1", inputMode: "decimal", enterKeyHint: "next", onKeyDown: qtyInputEnter, 
                           value: reportedQty8[opt] ?? "",
                           onChange: (e) => setReportedQty8((cur) => ({ ...cur, [opt]: e.target.value })),
                           placeholder: `原訂 ${qty67(confirmItemId, opt) || "-"}`,
@@ -7133,6 +7153,7 @@ function CellWorkTable({ zone, cellId, role, onClose, ym, workDate, loggedInId, 
                 )
                 , React.createElement('button', {
                     disabled: !confirmerPick || selected67(confirmItemId).length === 0,
+                    "data-qty-submit": "1",
                     onClick: () => reportQtyItem(confirmItemId, confirmerPick, reportedQty8),
                     className: "w-full py-3 rounded-xl text-sm",
                     style: { background: C.tableColor, color: "white", fontFamily: "Inter", fontWeight: 700, opacity: (confirmerPick && selected67(confirmItemId).length) ? 1 : 0.4 }
@@ -11264,15 +11285,22 @@ function ZoneNoticeBoard({ role, loggedInId }) {
   );
 }
 
-function ZoneWorkFolders({ onBack, role, loggedInId, initialZoneId = null }) {
+function ZoneWorkFolders({ onBack, role, loggedInId, initialZoneId = null, initialEvent = null }) {
+  // C95：從「指定→是否回報→是」進來時，直接打開該筆事件；年／月也先設好，
+  // 關閉工作表後停在該月份清單，再按回上一頁逐層退回。
+  const ev = initialEvent && initialEvent.cellId && /^\d{4}-\d{2}$/.test(String(initialEvent.ym || "")) ? initialEvent : null;
+  const evZoneId = ev ? (ev.zoneId || initialZoneId) : null;
   const [loading, setLoading] = useState(true);
   const [scanError,setScanError] = useState("");
   const [index, setIndex] = useState({}); // index[zoneId][year][month] = [{cellId, ym, latest}]
   const [pendingByZone, setPendingByZone] = useState({}); // { [zoneId]: 待確認格數 }，用於在資料夾根畫面明顯提示
-  const [zoneSel, setZoneSel] = useState(() => initialZoneId || null);
-  const [yearSel, setYearSel] = useState(null);
-  const [monthSel, setMonthSel] = useState(null);
-  const [openCell, setOpenCell] = useState(null); // { zone, cellId, ym }
+  const [zoneSel, setZoneSel] = useState(() => evZoneId || initialZoneId || null);
+  const [yearSel, setYearSel] = useState(() => ev ? Number(ev.ym.slice(0, 4)) : null);
+  const [monthSel, setMonthSel] = useState(() => ev ? Number(ev.ym.slice(5, 7)) : null);
+  const [openCell, setOpenCell] = useState(() => ev ? {
+    zone: ZONES.find((z) => z.id === evZoneId) || { id: evZoneId, name: evZoneId },
+    cellId: ev.cellId, ym: ev.ym, historyDate: ev.historyDate || null, historyEventId: ev.historyEventId || null,
+  } : null); // { zone, cellId, ym }
   const [deleteTarget, setDeleteTarget] = useState(null); // { zoneId, cellId, ym, step }
   const [exportMode, setExportMode] = useState(false);
   const [exportSelected, setExportSelected] = useState([]); // 選中要輸出的 cellId 清單
@@ -12547,6 +12575,7 @@ function AppMain({ initialRole, initialId, onLogoutToSplash }) {
   // 導覽修正：全域功能改為單一路由，避免多個布林開關殘留而疊出錯誤頁面。
   const [globalView, setGlobalView] = useState(null);
   const [reportShortcutZone, setReportShortcutZone] = useState(null);
+  const [reportShortcutEvent, setReportShortcutEvent] = useState(null); // C95：指定後直接回報的事件
   const [pendingPermCount, setPendingPermCount] = useState(0);
   const [currentPersonPerm, setCurrentPersonPerm] = useState(null);
 
@@ -12761,12 +12790,14 @@ function AppMain({ initialRole, initialId, onLogoutToSplash }) {
   };
   // C94：功能4資料夾的「指定溫室」只在這一次進入有效。原本只有從資料夾內一路按回上一頁才會清掉，
   // 若改按「主畫面」離開，舊溫室會殘留，下次從任何入口開功能4都會直接跳進那個溫室。
-  const openFolders = (zoneId) => {
+  const openFolders = (zoneId, eventTarget) => {
     setReportShortcutZone(zoneId || null);
+    setReportShortcutEvent(eventTarget && eventTarget.cellId && eventTarget.ym ? eventTarget : null);
     openGlobalView("folders");
   };
   const backToMap = () => {
     setReportShortcutZone(null);
+    setReportShortcutEvent(null);
     closeEmbedLayer("yieldEmbedLayer", "yieldEmbedFrame");
     closeEmbedLayer("calendarEmbedLayer", "calendarEmbedFrame");
     cancelZoneEntry();
@@ -12866,7 +12897,7 @@ function AppMain({ initialRole, initialId, onLogoutToSplash }) {
       , globalView === "report" && React.createElement(ReportsHub, { onBack: backToMap, loggedInId: loggedInId, calendarRole: roleForMenu(4),} )
       , globalView === "report1" && React.createElement(ReportsHub, { onBack: backToMap, loggedInId: loggedInId, calendarRole: roleForMenu(4), shortcutKey:"materials",} )
       , globalView === "report3" && React.createElement(ReportsHub, { onBack: backToMap, loggedInId: loggedInId, calendarRole: roleForMenu(4), shortcutKey:"zoneMaterials",} )
-      , globalView === "folders" && React.createElement(ZoneWorkFolders, { onBack: () => { setReportShortcutZone(null); backToMap(); }, role: roleForMenu(3), loggedInId: loggedInId, initialZoneId: reportShortcutZone,} )
+      , globalView === "folders" && React.createElement(ZoneWorkFolders, { onBack: () => { setReportShortcutZone(null); setReportShortcutEvent(null); backToMap(); }, role: roleForMenu(3), loggedInId: loggedInId, initialZoneId: reportShortcutZone, initialEvent: reportShortcutEvent, key: reportShortcutEvent ? `ev:${reportShortcutEvent.historyEventId || reportShortcutEvent.historyDate}` : "folders",} )
       , globalView === "photos" && React.createElement(FeatureZonePortal, { type: "photos", onBack: backToMap, role: photoRole(), loggedInId: loggedInId,} )
       , globalView === "trees" && React.createElement(FeatureZonePortal, { type: "trees", onBack: backToMap, role: treeRole(), loggedInId: loggedInId,} )
       , globalView === "personnel" && React.createElement(PersonnelMenu, { onBack: backToMap, role: roleForMenu(0), onChanged: refreshPendingCount,} )
@@ -12893,7 +12924,7 @@ function AppMain({ initialRole, initialId, onLogoutToSplash }) {
         )
       )
       , zone && view === "floorplan" && (
-        React.createElement(FloorPlan, { zone: zone, onBack: backToMenu, role: roleForMenu(3), onCycleRole: cycleRole, loggedInId: loggedInId, onGoReport: () => openFolders(zone.id), onHome: backToMap,} )
+        React.createElement(FloorPlan, { zone: zone, onBack: backToMenu, role: roleForMenu(3), onCycleRole: cycleRole, loggedInId: loggedInId, onGoReport: (target) => openFolders(zone.id, target), onHome: backToMap,} )
       )
       , zone && view === "spray" && (
         React.createElement(SprayWorksheet, { zone: zone, onBack: backToMenu, role: roleForMenu(6),} )
