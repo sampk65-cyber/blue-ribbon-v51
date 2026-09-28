@@ -717,7 +717,7 @@ const C = {
   tiffanyLight: "#B8ECE5",
   tiffanyText: "#2E8577",
 };
-const APP_VERSION = 'V5.1.C93';
+const APP_VERSION = 'V5.1.C94';
 const FONT_LINK = "https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,600;9..144,700&family=Inter:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap";
 
 const WORK_ITEMS = [
@@ -2027,7 +2027,7 @@ function SprayWorksheet({ zone, onBack, role }) {
 
   return (
     React.createElement('div', { className: "min-h-screen", style: { background: C.cream },}
-      , React.createElement(NavBar, { backLabel: "回分區選單", onBack: onBack,} )
+      , React.createElement(NavBar, { backLabel: "回分區選單", onBack: () => { if (activeDay !== null) setActiveDay(null); else if (showDrugManager) setShowDrugManager(false); else if (showFertilizerManager) setShowFertilizerManager(false); else onBack(); },} )
       , React.createElement('div', { className: "max-w-md mx-auto px-5 py-6"   ,}
         , React.createElement('div', { className: "flex items-center justify-between mb-4"   ,}
           , React.createElement('div', null
@@ -2499,7 +2499,7 @@ function WorkMonthForm({ zone, onBack, role }) {
 
   return (
     React.createElement('div', { className: "min-h-screen", style: { background: C.cream },}
-      , React.createElement(NavBar, { backLabel: "回分區選單", onBack: onBack,} )
+      , React.createElement(NavBar, { backLabel: "回分區選單", onBack: () => { if (activeDay !== null) setActiveDay(null); else if (showWorkItemManager) setShowWorkItemManager(false); else onBack(); },} )
       , React.createElement('div', { className: "max-w-md mx-auto px-5 py-6"   ,}
         , React.createElement('div', { className: "flex items-center justify-between mb-4"   ,}
           , React.createElement('div', null
@@ -3181,7 +3181,7 @@ function PhotoLibrary({ zone, onBack, role, loggedInId }) {
   };
 
   return React.createElement("div", {className:"min-h-screen", style:{background:C.cream}},
-    React.createElement(NavBar, {backLabel:"照片影像資料庫", onBack:onBack}),
+    React.createElement(NavBar, {backLabel:"照片影像資料庫", onBack:function(){ if (preview) { if (!savingNote) setPreview(null); } else if (month) setMonth(null); else if (year) setYear(null); else onBack(); }}),
     React.createElement("main", {className:"max-w-md mx-auto px-5 py-6 pb-32"},
       React.createElement("div", {className:"mb-5"},
         React.createElement("div", {style:{fontFamily:"Inter",fontWeight:900,fontSize:24,color:C.ink}}, "照片影像資料庫"),
@@ -3439,7 +3439,7 @@ function TreeHistory({ zone, onBack, role, loggedInId }) {
   return React.createElement("div",{className:"min-h-screen",style:{position:"relative",background:C.cream}},
     React.createElement("div",{style:{position:"fixed",inset:0,zIndex:0,backgroundImage:"linear-gradient(rgba(247,243,234,.82),rgba(247,243,234,.91)),url('"+TREE_HISTORY_BACKGROUND+"')",backgroundPosition:"center",backgroundSize:"cover",filter:"contrast(.72) brightness(1.15) saturate(.72)"}}),
     React.createElement("div",{style:{position:"relative",zIndex:1}},
-      React.createElement(NavBar,{backLabel:"果樹履歷",onBack:onBack}),
+      React.createElement(NavBar,{backLabel:"果樹履歷",onBack:function(){ if (editingNode!=null) setEditingNode(null); else onBack(); }}),
       React.createElement("main",{className:"max-w-3xl mx-auto px-5 py-6 pb-32"},
         React.createElement("div",{className:"mb-5"},
           React.createElement("div",{style:{fontFamily:"Inter",fontWeight:900,fontSize:25,color:C.ink}},"果樹履歷・節間生長"),
@@ -10163,7 +10163,7 @@ function ZoneMaterialsReport({ year, month, onBack }) {
     React.createElement('div', { className: "min-h-screen flex flex-col", style: { background: C.cream } },
       React.createElement(NavBar, {
         backLabel: "選擇溫室",
-        onBack: () => { setZone(null); setTotals(null); setDayMap({}); setActiveDay(null); },
+        onBack: () => { if (activeDay != null) { setActiveDay(null); return; } setZone(null); setTotals(null); setDayMap({}); setActiveDay(null); },
       }),
       React.createElement('div', { className: "px-4 py-3", style: { borderBottom: `1px solid ${C.line}` } },
         React.createElement('div', { className: "flex items-start justify-between gap-2 flex-wrap" },
@@ -10695,7 +10695,7 @@ function MasterCalendar({ onBack, role }) {
 
   return (
     React.createElement('div', { className: "min-h-screen flex flex-col"  , style: { background: C.cream },}
-      , React.createElement(NavBar, { backLabel: "回功能表", onBack: onBack,} )
+      , React.createElement(NavBar, { backLabel: "回功能表", onBack: () => { if (editing) setEditing(null); else if (showAnnual) setShowAnnual(false); else onBack(); },} )
       , React.createElement('div', { className: "px-4 py-2.5 flex items-center justify-between flex-wrap gap-2"      , style: { borderBottom: `1px solid ${C.line}` },}
         , React.createElement('span', { style: { fontFamily: "Inter", fontWeight: 700, fontSize: 16, color: C.ink },}, "總行事曆（24個月）")
         , React.createElement('div', { className: "flex items-center gap-1.5"  ,}
@@ -11557,7 +11557,7 @@ function ZoneWorkFolders({ onBack, role, loggedInId, initialZoneId = null }) {
     React.createElement('div', { className: "min-h-screen flex flex-col"  , style: { background: C.cream },}
       // 此模組沿用全域「主畫面」島；返回只保留一顆浮動「回上一頁」，避免同頁重複導航。
       , React.createElement(BackIsland, {
-        onBack: () => { if (monthSel) setMonthSel(null); else if (yearSel) setYearSel(null); else if (zoneSel) setZoneSel(null); else onBack(); },}
+        onBack: () => { if (deleteTarget) setDeleteTarget(null); else if (monthSel) setMonthSel(null); else if (yearSel) setYearSel(null); else if (zoneSel) setZoneSel(null); else onBack(); },}
       )
       , scanError && React.createElement("div",{role:"alert",className:"px-4 py-3",style:{color:C.alert}},scanError,React.createElement("button",{onClick:()=>scan(zoneSel,yearSel,monthSel),className:"ml-2 px-3 py-1 rounded",style:{background:C.tableColor,color:"white"}},"重新讀取"))
       , React.createElement('div', { className: "px-4 py-3" , style: { borderBottom: `1px solid ${C.line}` },}
@@ -11854,7 +11854,7 @@ function FloorPlan({ zone, onBack, role, onCycleRole, loggedInId, onGoReport, on
 
   return (
     React.createElement('div', { className: "min-h-screen flex flex-col"  , style: { background: zoneWidePending.length > 0 ? `${C.alert}08` : C.cream, border: zoneWidePending.length > 0 ? `3px solid ${C.alert}` : "none" },}
-      , React.createElement(NavBar, { backLabel: `${zone.name}選單`, onBack: onBack, role: role, onCycleRole: onCycleRole,} )
+      , React.createElement(NavBar, { backLabel: `${zone.name}選單`, onBack: () => { if (activeCell) closeCell(); else onBack(); }, role: role, onCycleRole: onCycleRole,} )
       , zoneWidePending.length > 0 && (
         React.createElement('div', { className: "mx-4 mt-3 px-3 py-2 rounded-lg"    , style: { background: `${C.alert}18`, border: `1px solid ${C.alert}` },}
           , React.createElement('span', { style: { fontFamily: "Inter", fontWeight: 700, fontSize: 13, color: C.alert },}, "⚠ 全區工項待確認（"
@@ -12759,7 +12759,14 @@ function AppMain({ initialRole, initialId, onLogoutToSplash }) {
     }, 3000);
     zoneEntryTimers.current = [revealTimer, finishTimer];
   };
+  // C94：功能4資料夾的「指定溫室」只在這一次進入有效。原本只有從資料夾內一路按回上一頁才會清掉，
+  // 若改按「主畫面」離開，舊溫室會殘留，下次從任何入口開功能4都會直接跳進那個溫室。
+  const openFolders = (zoneId) => {
+    setReportShortcutZone(zoneId || null);
+    openGlobalView("folders");
+  };
   const backToMap = () => {
+    setReportShortcutZone(null);
     closeEmbedLayer("yieldEmbedLayer", "yieldEmbedFrame");
     closeEmbedLayer("calendarEmbedLayer", "calendarEmbedFrame");
     cancelZoneEntry();
@@ -12838,7 +12845,7 @@ function AppMain({ initialRole, initialId, onLogoutToSplash }) {
           onEnter: enterZone,
           onOpenReport: () => openGlobalView("report"),
           onOpenCalendar: () => openCalendarPortal(loggedInId, roleForMenu(4)),
-          onOpenFolders: () => openGlobalView("folders"),
+          onOpenFolders: () => openFolders(null),
           onOpenPhotos: () => openPhotos(() => openGlobalView("photos")),
           onOpenTrees: () => openTrees(() => openGlobalView("trees")),
           onOpenPersonnel: () => openGlobalView("personnel"),
@@ -12847,7 +12854,7 @@ function AppMain({ initialRole, initialId, onLogoutToSplash }) {
           onOpenEnvironment: () => openGlobalView("environment"),
           onOpenAttendance: () => prepareAttendanceOnOpen(() => openGlobalView("attendance")),
           onBossTable: (key) => openGlobalView(key === "materials" ? "report1" : "report3"),
-          onIpadReport: (z) => { setReportShortcutZone(z.id); openGlobalView("folders"); },
+          onIpadReport: (z) => openFolders(z.id),
           pendingPermCount: pendingPermCount,
           role: role,
           loggedInId: loggedInId,
@@ -12867,14 +12874,14 @@ function AppMain({ initialRole, initialId, onLogoutToSplash }) {
       , globalView === "environment" && React.createElement(EnvironmentMenu, { onBack: backToMap, role: roleForMenu(8), loggedInId: loggedInId,} )
       , globalView === "attendance" && React.createElement(AttendanceMenu, { onBack: backToMap, role: roleForMenu(9), loggedInId: loggedInId,} )
 
-      , zone && view === "menu" && React.createElement(ZoneMenu, { zone: zone, onBack: backToMap, onPick: openZoneView, onGoReport: () => { setReportShortcutZone(zone.id); openGlobalView("folders"); },} )
+      , zone && view === "menu" && React.createElement(ZoneMenu, { zone: zone, onBack: backToMap, onPick: openZoneView, onGoReport: () => openFolders(zone.id),} )
       , zone && view === "function" && (
         React.createElement(FunctionMenu, {
           zone: zone,
           onBack: backToMenu,
           onOpenReport: () => openGlobalView("report"),
           onOpenCalendar: () => openGlobalEmbed(() => openCalendarPortal(loggedInId, role)),
-          onOpenFolders: () => openGlobalView("folders"),
+          onOpenFolders: () => openFolders(null),
           onOpenPhotos: () => openPhotos(() => openGlobalView("photos")),
           onOpenTrees: () => openTrees(() => openGlobalView("trees")),
           onOpenPersonnel: () => openGlobalView("personnel"),
@@ -12886,7 +12893,7 @@ function AppMain({ initialRole, initialId, onLogoutToSplash }) {
         )
       )
       , zone && view === "floorplan" && (
-        React.createElement(FloorPlan, { zone: zone, onBack: backToMenu, role: roleForMenu(3), onCycleRole: cycleRole, loggedInId: loggedInId, onGoReport: () => openGlobalView("folders"), onHome: backToMap,} )
+        React.createElement(FloorPlan, { zone: zone, onBack: backToMenu, role: roleForMenu(3), onCycleRole: cycleRole, loggedInId: loggedInId, onGoReport: () => openFolders(zone.id), onHome: backToMap,} )
       )
       , zone && view === "spray" && (
         React.createElement(SprayWorksheet, { zone: zone, onBack: backToMenu, role: roleForMenu(6),} )
