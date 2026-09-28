@@ -717,7 +717,7 @@ const C = {
   tiffanyLight: "#B8ECE5",
   tiffanyText: "#2E8577",
 };
-const APP_VERSION = 'V5.1.C92';
+const APP_VERSION = 'V5.1.C93';
 const FONT_LINK = "https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,600;9..144,700&family=Inter:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap";
 
 const WORK_ITEMS = [
@@ -3031,6 +3031,10 @@ function PhotoLibrary({ zone, onBack, role, loggedInId }) {
   const [note, setNote] = useState("");
   const [preview, setPreview] = useState(null);
   const [uploadProgress, setUploadProgress] = useState({});
+  // C93：點開照片後可修改備註
+  const [editNote, setEditNote] = useState("");
+  const [savingNote, setSavingNote] = useState(false);
+  const [noteMsg, setNoteMsg] = useState("");
   const cameraRef = useRef(null);
   const galleryRef = useRef(null);
   // 照片資料庫自本年度啟用，不顯示過往年代；預留未來五年資料夾。
@@ -3143,6 +3147,25 @@ function PhotoLibrary({ zone, onBack, role, loggedInId }) {
     galleryRef.current.value = "";
     galleryRef.current.click();
   };
+  useEffect(function() { setEditNote(preview ? (preview.note || "") : ""); setNoteMsg(""); }, [preview && preview.storageKey]);
+  // C93：只改備註。先讀雲端最新紀錄再合併，避免蓋掉其他欄位；照片檔本身不動。
+  const saveNote = async function() {
+    if (!editable || !preview || savingNote) return;
+    const trimmed = editNote.trim();
+    if (trimmed === (preview.note || "")) { setNoteMsg("備註沒有變更。"); return; }
+    setSavingNote(true); setNoteMsg("");
+    try {
+      const current = v51ParseStored(await window.storage.get(preview.storageKey));
+      if (!current) throw new Error("找不到這張照片的紀錄，可能已被刪除，請重新整理。");
+      const next = Object.assign({}, current, {note:trimmed, noteUpdatedAt:Date.now(), noteUpdatedBy:loggedInId || ""});
+      await window.storage.set(preview.storageKey, JSON.stringify(next));
+      const updated = Object.assign({storageKey:preview.storageKey}, next);
+      setRecords(function(prev) { return prev.map(function(r) { return r.storageKey === preview.storageKey ? updated : r; }); });
+      setPreview(updated);
+      setNoteMsg("備註已儲存。");
+    } catch (e) { setNoteMsg("備註未儲存：" + v51FriendlyError(e)); }
+    finally { setSavingNote(false); }
+  };
   const removePhoto = async function(rec) {
     if (!editable || !confirm("確定刪除這張照片？刪除後無法復原。")) return;
     setBusy(true);
@@ -3225,10 +3248,16 @@ function PhotoLibrary({ zone, onBack, role, loggedInId }) {
         }))
       )
     ),
-    preview && React.createElement("div",{onClick:function(){setPreview(null);},style:{position:"fixed",inset:0,zIndex:120,background:"rgba(20,16,14,.88)",display:"flex",alignItems:"center",justifyContent:"center",padding:18}},
-      React.createElement("div",{onClick:function(e){e.stopPropagation();},style:{maxWidth:720,width:"100%"}},
-        React.createElement("img",{src:preview.url,alt:preview.note||"",style:{width:"100%",maxHeight:"76vh",objectFit:"contain",borderRadius:16,background:"#111"}}),
-        React.createElement("div",{className:"mt-3 text-center text-sm",style:{color:"white",fontFamily:"Inter"}},(preview.recordDate||"")+" "+(preview.note||"")),
+    preview && React.createElement("div",{onClick:function(){if(!savingNote)setPreview(null);},style:{position:"fixed",inset:0,zIndex:120,background:"rgba(20,16,14,.88)",display:"flex",alignItems:"center",justifyContent:"center",padding:18,overflowY:"auto"}},
+      React.createElement("div",{onClick:function(e){e.stopPropagation();},style:{maxWidth:720,width:"100%",margin:"auto"}},
+        React.createElement("img",{src:preview.url,alt:preview.note||"",style:{width:"100%",maxHeight:editable?"58vh":"76vh",objectFit:"contain",borderRadius:16,background:"#111"}}),
+        !editable && React.createElement("div",{className:"mt-3 text-center text-sm",style:{color:"white",fontFamily:"Inter"}},(preview.recordDate||"")+" "+(preview.note||"")),
+        editable && React.createElement("div",{className:"mt-3 rounded-xl p-3",style:{background:"white"}},
+          React.createElement("div",{className:"text-xs mb-2",style:{fontFamily:"IBM Plex Mono",fontWeight:700,color:C.ink}},(preview.recordDate||preview.ym||"")+"・修改備註"),
+          React.createElement("textarea",{value:editNote,onChange:function(e){setEditNote(e.target.value);setNoteMsg("");},rows:3,placeholder:"輸入照片備註",disabled:savingNote,style:Object.assign(v51InputStyle(),{resize:"vertical",lineHeight:1.5})}),
+          noteMsg && React.createElement("div",{className:"text-xs mt-2",style:{fontFamily:"Inter",color:noteMsg.indexOf("未儲存")>=0?"#B34A45":C.tableColor}},noteMsg),
+          React.createElement("button",{onClick:saveNote,disabled:savingNote||editNote.trim()===(preview.note||""),className:"w-full mt-2",style:v51PrimaryStyle(savingNote||editNote.trim()===(preview.note||""))},savingNote?"儲存中…":"儲存備註")
+        ),
         React.createElement("button",{onClick:function(){setPreview(null);},className:"w-full mt-3 py-3 rounded-xl",style:{border:0,background:"white",color:C.ink,fontFamily:"Inter",fontWeight:800}},"關閉")
       )
     )
@@ -7720,7 +7749,7 @@ function YieldLongTermReport({ onBack }) {
   const maxVal = result ? Math.max(10, ...allValues.filter((v) => v != null)) : 10;
   const n = result ? result.periods.length : 0;
   const multi = result ? result.zones.length > 1 : false;
-  const W = Math.max(900, n * 26), H = multi ? 280 : 340, padL = 62, padR = 16, padT = 20, padB = 60;
+  const W = Math.max(900, n * 26), H = multi ? 220 : 280, padL = 62, padR = 16, padT = 12, padB = 50;
   const xOf = (i) => padL + (n <= 1 ? 0 : (i / (n - 1)) * (W - padL - padR));
   const yOf = (v) => padT + (1 - v / maxVal) * (H - padT - padB);
   const gridLines = () => [0, 0.25, 0.5, 0.75, 1].map((f) => {
@@ -7803,7 +7832,7 @@ function YieldLongTermReport({ onBack }) {
           ...gradeSel.map((g) => React.createElement("span", { key: g },
             React.createElement("span", { style: { display: "inline-block", width: 10, height: 2, background: YIELD_GRADE_COLORS[g], marginRight: 4 } }), g))
         ),
-        ...result.zones.map((zn) => React.createElement("div", { key: zn, className: multi ? "mb-4" : "" },
+        ...result.zones.map((zn) => React.createElement("div", { key: zn, className: multi ? "mb-2" : "" },
           multi && React.createElement("div", { className: "flex items-baseline gap-2 mb-1", style: { fontFamily: "Inter" } },
             React.createElement("span", { style: { fontWeight: 700, fontSize: 15, color: C.ink } }, zn),
             React.createElement("span", { className: "text-xs", style: { color: C.inkSoft } }, `期間合計 ${zoneTotal(result.byZone[zn]).toLocaleString()}kg`)
@@ -7814,7 +7843,9 @@ function YieldLongTermReport({ onBack }) {
             onTouchStart: markActive(zn), onPointerDown: markActive(zn), onWheel: markActive(zn), onMouseEnter: markActive(zn),
             style: { overflowX: "auto", maxWidth: "100%", borderTop: multi ? `1px solid ${C.line}` : "none" },
           },
-            React.createElement("svg", { viewBox: `0 0 ${W} ${H}`, style: { width: W, height: H, display: "block" } },
+            // C92：全域CSS有 svg{max-width:100%}，會把寬度壓成螢幕寬、高度卻不變，圖被縮小置中，
+            // 上下留出大片空白。這裡指定 maxWidth:none，保持原尺寸，改由外層左右滑動。
+            React.createElement("svg", { viewBox: `0 0 ${W} ${H}`, style: { width: W, height: H, maxWidth: "none", display: "block" } },
               gridLines(), chartLinesFor(result.byZone[zn]), xTicks()
             )
           )
