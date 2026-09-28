@@ -717,7 +717,7 @@ const C = {
   tiffanyLight: "#B8ECE5",
   tiffanyText: "#2E8577",
 };
-const APP_VERSION = 'V5.1.C96';
+const APP_VERSION = 'V5.1.C97';
 const FONT_LINK = "https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,600;9..144,700&family=Inter:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap";
 
 const WORK_ITEMS = [
@@ -11303,7 +11303,8 @@ function ZoneWorkFolders({ onBack, role, loggedInId, initialZoneId = null, initi
   } : null); // { zone, cellId, ym }
   const [deleteTarget, setDeleteTarget] = useState(null); // { zoneId, cellId, ym, step }
   const [exportMode, setExportMode] = useState(false);
-  const [exportSelected, setExportSelected] = useState([]); // 選中要輸出的 cellId 清單
+  const [exportSelected, setExportSelected] = useState([]);
+  const [showDone, setShowDone] = useState(false); // C97：已完成預設收攏，只列未完成 // 選中要輸出的 cellId 清單
   const [printItems, setPrintItems] = useState(null); // 產生列印預覽後，抓好資料的陣列 [{cellId, fileName, data}]
   const [printLoading, setPrintLoading] = useState(false);
 
@@ -11448,6 +11449,7 @@ function ZoneWorkFolders({ onBack, role, loggedInId, initialZoneId = null, initi
         let status = "none"; // none=無指定工作 | assigned=已指定未回應 | partial=回報中未全部完成 | done=全部確認完成
         let historySummary = "";
         let dataForHistory = null;
+        let orphanKeys = null, orphanStarted = false, eventEra = false; // C97：幽靈卡修正用
         try {
           const data = window.WorkDataSafety.parse(res.value);
           dataForHistory = data;
@@ -11473,6 +11475,20 @@ function ZoneWorkFolders({ onBack, role, loggedInId, initialZoneId = null, initi
           const allPending = { ...(data.pending || {}), ...(zw.pending || {}) };
           const allProgress = { ...(data.progress || {}), ...(zw.progress || {}) };
           const pendingKeys = Object.keys(allPending).filter((k) => isRealPendingKey(k, allPending[k]));
+          // C97：找出「沒有被任何指定事件卡片代表」的待回報工項。
+          // 新制每次指定都有事件編號並各自成卡；待回報工項的 timestamps.eventId 若能對到 assignmentHistory，
+          // 代表它已經有自己的卡片，不應再算進無日期的「本輪指定」卡（該卡點開不過濾事件，會把整月 6–8 混在一起顯示）。
+          // 只讀判斷，不改任何資料。
+          const evIdsOf = (d) => new Set(((d && d.assignmentHistory) || []).filter((a) => a && a.eventId).map((a) => a.eventId));
+          const cellEv = evIdsOf(data), zoneEv = evIdsOf(zwAll);
+          eventEra = cellEv.size > 0 || zoneEv.size > 0;
+          orphanKeys = pendingKeys.filter((k) => {
+            const src = Number(k) >= 6 ? zwAll : data;
+            const ids = Number(k) >= 6 ? zoneEv : cellEv;
+            const ev = src && src.timestamps && src.timestamps[k] && src.timestamps[k].eventId;
+            return !(ev && ids.has(ev));
+          });
+          orphanStarted = orphanKeys.some((k) => (allProgress[k] || 0) > 0);
           const everTouched = Object.keys(allProgress).length > 0 || (data.confirmedTotals && Object.keys(data.confirmedTotals).length > 0) || (zw.confirmedTotals && Object.keys(zw.confirmedTotals).length > 0);
           if (pendingKeys.length === 0) {
             status = everTouched ? "done" : "none";
@@ -11518,7 +11534,12 @@ function ZoneWorkFolders({ onBack, role, loggedInId, initialZoneId = null, initi
         });
         // 尚未完成的本輪指定仍需顯示，但不得與同日已完成紀錄重複建立卡片。
         const currentDay = latest ? String(latest).trim().split(" ")[0].split("T")[0].replace(/\//g, "-") : "";
-        if ((status === "assigned" || status === "partial") && (!currentDay || !historyDays[currentDay])) {
+        if (eventEra && orphanKeys) {
+          // C97：新制資料只為「沒有事件代表」的待回報補一張卡；已有事件卡的不再重複產生無日期卡。
+          if (orphanKeys.length && (!currentDay || !historyDays[currentDay])) {
+            idx[zoneId][y][m].push({ cellId, ym, historyDate: currentDay || null, latest, status: orphanStarted ? "partial" : "assigned", historySummary });
+          }
+        } else if ((status === "assigned" || status === "partial") && (!currentDay || !historyDays[currentDay])) {
           idx[zoneId][y][m].push({ cellId, ym, historyDate: currentDay || null, latest, status, historySummary });
         } else if (days.length === 0) {
           idx[zoneId][y][m].push({ cellId, ym, historyDate: currentDay || null, latest, status, historySummary });
@@ -11682,12 +11703,20 @@ function ZoneWorkFolders({ onBack, role, loggedInId, initialZoneId = null, initi
               , React.createElement('span', { className: "flex items-center gap-1"  ,}, React.createElement('span', { style: { width: 10, height: 10, borderRadius: 3, background: C.tableColor, display: "inline-block" },} ), "已完成")
             )
           )
+          , !exportMode && records.some((r) => r.status === "done") && React.createElement('button', {
+              onClick: () => setShowDone((v) => !v),
+              className: "w-full mb-2 py-2 rounded-xl text-xs",
+              style: { background: `${C.tableColor}14`, color: C.tableColor, border: `1px dashed ${C.tableColor}`, fontFamily: "Inter", fontWeight: 700 },
+            }, showDone
+              ? `收合已完成（${records.filter((r) => r.status === "done").length} 筆）`
+              : `已完成 ${records.filter((r) => r.status === "done").length} 筆已收合・點此展開${records.every((r) => r.status === "done") ? "（本月無未完成）" : ""}`)
           , records.length === 0 ? (
             React.createElement('div', { className: "text-center py-10 text-sm"  , style: { color: C.inkSoft, fontFamily: "Inter" },}, scanError ? "資料尚未讀取完整，請重新讀取。" : "此月份尚無異動紀錄"
 
             )
           ) : (
             records.map((rec, i) => {
+              if (!exportMode && !showDone && rec.status === "done") return null; // C97：收攏已完成，流水號維持原編號
               const checked = exportSelected.includes(rec.cellId);
               // 三色狀態：紅=已指定工作但完全未回應／琥珀=已回報但未全部完成／綠=全部確認完成
               const statusColor = rec.status === "assigned" ? C.alert : rec.status === "partial" ? "#D4A017" : rec.status === "done" ? C.tableColor : C.line;
