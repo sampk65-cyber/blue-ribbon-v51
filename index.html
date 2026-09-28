@@ -717,7 +717,7 @@ const C = {
   tiffanyLight: "#B8ECE5",
   tiffanyText: "#2E8577",
 };
-const APP_VERSION = 'V5.1.C104';
+const APP_VERSION = 'V5.1.C105';
 const FONT_LINK = "https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,600;9..144,700&family=Inter:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap";
 
 const WORK_ITEMS = [
@@ -7725,6 +7725,8 @@ function YieldLongTermReport({ onBack }) {
   const [progress, setProgress] = useState("");
   const [result, setResult] = useState(null);
   const [error, setError] = useState("");
+  // C105：圖表顯示方式。fit＝全覽（縮到螢幕寬、上下並列，接近原本樣態）；zoom＝放大後左右滑動（各圖同步）
+  const [viewMode, setViewMode] = useState("fit");
   const startYear = 2020;
   const endYear = new Date().getFullYear();
   const runIdRef = useRef(0);
@@ -7791,17 +7793,27 @@ function YieldLongTermReport({ onBack }) {
   const maxVal = result ? Math.max(10, ...allValues.filter((v) => v != null)) : 10;
   const n = result ? result.periods.length : 0;
   const multi = result ? result.zones.length > 1 : false;
-  const W = Math.max(900, n * 26), H = multi ? 220 : 280, padL = 62, padR = 16, padT = 12, padB = 50;
+  const fit = viewMode === "fit";
+  // 全覽：固定 720 寬，隨螢幕等比縮小（高度跟著縮，不留空白）；字級放大以抵銷縮小
+  const W = fit ? 720 : Math.max(900, n * 26), H = fit ? (multi ? 260 : 320) : (multi ? 220 : 280);
+  const padL = fit ? 70 : 62, padR = fit ? 14 : 16, padT = fit ? 14 : 12, padB = fit ? 34 : 50;
+  const fs = fit ? 20 : 12;
   const xOf = (i) => padL + (n <= 1 ? 0 : (i / (n - 1)) * (W - padL - padR));
   const yOf = (v) => padT + (1 - v / maxVal) * (H - padT - padB);
   const gridLines = () => [0, 0.25, 0.5, 0.75, 1].map((f) => {
     const val = maxVal * f;
     return React.createElement("g", { key: f },
       React.createElement("line", { x1: padL, y1: yOf(val), x2: W - padR, y2: yOf(val), stroke: C.line, strokeWidth: 1 }),
-      React.createElement("text", { x: padL - 6, y: yOf(val) + 3, fontSize: 12, fill: C.inkSoft, textAnchor: "end", fontFamily: "IBM Plex Mono, monospace" }, val.toFixed(0) + "kg")
+      React.createElement("text", { x: padL - 6, y: yOf(val) + 3, fontSize: fs, fill: C.inkSoft, textAnchor: "end", fontFamily: "IBM Plex Mono, monospace" }, val.toFixed(0) + (fit ? "" : "kg"))
     );
   });
-  const xTicks = () => result.periods.map((p, i) => (
+  const xTicks = () => fit
+    // 全覽：只標年份，並畫淡色年分隔線
+    ? result.periods.map((p, i) => (/^\d{4}\/1\/1$/.test(p.label) ? React.createElement("g", { key: i },
+        React.createElement("line", { x1: xOf(i), y1: padT, x2: xOf(i), y2: H - padB, stroke: C.line, strokeWidth: 1, strokeDasharray: "4 4" }),
+        React.createElement("text", { x: xOf(i) + 4, y: H - padB + 24, fontSize: fs, fill: C.inkSoft, fontFamily: "IBM Plex Mono, monospace" }, p.label.slice(0, 4))
+      ) : null))
+    : result.periods.map((p, i) => (
     i % 2 === 0 ? React.createElement("text", {
       key: i, x: xOf(i), y: H - padB + 14, fontSize: 10, fill: C.inkSoft, textAnchor: "end",
       fontFamily: "IBM Plex Mono, monospace", transform: `rotate(-45 ${xOf(i)} ${H - padB + 14})`,
@@ -7809,8 +7821,8 @@ function YieldLongTermReport({ onBack }) {
   ));
   const lineFor = (values, color) => {
     const points = values.map((v, i) => `${xOf(i).toFixed(1)},${yOf(v).toFixed(1)}`).join(" ");
-    const dots = values.map((v, i) => React.createElement("circle", { key: i, cx: xOf(i), cy: yOf(v), r: 2.2, fill: color }));
-    return React.createElement(React.Fragment, null, React.createElement("polyline", { points, fill: "none", stroke: color, strokeWidth: 2 }), dots);
+    const dots = fit ? null : values.map((v, i) => React.createElement("circle", { key: i, cx: xOf(i), cy: yOf(v), r: 2.2, fill: color }));
+    return React.createElement(React.Fragment, null, React.createElement("polyline", { points, fill: "none", stroke: color, strokeWidth: fit ? 2.6 : 2, strokeLinejoin: "round" }), dots);
   };
   const chartLinesFor = (zr) => {
     if (!zr) return null;
@@ -7868,8 +7880,14 @@ function YieldLongTermReport({ onBack }) {
       result && React.createElement("div", { className: "mt-4" },
         React.createElement("p", { className: "text-sm mb-2", style: { color: C.wine, fontFamily: "Inter", fontWeight: 600 } },
           `${result.zones.join("、")}・${gradeText}・${startYear}~${endYear}年 每15天產能趨勢（單位：kg）`),
-        multi && React.createElement("p", { className: "text-xs mb-2", style: { color: C.inkSoft, fontFamily: "Inter" } },
-          `各圖縱軸統一上限 ${maxVal.toFixed(0)}kg，左右滑動任一張圖，其他圖會同步移動`),
+        React.createElement("div", { className: "flex gap-2 mb-2" },
+          React.createElement("button", { onClick: () => setViewMode("fit"), className: "px-3 py-1.5 rounded-lg text-xs", style: fit ? { background: C.wine, color: "white", fontWeight: 700 } : { background: "white", color: C.ink, border: `1px solid ${C.line}` } }, "全覽"),
+          React.createElement("button", { onClick: () => setViewMode("zoom"), className: "px-3 py-1.5 rounded-lg text-xs", style: !fit ? { background: C.wine, color: "white", fontWeight: 700 } : { background: "white", color: C.ink, border: `1px solid ${C.line}` } }, "放大（左右滑動）")
+        ),
+        React.createElement("p", { className: "text-xs mb-2", style: { color: C.inkSoft, fontFamily: "Inter" } },
+          fit
+            ? `縱軸單位 kg${multi ? `，各圖統一上限 ${maxVal.toFixed(0)}kg` : ""}；要看每一期的日期與數值請切到「放大」`
+            : (multi ? `各圖縱軸統一上限 ${maxVal.toFixed(0)}kg，左右滑動任一張圖，其他圖會同步移動` : "左右滑動查看各期")),
         result.mode === "separate" && React.createElement("div", { className: "flex gap-3 flex-wrap text-xs mb-2", style: { fontFamily: "Inter" } },
           ...gradeSel.map((g) => React.createElement("span", { key: g },
             React.createElement("span", { style: { display: "inline-block", width: 10, height: 2, background: YIELD_GRADE_COLORS[g], marginRight: 4 } }), g))
@@ -7883,11 +7901,11 @@ function YieldLongTermReport({ onBack }) {
             ref: (el) => { if (el) scrollRefs.current[zn] = el; else delete scrollRefs.current[zn]; },
             onScroll: onChartScroll(zn),
             onTouchStart: markActive(zn), onPointerDown: markActive(zn), onWheel: markActive(zn), onMouseEnter: markActive(zn),
-            style: { overflowX: "auto", maxWidth: "100%", borderTop: multi ? `1px solid ${C.line}` : "none" },
+            style: { overflowX: fit ? "hidden" : "auto", maxWidth: "100%", borderTop: multi ? `1px solid ${C.line}` : "none" },
           },
             // C92：全域CSS有 svg{max-width:100%}，會把寬度壓成螢幕寬、高度卻不變，圖被縮小置中，
             // 上下留出大片空白。這裡指定 maxWidth:none，保持原尺寸，改由外層左右滑動。
-            React.createElement("svg", { viewBox: `0 0 ${W} ${H}`, style: { width: W, height: H, maxWidth: "none", display: "block" } },
+            React.createElement("svg", { viewBox: `0 0 ${W} ${H}`, preserveAspectRatio: "xMinYMin meet", style: fit ? { width: "100%", height: "auto", maxWidth: "100%", display: "block" } : { width: W, height: H, maxWidth: "none", display: "block" } },
               gridLines(), chartLinesFor(result.byZone[zn]), xTicks()
             )
           )
