@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-<title>完全體 V5.1.C112・藍帶無花果</title>
+<title>完全體 V5.1.C113・藍帶無花果</title>
 <meta name="apple-mobile-web-app-capable" content="yes" />
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
 <meta name="apple-mobile-web-app-title" content="藍帶無花果" />
@@ -717,7 +717,7 @@ const C = {
   tiffanyLight: "#B8ECE5",
   tiffanyText: "#2E8577",
 };
-const APP_VERSION = 'V5.1.C112';
+const APP_VERSION = 'V5.1.C113';
 const FONT_LINK = "https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,600;9..144,700&family=Inter:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap";
 
 const WORK_ITEMS = [
@@ -9992,43 +9992,55 @@ function ClimateOverview({ mode, year, month, daily, dailyLoading, onOpenMonth }
   const f1 = (v) => v == null ? "—" : Number(v).toFixed(1);
   const f0 = (v) => v == null ? "—" : Math.round(v);
   const T_MIN = 0, T_MAX = 50, R_MAX = 1000;
-  const W = 360, H = 300, x0 = 30, x1 = 356, tTop = 24, tBot = 204, rTop = 222, rBot = 284;
+  // C113：組合圖——雨量＝柱（右軸 0–1000mm），最高溫＝紅線、最低溫＝藍線（左軸 0–50°C），同一個繪圖區
+  const W = 360, H = 290, x0 = 28, x1 = 322, pTop = 24, pBot = 262;
   const n = Math.max(cols.length, 1), cw = (x1 - x0) / n;
-  const yT = (t) => tBot - (Math.min(T_MAX, Math.max(T_MIN, t)) - T_MIN) / (T_MAX - T_MIN) * (tBot - tTop);
-  const yR = (r) => rBot - Math.min(R_MAX, Math.max(0, r)) / R_MAX * (rBot - rTop);
-  const pinW = Math.max(6, Math.min(26, cw * 0.8)); // 柱寬
+  const yT = (t) => pBot - (Math.min(T_MAX, Math.max(T_MIN, t)) - T_MIN) / (T_MAX - T_MIN) * (pBot - pTop);
+  const yR = (r) => pBot - Math.min(R_MAX, Math.max(0, r)) / R_MAX * (pBot - pTop);
+  const barW = Math.max(4, Math.min(22, cw * 0.62));
   const showNums = n <= 12;
   const labelEvery = n > 20 ? 5 : 1;
+  const dotR = n > 20 ? 1.8 : 2.6;
   const sc = sel != null ? cols.find((c) => c.key === sel) : null;
   const title = mode === "month" ? `神岡站 ${year}年${month}月・每日（月觀測）` : `神岡站 ${year}年・每月（年觀測）`;
+  // 把連續有資料的欄位連成線段；中間缺資料就斷開
+  const segs = (key) => { const out = []; let cur = []; cols.forEach((c, i) => { if (c.stat && c.stat[key] != null) cur.push(`${(x0 + cw * (i + 0.5)).toFixed(1)},${yT(c.stat[key]).toFixed(1)}`); else { if (cur.length > 1) out.push(cur.join(" ")); cur = []; } }); if (cur.length > 1) out.push(cur.join(" ")); return out; };
 
   return React.createElement('div', { className: "p-4" },
     React.createElement('div', { className: "rounded-2xl p-3", style: { background: "#FFF", border: `1px solid ${C.line}` } },
       React.createElement('div', { style: { fontFamily: "Inter", fontWeight: 800, fontSize: 16, color: C.ink } }, title),
       React.createElement('div', { className: "text-xs mt-1 mb-2 flex flex-wrap gap-x-3 gap-y-1", style: { color: C.inkSoft, fontFamily: "Inter" } },
-        React.createElement('span', null, React.createElement('span', { style: { display: "inline-block", width: 10, height: 10, borderRadius: 2, background: "#F4C584", marginRight: 4, verticalAlign: "middle" } }), mode === "month" ? "當日最高～最低溫" : "平均最高～最低溫"),
-        React.createElement('span', null, React.createElement('span', { style: { display: "inline-block", width: 10, height: 10, borderRadius: 2, background: "#AFCFCD", marginRight: 4, verticalAlign: "middle" } }), mode === "month" ? "日雨量" : "月雨量"),
+        React.createElement('span', null, React.createElement('span', { style: { display: "inline-block", width: 14, height: 3, borderRadius: 2, background: "#D9453F", marginRight: 4, verticalAlign: "middle" } }), mode === "month" ? "最高溫" : "平均最高溫", "（左軸）"),
+        React.createElement('span', null, React.createElement('span', { style: { display: "inline-block", width: 14, height: 3, borderRadius: 2, background: "#2F7FD1", marginRight: 4, verticalAlign: "middle" } }), mode === "month" ? "最低溫" : "平均最低溫", "（左軸）"),
+        React.createElement('span', null, React.createElement('span', { style: { display: "inline-block", width: 10, height: 10, borderRadius: 2, background: "#9CC9C5", marginRight: 4, verticalAlign: "middle" } }), mode === "month" ? "日雨量" : "月雨量", "（右軸）"),
         loading ? React.createElement('span', null, `讀取中 ${progress}…`) : null),
       React.createElement('svg', { viewBox: `0 0 ${W} ${H}`, style: { width: "100%", height: "auto", maxWidth: "100%", display: "block" } },
         [0, 10, 20, 30, 40, 50].map((t) => React.createElement('g', { key: "t" + t },
           React.createElement('line', { x1: x0, y1: yT(t), x2: x1, y2: yT(t), stroke: "#EEE7DB", strokeWidth: 0.8, strokeDasharray: t === 0 ? "" : "2 3" }),
-          React.createElement('text', { x: x0 - 4, y: yT(t) + 3.5, fontSize: 10, textAnchor: "end", fill: "#8A7F74", fontFamily: "Inter" }, `${t}°`))),
-        [0, 500, 1000].map((r) => React.createElement('g', { key: "r" + r },
-          React.createElement('line', { x1: x0, y1: yR(r), x2: x1, y2: yR(r), stroke: "#EEE7DB", strokeWidth: 0.8, strokeDasharray: r === 0 ? "" : "2 3" }),
-          React.createElement('text', { x: x0 - 4, y: yR(r) + 3.5, fontSize: 9, textAnchor: "end", fill: "#6E9E9B", fontFamily: "Inter" }, r === 0 ? "0mm" : `${r}`))),
+          React.createElement('text', { x: x0 - 4, y: yT(t) + 3.5, fontSize: 10, textAnchor: "end", fill: "#B5453F", fontFamily: "Inter" }, `${t}°`),
+          React.createElement('text', { x: x1 + 4, y: yT(t) + 3.5, fontSize: 9, textAnchor: "start", fill: "#5E9C97", fontFamily: "Inter" }, `${t * 20}`))),
+        React.createElement('text', { x: x0 - 4, y: pBot + 22, fontSize: 9, textAnchor: "end", fill: "#B5453F", fontFamily: "Inter" }, "°C"),
+        React.createElement('text', { x: x1 + 4, y: pBot + 22, fontSize: 9, textAnchor: "start", fill: "#5E9C97", fontFamily: "Inter" }, "mm"),
         cols.map((c, i) => {
           const cx = x0 + cw * (i + 0.5), st = c.stat, on = sel === c.key;
           const showLabel = (c.key === 1 || c.key % labelEvery === 0);
-          return React.createElement('g', { key: c.key, onClick: () => st && setSel(on ? null : c.key), style: { cursor: st ? "pointer" : "default" } },
+          return React.createElement('g', { key: "c" + c.key, onClick: () => st && setSel(on ? null : c.key), style: { cursor: st ? "pointer" : "default" } },
             React.createElement('rect', { x: x0 + cw * i, y: 0, width: cw, height: H, fill: on ? "#FFF6C8" : "transparent" }),
             showLabel && React.createElement('text', { x: cx, y: 14, fontSize: 10, textAnchor: "middle", fill: "#3A5BA0", fontFamily: "Inter" }, c.label),
-            st && React.createElement(React.Fragment, null,
-              React.createElement('rect', { x: cx - pinW / 2, y: yT(st.high), width: pinW, height: Math.max(1.5, yT(st.low) - yT(st.high)), fill: "#F4C584" }),
-              showNums && React.createElement('text', { x: cx, y: yT(st.high) - 4, fontSize: 10, textAnchor: "middle", fill: "#E08A2E", fontFamily: "Inter" }, f0(st.high)),
-              showNums && React.createElement('text', { x: cx, y: yT(st.low) + 12, fontSize: 10, textAnchor: "middle", fill: "#3F8C88", fontFamily: "Inter" }, f0(st.low)),
-              st.rain > 0 && React.createElement('rect', { x: cx - pinW / 2, y: yR(st.rain), width: pinW, height: Math.max(1.2, rBot - yR(st.rain)), fill: "#AFCFCD" }),
-              showNums && React.createElement('text', { x: cx, y: rBot + 11, fontSize: 9, textAnchor: "middle", fill: "#2B2119", fontFamily: "Inter" }, st.rain >= 100 ? f0(st.rain) : f1(st.rain))
-            )
+            st && st.rain > 0 && React.createElement('rect', { x: cx - barW / 2, y: yR(st.rain), width: barW, height: Math.max(1.2, pBot - yR(st.rain)), rx: 1.5, fill: "#9CC9C5", opacity: 0.85 }),
+            st && showNums && React.createElement('text', { x: cx, y: pBot + 12, fontSize: 9, textAnchor: "middle", fill: "#3D7A75", fontFamily: "Inter" }, st.rain >= 100 ? f0(st.rain) : f1(st.rain))
+          );
+        }),
+        segs("high").map((pts, k) => React.createElement('polyline', { key: "h" + k, points: pts, fill: "none", stroke: "#D9453F", strokeWidth: 2, strokeLinejoin: "round", strokeLinecap: "round" })),
+        segs("low").map((pts, k) => React.createElement('polyline', { key: "l" + k, points: pts, fill: "none", stroke: "#2F7FD1", strokeWidth: 2, strokeLinejoin: "round", strokeLinecap: "round" })),
+        cols.map((c, i) => {
+          const st = c.stat; if (!st) return null;
+          const cx = x0 + cw * (i + 0.5);
+          return React.createElement('g', { key: "d" + c.key, style: { pointerEvents: "none" } },
+            React.createElement('circle', { cx, cy: yT(st.high), r: dotR, fill: "#D9453F", stroke: "#FFF", strokeWidth: 0.8 }),
+            React.createElement('circle', { cx, cy: yT(st.low), r: dotR, fill: "#2F7FD1", stroke: "#FFF", strokeWidth: 0.8 }),
+            showNums && React.createElement('text', { x: cx, y: yT(st.high) - 6, fontSize: 10, textAnchor: "middle", fill: "#B5453F", fontFamily: "Inter" }, f0(st.high)),
+            showNums && React.createElement('text', { x: cx, y: yT(st.low) + 14, fontSize: 10, textAnchor: "middle", fill: "#245F9E", fontFamily: "Inter" }, f0(st.low))
           );
         })
       ),
@@ -10045,7 +10057,7 @@ function ClimateOverview({ mode, year, month, daily, dailyLoading, onOpenMonth }
         mode === "year" && onOpenMonth && React.createElement('button', { onClick: () => onOpenMonth(sc.key), className: "w-full mt-2 py-2 rounded-lg text-sm", style: { background: C.wine, color: "white", fontWeight: 700 } }, `看 ${sc.label} 每日資料圖`)
       ),
       React.createElement('div', { className: "text-xs mt-2", style: { color: C.inkSoft, fontFamily: "Inter", lineHeight: 1.6 } },
-        "刻度固定：溫度 0–50°C、雨量 0–1000mm，不同月份、年份可直接比較。年觀測的最高／最低＝每日最高、最低溫的月平均；雨量＝每日24小時累積雨量加總。資料來源：中央氣象署神岡站逐時觀測。")
+        "刻度固定：左軸溫度 0–50°C、右軸雨量 0–1000mm，不同月份、年份可直接比較。年觀測的最高／最低＝每日最高、最低溫的月平均；雨量＝每日24小時累積雨量加總。資料來源：中央氣象署神岡站逐時觀測。")
     )
   );
 }
