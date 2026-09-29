@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-<title>完全體 V5.1.C64・藍帶無花果</title>
+<title>完全體 V5.1.C108・藍帶無花果</title>
 <meta name="apple-mobile-web-app-capable" content="yes" />
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
 <meta name="apple-mobile-web-app-title" content="藍帶無花果" />
@@ -717,7 +717,7 @@ const C = {
   tiffanyLight: "#B8ECE5",
   tiffanyText: "#2E8577",
 };
-const APP_VERSION = 'V5.1.C107';
+const APP_VERSION = 'V5.1.C108';
 const FONT_LINK = "https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,600;9..144,700&family=Inter:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap";
 
 const WORK_ITEMS = [
@@ -1586,7 +1586,7 @@ function MapLogin({ onEnter, onOpenReport, onOpenCalendar, onOpenFolders, onOpen
             )
           )
           , React.createElement('div', { className: "inline-flex items-center px-3 py-1 mb-2 rounded-full", style: { background: `${C.brandBlue}12`, border: `1px solid ${C.brandBlue}35`, color: C.brandBlue, fontFamily: "IBM Plex Mono", fontWeight: 700, fontSize: 12, letterSpacing: "0.04em" },}, "版本 ", APP_VERSION)
-          , React.createElement('h1', { style: { fontFamily: "Inter", fontWeight: 700, fontSize: 26, color: C.ink },}, "選擇作業分區")
+          , React.createElement('h1', { style: { fontFamily: "Inter", fontWeight: 700, fontSize: 26, color: C.ink, letterSpacing: "0.08em" },}, "好土、好果、好生活")
           , React.createElement('p', { className: "text-sm mt-1" , style: { color: C.inkSoft, fontFamily: "Inter" },}, "點選地圖上的分區以登入該區作業畫面")
         )
 
@@ -1745,6 +1745,26 @@ function swallowNextClick() {
   const cleanup = () => { document.removeEventListener("click", stop, true); clearTimeout(timer); };
   document.addEventListener("click", stop, true);
   const timer = setTimeout(cleanup, 600);
+}
+
+// C108：內層視窗（例如表三某日全部內容、回報使用量）自己有「回上一頁」時，
+// 暫時隱藏浮動的「回上一頁／主畫面」，避免兩個返回鈕混淆；視窗關閉後自動恢復。
+let __hideIslandCount = 0;
+function __applyHideIslands() {
+  if (!document.getElementById("hide-float-islands-style")) {
+    const st = document.createElement("style");
+    st.id = "hide-float-islands-style";
+    st.textContent = "body.hide-float-islands .global-back-island, body.hide-float-islands .global-home-island { display: none !important; }";
+    document.head.appendChild(st);
+  }
+  document.body.classList.toggle("hide-float-islands", __hideIslandCount > 0);
+}
+function useHideFloatingIslands(active) {
+  useEffect(() => {
+    if (!active) return undefined;
+    __hideIslandCount += 1; __applyHideIslands();
+    return () => { __hideIslandCount = Math.max(0, __hideIslandCount - 1); __applyHideIslands(); };
+  }, [!!active]);
 }
 
 function BackIsland({ onBack }) {
@@ -6342,6 +6362,7 @@ function CellWorkTable({ zone, cellId, role, onClose, ym, workDate, loggedInId, 
 
   // 進度確認小面板：受文者選自己是誰(限受文名單內) + 選1~5進度，兩者皆選才能送出
   const [confirmItemId, setConfirmItemId] = useState(null);
+  useHideFloatingIslands(confirmItemId !== null); // C108
   const [showHistory, setShowHistory] = useState(false);
   // 僅功能4：本格歷史限定原 worklog 的1–5；整區6–8在原表各自工項下呈現。
   // 此處只讀，不回填目前欄位、不改原紀錄、不補日期。
@@ -10029,6 +10050,8 @@ function ZoneMaterialsReport({ year, month, onBack }) {
   const [lastUpdated, setLastUpdated] = useState("");
   const [activeDay, setActiveDay] = useState(null); // 點選某日 → 顯示全部
   const [printVersion, setPrintVersion] = useState(0);
+  const [eventMap, setEventMap] = useState({}); // C108：eventId → 指定事件（時間、工項）
+  useHideFloatingIslands(activeDay != null);
 
   const daysCount = daysInMonth(year, month);
   const firstDow = new Date(year, month - 1, 1).getDay(); // 0=日
@@ -10041,7 +10064,7 @@ function ZoneMaterialsReport({ year, month, onBack }) {
     const pushDay = (day, entry) => {
       if (day < 1 || day > daysCount) return;
       if (!byDay[day]) byDay[day] = [];
-      const dup = byDay[day].some((e) => e.rowKey === entry.rowKey && e.qty === entry.qty && e.at === entry.at && e.personName === entry.personName);
+      const dup = byDay[day].some((e) => e.rowKey === entry.rowKey && e.qty === entry.qty && e.at === entry.at && e.personName === entry.personName && (e.eventId || "") === (entry.eventId || ""));
       if (dup) return;
       byDay[day].push(entry);
     };
@@ -10065,6 +10088,9 @@ function ZoneMaterialsReport({ year, month, onBack }) {
       const res = await window.storage.get(`zonework:${z.id}:${ym}`, true);
       if (res) {
         const zdata = JSON.parse(res.value);
+        const evm = {};
+        (zdata.assignmentHistory || []).forEach((a) => { if (a && a.eventId) evm[a.eventId] = { assignedAt: a.assignedAt || "", itemIds: (a.itemIds || []).map(Number) }; });
+        setEventMap(evm);
 
         // 表三原則：只有「回報確認」才算數，且回報必有時間 → 月曆與彙總都只認 confirmHistory
         (zdata.confirmHistory || []).forEach((h) => {
@@ -10080,6 +10106,7 @@ function ZoneMaterialsReport({ year, month, onBack }) {
             itemName: h.itemName || h.rowKey,
             personName: h.personName || h.personId || "",
             at: h.at,
+            eventId: h.eventId || null,
             source: "history",
           });
           if (nextTotals[h.rowKey] !== undefined) {
@@ -10353,7 +10380,23 @@ function ZoneMaterialsReport({ year, month, onBack }) {
           ),
           React.createElement('div', { className: "overflow-y-auto flex-1 min-h-0 flex flex-col gap-2" },
             activeEntries.length === 0 && React.createElement('div', { className: "text-center py-10 text-sm", style: { color: C.inkSoft, fontFamily: "Inter" } }, "此日無確認紀錄"),
-            activeEntries.map((en, i) => React.createElement('div', {
+            // C108：依「指定事件」分組，每組上方標示這筆回報屬於哪一次指定
+            (() => {
+              const groups = []; const idx = {};
+              activeEntries.forEach((en) => { const k = en.eventId || "__legacy"; if (idx[k] == null) { idx[k] = groups.length; groups.push({ key: k, items: [] }); } groups[idx[k]].items.push(en); });
+              const ITEM_NAME = { 6: "補水", 7: "施肥", 8: "其他資材" };
+              return groups.map((g) => {
+                const ev = g.key !== "__legacy" ? eventMap[g.key] : null;
+                const title = g.key === "__legacy" ? "舊制回報（當時未記錄指定事件）"
+                  : ev ? `指定 ${ev.assignedAt || "時間未記錄"}・${(ev.itemIds || []).map((n) => ITEM_NAME[n] || n).join("、") || "工項"}`
+                  : "指定事件（本月資料中找不到指定紀錄）";
+                return React.createElement('div', { key: g.key, className: "rounded-xl p-2", style: { border: `1.5px solid ${C.tableColor}55`, background: `${C.tableColor}0D` } },
+                  React.createElement('div', { className: "text-xs px-1 pb-1.5 flex items-center justify-between gap-2", style: { fontFamily: "Inter", fontWeight: 700, color: C.tableColor } },
+                    React.createElement('span', null, "📌 ", title),
+                    React.createElement('span', { style: { color: C.inkSoft, fontWeight: 500 } }, `${g.items.length} 筆回報`)
+                  ),
+                  React.createElement('div', { className: "flex flex-col gap-2" },
+            g.items.map((en, i) => React.createElement('div', {
               key: i,
               className: "p-3 rounded-xl",
               style: { background: C.cream, border: `1px solid ${C.line}` },
@@ -10365,9 +10408,13 @@ function ZoneMaterialsReport({ year, month, onBack }) {
                 )
               ),
               React.createElement('div', { className: "text-xs mt-1", style: { color: C.inkSoft, fontFamily: "Inter" } },
-                en.itemName, en.personName ? `　·　${en.personName}` : "", "　·　", en.at
+                "回報", en.personName ? `　·　${en.personName}` : "", "　·　", en.at
               )
             ))
+                  )
+                );
+              });
+            })()
           )
         )
       ),
