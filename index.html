@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-<title>完全體 V5.1.C114・藍帶無花果</title>
+<title>完全體 V5.1.C116・藍帶無花果</title>
 <meta name="apple-mobile-web-app-capable" content="yes" />
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
 <meta name="apple-mobile-web-app-title" content="藍帶無花果" />
@@ -717,7 +717,7 @@ const C = {
   tiffanyLight: "#B8ECE5",
   tiffanyText: "#2E8577",
 };
-const APP_VERSION = 'V5.1.C114';
+const APP_VERSION = 'V5.1.C116';
 const FONT_LINK = "https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,600;9..144,700&family=Inter:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap";
 
 const WORK_ITEMS = [
@@ -8085,6 +8085,24 @@ async function fetchYieldZonesPeriodTotal(zones, startDate, endDate, grades) {
   return Math.round(sum * 10) / 10;
 }
 
+
+// C115：圖表刻度工具——取「好讀」的整數刻度（1、1.2、1.5、2、2.5、3、4、5、6、8 × 10ⁿ），並保留約 10% 頂部空間，
+// 讓最高的柱子／點不會貼到圖框上緣，刻度也不會出現 27.5、13732 這種難讀的數字。
+function niceAxis(maxVal, intervals) {
+  const v = Math.max(Number(maxVal) || 0, 0) * 1.1;
+  if (!(v > 0)) return { max: intervals, step: 1 };
+  const raw = v / intervals;
+  const p = Math.pow(10, Math.floor(Math.log10(raw)));
+  const r = raw / p;
+  const m = [1, 1.2, 1.5, 2, 2.5, 3, 4, 5, 6, 8, 10].find((x) => r <= x + 1e-9) || 10;
+  const step = m * p;
+  return { max: step * intervals, step };
+}
+function niceLabel(v) {
+  if (Math.abs(v) >= 1000) return Math.round(v).toLocaleString();
+  return Number.isInteger(v) ? String(v) : Number(v).toFixed(1);
+}
+
 function ClimateYieldReport({ onBack }) {
   const [mode, setMode] = useState("year"); // "year" | "month" | "period"
   const [zoneSel, setZoneSel] = useState("全場");
@@ -8181,18 +8199,16 @@ function ClimateYieldReport({ onBack }) {
   const xOf = (i) => padL + (n <= 1 ? plotW / 2 : (i / (n - 1)) * plotW);
   const barW = Math.min(26, plotW / Math.max(1, n) * 0.5);
 
-  // 雨量分段刻度：0~300沿用底部75%高度、300~1000壓縮進剩下25%高度，因應極端降雨仍能顯示不爆版。
-  const RAIN_BREAK = 300, RAIN_CAP = 1000, RAIN_BREAK_FRAC = 0.75;
-  const rainFrac = (v) => {
-    const cv = Math.min(v, RAIN_CAP);
-    return cv <= RAIN_BREAK ? (cv / RAIN_BREAK) * RAIN_BREAK_FRAC
-      : RAIN_BREAK_FRAC + ((cv - RAIN_BREAK) / (RAIN_CAP - RAIN_BREAK)) * (1 - RAIN_BREAK_FRAC);
-  };
-  const yRain = (v) => padT + (1 - rainFrac(v)) * plotH;
-  // 溫度固定5~40度，跨模式、跨查詢刻度一致，方便比較。
-  const TEMP_MIN = 5, TEMP_MAX = 40;
+  // C115：三個座標軸都改成 5 等分、共用同一組格線。
+  // 雨量＝依資料取好讀的上限（年約 0–2000、月約 0–500），不再用 300mm 斷軸；
+  // 溫度＝固定 0–50°C（與表五一致）；產能＝依資料取好讀的上限並保留頂部空間。
+  const AXIS_N = 5;
+  const rainAxis = niceAxis(data ? Math.max(0, ...data.rain.filter((v) => v != null)) : 0, AXIS_N);
+  const yRain = (v) => padT + (1 - Math.min(v, rainAxis.max) / rainAxis.max) * plotH;
+  const TEMP_MIN = 0, TEMP_MAX = 50;
   const yTemp = (v) => padT + (1 - (v - TEMP_MIN) / (TEMP_MAX - TEMP_MIN)) * plotH;
-  const yieldMax = data ? Math.max(10, ...data.yield.filter((v) => v != null)) : 10;
+  const yieldAxis = niceAxis(data ? Math.max(0, ...data.yield.filter((v) => v != null)) : 0, AXIS_N);
+  const yieldMax = yieldAxis.max;
   const yYield = (v) => padT + (1 - v / yieldMax) * plotH;
 
   const fmtN = (v, d = 0) => v == null ? "" : Number(v).toFixed(d);
@@ -8211,19 +8227,19 @@ function ClimateYieldReport({ onBack }) {
     return React.createElement(React.Fragment, null,
       React.createElement("polyline", { points: pts, fill: "none", stroke: color, strokeWidth: 2 }), dots);
   };
-  const rainAxisTicks = [0, 100, 200, 300, 500, 1000].map((val) => (
-    React.createElement("text", { key: val, x: padL - 8, y: yRain(val) + 4, fontSize: 11.5, fill: C.brandBlue, textAnchor: "end", fontFamily: "IBM Plex Mono, monospace" }, val + (val === 1000 ? "mm" : ""))
+  const rainTickVals = Array.from({ length: AXIS_N + 1 }, (_, i) => rainAxis.step * i);
+  const rainAxisTicks = rainTickVals.map((val, i) => (
+    React.createElement("text", { key: val, x: padL - 8, y: yRain(val) + 4, fontSize: 11.5, fill: C.brandBlue, textAnchor: "end", fontFamily: "IBM Plex Mono, monospace" }, niceLabel(val) + (i === AXIS_N ? "mm" : ""))
   ));
-  const rainAxisGrid = [0, 100, 200, 300, 500, 1000].map((val) => (
-    React.createElement("line", { key: val, x1: padL, y1: yRain(val), x2: W - padR, y2: yRain(val), stroke: val === RAIN_BREAK ? C.brandBlue : C.line, strokeDasharray: val === RAIN_BREAK ? "4,3" : undefined, strokeWidth: 1 })
+  const rainAxisGrid = rainTickVals.map((val) => (
+    React.createElement("line", { key: val, x1: padL, y1: yRain(val), x2: W - padR, y2: yRain(val), stroke: C.line, strokeWidth: 1 })
   ));
-  const tempAxisTicks = [5, 20, 40].map((val) => (
+  const tempAxisTicks = [0, 10, 20, 30, 40, 50].map((val) => (
     React.createElement("text", { key: val, x: W - padR + 8, y: yTemp(val) + 4, fontSize: 11.5, fill: C.coral, textAnchor: "start", fontFamily: "IBM Plex Mono, monospace" }, val + "℃")
   ));
-  const yieldAxisTicks = [0, 0.5, 1].map((f) => {
-    const val = yieldMax * f;
-    return React.createElement("text", { key: f, x: W - padR + 52, y: yYield(val) + 4, fontSize: 11.5, fill: C.tableColor, textAnchor: "start", fontFamily: "IBM Plex Mono, monospace" }, val.toFixed(0) + (f === 1 ? "kg" : ""));
-  });
+  const yieldAxisTicks = Array.from({ length: AXIS_N + 1 }, (_, k) => yieldAxis.step * k).map((val, k) => (
+    React.createElement("text", { key: k, x: W - padR + 58, y: yYield(val) + 4, fontSize: 11.5, fill: C.tableColor, textAnchor: "start", fontFamily: "IBM Plex Mono, monospace" }, niceLabel(val) + (k === AXIS_N ? "kg" : ""))
+  ));
   const xTicks = labels.map((lab, i) => (
     React.createElement("text", { key: i, x: xOf(i), y: H - padB + 18, fontSize: mode === "period" ? 10 : 11.5, fill: C.inkSoft, textAnchor: "middle", fontFamily: "Inter" }, lab)
   ));
@@ -8849,13 +8865,15 @@ function ZoneUsageProfileReport({ onBack }) {
   const xOf = (i) => padL + (n <= 1 ? plotW / 2 : (i / (n - 1)) * plotW);
 
   const maxOf = (keys) => {
-    let m = 10;
+    let m = 0;
     keys.forEach((k) => (data && data.series[k] || []).forEach((v) => { if (v != null && v > m) m = v; }));
     return m;
   };
-  const tonsMax = maxOf(["溝灌"]);
-  const minMax = maxOf(["噴灌"]);
-  const singleMax = maxOf(itemsForParam); // solid/liquid 共用一個軸的上限
+  // C115：刻度改成好讀的整數（4 等分，對齊格線）並保留頂部空間，柱子不再頂到圖框。
+  const tonsAxis = niceAxis(maxOf(["溝灌"]), 4), minAxis = niceAxis(maxOf(["噴灌"]), 4), singleAxis = niceAxis(maxOf(itemsForParam), 4);
+  const tonsMax = tonsAxis.max;
+  const minMax = minAxis.max;
+  const singleMax = singleAxis.max; // solid/liquid 共用一個軸的上限
   const yOfMax = (max) => (v) => padT + (1 - v / max) * plotH;
   const yTons = yOfMax(tonsMax), yMin = yOfMax(minMax), ySingle = yOfMax(singleMax);
   const yFor = (k) => param === "water" ? (k === "溝灌" ? yTons : yMin) : ySingle;
@@ -8874,8 +8892,8 @@ function ZoneUsageProfileReport({ onBack }) {
       showLabels && React.createElement("text", { x: xOf(i) + offset, y: yfn(v) - 5, fontSize: 10, fill: color, textAnchor: "middle", fontFamily: "IBM Plex Mono, monospace" }, fmtN(v))
     ));
   };
-  const axisTicks = (max, color, x, unit, anchor) => [0, 0.5, 1].map((f) => (
-    React.createElement("text", { key: f, x, y: yOfMax(max)(max * f) + 4, fontSize: 12.5, fill: color, textAnchor: anchor, fontFamily: "IBM Plex Mono, monospace" }, (max * f).toFixed(1) + (f === 1 ? unit : ""))
+  const axisTicks = (max, color, x, unit, anchor) => [0, 0.25, 0.5, 0.75, 1].map((f) => (
+    React.createElement("text", { key: f, x, y: yOfMax(max)(max * f) + 4, fontSize: 12.5, fill: color, textAnchor: anchor, fontFamily: "IBM Plex Mono, monospace" }, niceLabel(max * f) + (f === 1 ? unit : ""))
   ));
   const xTicks = labels.map((lab, i) => (
     React.createElement("text", { key: i, x: xOf(i), y: H - padB + 18, fontSize: (mode === "week" || mode === "day") ? 11 : 12.5, fill: C.inkSoft, textAnchor: "middle", fontFamily: "Inter" }, lab)
@@ -9079,6 +9097,7 @@ const REPORT_SLOTS = [
   { no: "十一", label: "溫室用量側寫", key: "zoneUsageProfile", ready: true },
   { no: "十二", label: "細項跨溫室對比", key: "componentZoneCompare", ready: true },
   { no: "十三", label: "氣候與資材投入", key: "climateMaterial", ready: true },
+  { no: "十四", label: "產能 × 資材 × 雨量", key: "yieldMaterialRain", ready: true },
 ];
 
 // 耗材與報表主入口：年份資料夾 → 月份資料夾 → 10個表格選項（表一~表十）
@@ -9346,6 +9365,195 @@ function ClimateMaterialReport({ onBack }) {
   );
 }
 
+
+/* =========================================================
+   C116 表十四：產能 × 資材 × 雨量
+   主體＝各區產能（折線，左軸），資材＝柱狀（右軸；同一類的多個品項疊加＝加總），
+   雨量＝雲朵下雨圖示，雲朵的高度代表雨量（右外軸）。看年／月／15天／週。只讀取。
+   ========================================================= */
+const T14_CATS = [
+  { key: "溝灌", label: "溝灌", unit: "噸", items: ["溝灌"], colors: ["#2F6FA8"] },
+  { key: "噴灌", label: "噴灌", unit: "分", items: ["噴灌"], colors: ["#E39B3D"] },
+  { key: "固態", label: "固態", unit: "包", items: ["米糠", "金旺"], colors: ["#8B5A2B", "#C9954F"] },
+  { key: "液態", label: "液態", unit: "kg", items: OTHER_MATERIALS, colors: ["#4E9A5B", "#7CB342", "#2E7D6B", "#9CCC65", "#558B2F", "#26A69A", "#AED581"] },
+];
+const T14_ALL = "全場";
+
+async function t14RainForRange(startDate, endDate) {
+  let d = new Date(startDate + "T00:00:00"); const endD = new Date(endDate + "T00:00:00");
+  const months = [];
+  while (d <= endD) { const k = [d.getFullYear(), d.getMonth() + 1]; if (!months.some((x) => x[0] === k[0] && x[1] === k[1])) months.push(k); d.setDate(d.getDate() + 1); }
+  let total = 0, has = false;
+  for (const [y, m] of months) {
+    const daily = await climateDailyForMonth(y, m);
+    Object.keys(daily).forEach((ds) => { if (ds >= startDate && ds <= endDate) { has = true; total += daily[ds].rain || 0; } });
+  }
+  return has ? Math.round(total * 10) / 10 : null;
+}
+async function t14UsageForRange(zones, startDate, endDate) {
+  let d = new Date(startDate + "T00:00:00"); const endD = new Date(endDate + "T00:00:00");
+  const months = [];
+  while (d <= endD) { const ym = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`; if (!months.includes(ym)) months.push(ym); d.setDate(d.getDate() + 1); }
+  const out = {};
+  for (const z of zones) for (const ym of months) {
+    const byDay = await fetchZoneworkConfirmedByDay(z, ym);
+    Object.keys(byDay).forEach((ds) => { if (ds < startDate || ds > endDate) return; Object.keys(byDay[ds]).forEach((k) => { out[k] = (out[k] || 0) + (Number(byDay[ds][k]) || 0); }); });
+  }
+  return out;
+}
+
+function YieldMaterialRainReport({ onBack }) {
+  const nowYear = new Date().getFullYear();
+  const todayStr = localYMD(new Date());
+  const [mode, setMode] = useState("month");
+  const [year, setYear] = useState(nowYear);
+  const [zone, setZone] = useState("二期");
+  const [cats, setCats] = useState(["溝灌"]);
+  const [liquidSel, setLiquidSel] = useState(() => [...OTHER_MATERIALS]);
+  const [showLabels, setShowLabels] = useState(true);
+  const [data, setData] = useState(null); // { periods:[{label,start,end}], yield[], rain[], usage[{item:qty}] }
+  const [loading, setLoading] = useState(false);
+  const [progress, setProgress] = useState("");
+  const [error, setError] = useState("");
+  const [sel, setSel] = useState(null);
+
+  const periodsForMode = () => {
+    if (mode === "year") { const out = []; for (let y = 2020; y <= nowYear; y++) out.push({ label: String(y), start: `${y}-01-01`, end: y === nowYear ? todayStr : `${y}-12-31` }); return out; }
+    if (mode === "month") { const out = []; const maxM = year === nowYear ? new Date().getMonth() + 1 : 12; for (let m = 1; m <= maxM; m++) { const mm = String(m).padStart(2, "0"); const last = new Date(year, m, 0).getDate(); const end = `${year}-${mm}-${String(last).padStart(2, "0")}`; out.push({ label: `${m}月`, start: `${year}-${mm}-01`, end: end > todayStr ? todayStr : end }); } return out; }
+    if (mode === "period") return yieldPeriodsOfYear(year);
+    return weekPeriodsOfYear(year);
+  };
+
+  useEffect(() => {
+    let alive = true;
+    (async () => {
+      setLoading(true); setError(""); setData(null); setSel(null);
+      try {
+        const periods = periodsForMode();
+        const zones = zone === T14_ALL ? YIELD_DB_ZONES : [zone];
+        const yieldArr = [], rainArr = [], usageArr = [];
+        for (let i = 0; i < periods.length; i++) {
+          if (!alive) return;
+          setProgress(`${i + 1}/${periods.length}`);
+          const p = periods[i];
+          const [y, r, u] = await Promise.all([
+            fetchYieldZonesPeriodTotal(zones, p.start, p.end, YIELD_GRADES),
+            t14RainForRange(p.start, p.end),
+            t14UsageForRange(zones, p.start, p.end),
+          ]);
+          yieldArr.push(y); rainArr.push(r); usageArr.push(u);
+        }
+        if (alive) setData({ periods, yield: yieldArr, rain: rainArr, usage: usageArr });
+      } catch (e) { if (alive) setError("讀取失敗：" + (e.message || e)); }
+      if (alive) { setLoading(false); setProgress(""); }
+    })();
+    return () => { alive = false; };
+  }, [mode, year, zone]);
+
+  const itemsOf = (c) => c.key === "液態" ? c.items.filter((k) => liquidSel.includes(k)) : c.items;
+  const activeCats = T14_CATS.filter((c) => cats.includes(c.key));
+  const f1 = (v) => v == null ? "—" : niceLabel(Math.round(v * 10) / 10);
+  const btn = (on) => on ? { background: C.wine, color: "white", fontWeight: 700 } : { background: "white", color: C.ink, border: `1px solid ${C.line}` };
+
+  const chart = () => {
+    if (!data) return null;
+    const n = data.periods.length;
+    const perPoint = mode === "year" ? 72 : mode === "month" ? 60 : 38;
+    const padL = 58, padR = activeCats.length === 1 ? 104 : 58, padT = 34, padB = 44;
+    const W = Math.max(360, padL + padR + n * perPoint), H = 380;
+    const plotW = W - padL - padR, plotH = H - padT - padB, base = padT + plotH;
+    const cw = plotW / Math.max(1, n);
+    const xc = (i) => padL + cw * (i + 0.5);
+    const yieldAxis = niceAxis(Math.max(0, ...data.yield.filter((v) => v != null)), 5);
+    const rainAxis = niceAxis(Math.max(0, ...data.rain.filter((v) => v != null)), 5);
+    const yY = (v) => padT + (1 - v / yieldAxis.max) * plotH;
+    const yR = (v) => padT + (1 - Math.min(v, rainAxis.max) / rainAxis.max) * plotH;
+    const catTotals = (c, i) => itemsOf(c).map((k) => Number(data.usage[i][k]) || 0);
+    const catAxes = {}; activeCats.forEach((c) => { catAxes[c.key] = niceAxis(Math.max(0, ...data.usage.map((_, i) => catTotals(c, i).reduce((s, v) => s + v, 0))), 5); });
+    const groupW = Math.min(cw * 0.72, 16 * Math.max(1, activeCats.length));
+    const bw = groupW / Math.max(1, activeCats.length);
+    const g = [];
+    for (let k = 0; k <= 5; k++) {
+      const yv = padT + plotH * (1 - k / 5);
+      g.push(React.createElement('line', { key: "gl" + k, x1: padL, y1: yv, x2: W - padR, y2: yv, stroke: C.line, strokeWidth: 0.8, strokeDasharray: k ? "3 3" : "" }));
+      g.push(React.createElement('text', { key: "gy" + k, x: padL - 6, y: yv + 4, fontSize: 11, fill: C.tableColor, textAnchor: "end", fontFamily: "IBM Plex Mono, monospace" }, niceLabel(yieldAxis.step * k)));
+      g.push(React.createElement('text', { key: "gr" + k, x: W - padR + (activeCats.length === 1 ? 52 : 6), y: yv + 4, fontSize: 10.5, fill: "#3A7FC1", textAnchor: "start", fontFamily: "IBM Plex Mono, monospace" }, niceLabel(rainAxis.step * k)));
+      if (activeCats.length === 1) { const ca = catAxes[activeCats[0].key]; g.push(React.createElement('text', { key: "gc" + k, x: W - padR + 6, y: yv + 4, fontSize: 10.5, fill: activeCats[0].colors[0], textAnchor: "start", fontFamily: "IBM Plex Mono, monospace" }, niceLabel(ca.step * k))); }
+    }
+    g.push(React.createElement('text', { key: "uy", x: padL - 6, y: padT - 12, fontSize: 10.5, fill: C.tableColor, textAnchor: "end" }, "產能kg"));
+    g.push(React.createElement('text', { key: "ur", x: W - padR + (activeCats.length === 1 ? 52 : 6), y: padT - 12, fontSize: 10.5, fill: "#3A7FC1" }, "雨mm"));
+    if (activeCats.length === 1) g.push(React.createElement('text', { key: "uc", x: W - padR + 6, y: padT - 12, fontSize: 10.5, fill: activeCats[0].colors[0] }, `${activeCats[0].label}${activeCats[0].unit}`));
+    data.periods.forEach((p, i) => {
+      const cx = xc(i), on = sel === i;
+      const kids = [React.createElement('rect', { key: "hl", x: padL + cw * i, y: padT - 20, width: cw, height: plotH + 20, fill: on ? "#FFF6C8" : "transparent" })];
+      activeCats.forEach((c, ci) => {
+        const ca = catAxes[c.key]; const vals = catTotals(c, i); let acc = 0;
+        const x = cx - groupW / 2 + ci * bw + bw * 0.08, w = bw * 0.84;
+        itemsOf(c).forEach((k, ki) => {
+          const v = vals[ki]; if (!(v > 0)) return;
+          const y1 = padT + (1 - (acc + v) / ca.max) * plotH, y0 = padT + (1 - acc / ca.max) * plotH; acc += v;
+          kids.push(React.createElement('rect', { key: `b${c.key}${k}`, x, y: y1, width: w, height: Math.max(1, y0 - y1), fill: c.colors[ki % c.colors.length] }));
+        });
+        if (showLabels && acc > 0 && (mode === "year" || mode === "month")) kids.push(React.createElement('text', { key: `bl${c.key}`, x: x + w / 2, y: padT + (1 - acc / ca.max) * plotH - 3, fontSize: 9, textAnchor: "middle", fill: c.colors[0], fontFamily: "IBM Plex Mono, monospace" }, niceLabel(Math.round(acc * 10) / 10)));
+      });
+      const r = data.rain[i];
+      if (r != null && r > 0) {
+        const cy = yR(r), s = Math.max(0.7, Math.min(1, cw / 40));
+        kids.push(React.createElement('g', { key: "cloud", transform: `translate(${cx},${cy}) scale(${s})`, style: { pointerEvents: "none" } },
+          React.createElement('path', { d: "M-11,-2 a6,6 0 0 1 5,-8 a7,7 0 0 1 12,-1 a5,5 0 0 1 6,6 a4,4 0 0 1 -1,8 h-20 a5,5 0 0 1 -2,-5z", fill: "#DCEBF7", stroke: "#3A7FC1", strokeWidth: 1.2 }),
+          React.createElement('line', { x1: -6, y1: 6, x2: -8, y2: 11, stroke: "#3A7FC1", strokeWidth: 1.4, strokeLinecap: "round" }),
+          React.createElement('line', { x1: 0, y1: 6, x2: -2, y2: 11, stroke: "#3A7FC1", strokeWidth: 1.4, strokeLinecap: "round" }),
+          React.createElement('line', { x1: 6, y1: 6, x2: 4, y2: 11, stroke: "#3A7FC1", strokeWidth: 1.4, strokeLinecap: "round" })));
+        if (showLabels && (mode === "year" || mode === "month")) kids.push(React.createElement('text', { key: "cl", x: cx, y: cy - 13, fontSize: 9, textAnchor: "middle", fill: "#3A7FC1", fontFamily: "IBM Plex Mono, monospace" }, niceLabel(r)));
+      }
+      const every = n > 30 ? 4 : n > 14 ? 2 : 1;
+      if (i % every === 0) kids.push(React.createElement('text', { key: "xl", x: cx, y: base + 16, fontSize: 10.5, textAnchor: "middle", fill: C.inkSoft }, mode === "period" || mode === "week" ? (p.label || "").replace(/^\d{4}\//, "") : p.label));
+      g.push(React.createElement('g', { key: "p" + i, onClick: () => setSel(on ? null : i), style: { cursor: "pointer" } }, kids));
+    });
+    const pts = data.yield.map((v, i) => v == null ? null : `${xc(i).toFixed(1)},${yY(v).toFixed(1)}`).filter(Boolean).join(" ");
+    g.push(React.createElement('polyline', { key: "yl", points: pts, fill: "none", stroke: C.tableColor, strokeWidth: 2.6, strokeLinejoin: "round", style: { pointerEvents: "none" } }));
+    data.yield.forEach((v, i) => { if (v == null) return; g.push(React.createElement('circle', { key: "yd" + i, cx: xc(i), cy: yY(v), r: 3, fill: C.tableColor, style: { pointerEvents: "none" } }));
+      if (showLabels && (mode === "year" || mode === "month") && v > 0) g.push(React.createElement('text', { key: "yt" + i, x: xc(i), y: yY(v) - 7, fontSize: 10, textAnchor: "middle", fill: C.tableColor, fontWeight: 700, fontFamily: "IBM Plex Mono, monospace", style: { pointerEvents: "none" } }, niceLabel(Math.round(v)))); });
+    return React.createElement('div', { style: { overflowX: "auto", maxWidth: "100%" } },
+      React.createElement('svg', { viewBox: `0 0 ${W} ${H}`, style: { width: W, height: H, maxWidth: "none", display: "block" } }, g));
+  };
+
+  const years = []; for (let y = 2020; y <= nowYear; y++) years.push(y);
+  const sp = sel != null && data ? { p: data.periods[sel], y: data.yield[sel], r: data.rain[sel], u: data.usage[sel] } : null;
+
+  return React.createElement('div', { className: "min-h-screen flex flex-col", style: { background: C.cream } },
+    React.createElement(NavBar, { backLabel: "耗材與報表", onBack }),
+    React.createElement('div', { className: "px-4 py-3", style: { borderBottom: `1px solid ${C.line}`, background: C.paper } },
+      React.createElement('div', { style: { fontFamily: "Inter", fontWeight: 700, fontSize: 17, color: C.ink } }, "表十四・產能 × 資材 × 雨量"),
+      React.createElement('div', { className: "text-xs mt-1", style: { color: C.inkSoft } }, "產能為主軸（折線），資材以柱狀呈現（同類多項疊加＝加總），雲朵高度代表雨量（純讀取）")),
+    React.createElement('div', { className: "p-4 flex flex-col gap-3", style: { fontFamily: "Inter" } },
+      React.createElement('div', { className: "flex flex-wrap gap-2" }, [["year", "看年"], ["month", "看月"], ["period", "看15天"], ["week", "看週"]].map(([k, l]) => React.createElement('button', { key: k, onClick: () => setMode(k), className: "px-3 py-1.5 rounded-lg text-sm", style: btn(mode === k) }, l)),
+        mode !== "year" && React.createElement('select', { value: year, onChange: (e) => setYear(Number(e.target.value)), className: "px-3 py-1.5 rounded-lg text-sm", style: { border: `1px solid ${C.line}`, background: "white" } }, years.map((y) => React.createElement('option', { key: y, value: y }, `${y}年`)))),
+      React.createElement('div', null, React.createElement('div', { className: "text-xs mb-1", style: { color: C.inkSoft } }, "產能分區"),
+        React.createElement('div', { className: "flex flex-wrap gap-2" }, [T14_ALL, ...YIELD_DB_ZONES].map((z) => React.createElement('button', { key: z, onClick: () => setZone(z), className: "px-3 py-1.5 rounded-full text-sm", style: btn(zone === z) }, z)))),
+      React.createElement('div', null, React.createElement('div', { className: "text-xs mb-1", style: { color: C.inkSoft } }, "資材（可單選或複選；選多類時各自一根柱、各用自己的刻度）"),
+        React.createElement('div', { className: "flex flex-wrap gap-2" }, T14_CATS.map((c) => React.createElement('button', { key: c.key, onClick: () => setCats((prev) => prev.includes(c.key) ? prev.filter((x) => x !== c.key) : [...prev, c.key]), className: "px-3 py-1.5 rounded-full text-sm", style: cats.includes(c.key) ? { background: c.colors[0], color: "white", fontWeight: 700 } : { background: "white", color: C.ink, border: `1px solid ${C.line}` } }, `${c.label}（${c.unit}）`))),
+        cats.includes("液態") && React.createElement('div', { className: "flex flex-wrap gap-1.5 mt-2" }, OTHER_MATERIALS.map((k, ki) => React.createElement('button', { key: k, onClick: () => setLiquidSel((prev) => prev.includes(k) ? prev.filter((x) => x !== k) : [...prev, k]), className: "px-2 py-1 rounded-full text-xs", style: liquidSel.includes(k) ? { background: T14_CATS[3].colors[ki % 7], color: "white" } : { background: "white", color: C.inkSoft, border: `1px solid ${C.line}` } }, k)))),
+      React.createElement('label', { className: "flex items-center gap-2 text-sm", style: { color: C.inkSoft } }, React.createElement('input', { type: "checkbox", checked: showLabels, onChange: (e) => setShowLabels(e.target.checked) }), "顯示數值標籤（看年、看月）"),
+      loading && React.createElement('div', { className: "text-xs", style: { color: C.inkSoft } }, `讀取中 ${progress}…`),
+      error && React.createElement('div', { className: "text-sm", style: { color: C.alert } }, error),
+      data && React.createElement('div', { className: "rounded-2xl p-3", style: { background: "#FFF", border: `1px solid ${C.line}` } },
+        React.createElement('div', { style: { fontWeight: 800, fontSize: 15, color: C.ink } }, `${zone}・${mode === "year" ? "歷年" : `${year}年`}・${{ year: "看年", month: "看月", period: "看15天", week: "看週" }[mode]}`),
+        React.createElement('div', { className: "text-xs flex flex-wrap gap-x-3 gap-y-1 my-1", style: { color: C.inkSoft } },
+          React.createElement('span', null, React.createElement('span', { style: { display: "inline-block", width: 14, height: 3, background: C.tableColor, marginRight: 4, verticalAlign: "middle" } }), "產能（左軸）"),
+          React.createElement('span', null, "☁️ 雨量（雲朵高度，右軸）"),
+          activeCats.flatMap((c) => itemsOf(c).map((k, ki) => React.createElement('span', { key: c.key + k }, React.createElement('span', { style: { display: "inline-block", width: 9, height: 9, borderRadius: 2, background: c.colors[ki % c.colors.length], marginRight: 3, verticalAlign: "middle" } }), `${k}（${c.unit}）`)))),
+        chart(),
+        React.createElement('div', { className: "text-xs mt-1", style: { color: C.inkSoft } }, activeCats.length > 1 ? "選了多類資材：每類一根柱、各用自己的刻度（柱高代表該類在這段期間的相對多寡），實際數字請看標籤或點該期明細。" : "點任一期看明細。"),
+        sp && React.createElement('div', { className: "mt-3 rounded-xl p-3 text-sm", style: { background: C.cream, border: `1px solid ${C.line}` } },
+          React.createElement('div', { style: { fontWeight: 800, color: C.ink, marginBottom: 4 } }, `${sp.p.label}（${sp.p.start} ～ ${sp.p.end}）`),
+          [["產能", `${f1(sp.y)} kg`], ["雨量", sp.r == null ? "沒有氣候資料" : `${f1(sp.r)} mm`]].concat(T14_CATS.map((c) => [`${c.label}`, itemsOf(c).map((k) => ({ k, v: Number(sp.u[k]) || 0 })).filter((x) => x.v > 0).map((x) => c.items.length > 1 ? `${x.k} ${f1(x.v)}` : f1(x.v)).join("、") + (itemsOf(c).some((k) => (Number(sp.u[k]) || 0) > 0) ? ` ${c.unit}` : "") || "—"]))
+            .map(([k, v]) => React.createElement('div', { key: k, className: "flex justify-between py-0.5 gap-3" }, React.createElement('span', { style: { color: C.inkSoft } }, k), React.createElement('span', { style: { fontWeight: 700, color: C.ink, textAlign: "right" } }, v))))),
+      React.createElement('div', { className: "text-xs", style: { color: C.inkSoft, lineHeight: 1.6 } }, "產能為 A+B+D+NG 全品級；資材來自 6–8 回報確認紀錄；雨量為神岡站每日 24 小時累積雨量加總。氣候與資材資料從近期才開始累積，較早期間只有產能。")
+    )
+  );
+}
+
 function ReportsHub({ onBack, loggedInId, calendarRole, shortcutKey = null }) {
   const now = new Date();
   // 捷徑只指定要開哪一張表；年份／月份仍沿用功能7原本的選擇流程。
@@ -9389,6 +9597,9 @@ function ReportsHub({ onBack, loggedInId, calendarRole, shortcutKey = null }) {
   }
   if (openKey === "componentZoneCompare") {
     return React.createElement(ComponentZoneCompareReport, { onBack: () => shortcutKey ? onBack() : setOpenKey(null),} );
+  }
+  if (openKey === "yieldMaterialRain") {
+    return React.createElement(YieldMaterialRainReport, { onBack: () => shortcutKey ? onBack() : setOpenKey(null),} );
   }
   if (openKey === "climateMaterial") {
     return React.createElement(ClimateMaterialReport, { onBack: () => shortcutKey ? onBack() : setOpenKey(null),} );
