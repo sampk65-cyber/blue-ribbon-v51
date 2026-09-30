@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-<title>完全體 V5.1.C113・藍帶無花果</title>
+<title>完全體 V5.1.C114・藍帶無花果</title>
 <meta name="apple-mobile-web-app-capable" content="yes" />
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
 <meta name="apple-mobile-web-app-title" content="藍帶無花果" />
@@ -717,7 +717,7 @@ const C = {
   tiffanyLight: "#B8ECE5",
   tiffanyText: "#2E8577",
 };
-const APP_VERSION = 'V5.1.C113';
+const APP_VERSION = 'V5.1.C114';
 const FONT_LINK = "https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,600;9..144,700&family=Inter:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap";
 
 const WORK_ITEMS = [
@@ -9078,9 +9078,274 @@ const REPORT_SLOTS = [
   { no: "十", label: "登入 IP 與時間", key: "loginAudit", ready: true },
   { no: "十一", label: "溫室用量側寫", key: "zoneUsageProfile", ready: true },
   { no: "十二", label: "細項跨溫室對比", key: "componentZoneCompare", ready: true },
+  { no: "十三", label: "氣候與資材投入", key: "climateMaterial", ready: true },
 ];
 
 // 耗材與報表主入口：年份資料夾 → 月份資料夾 → 10個表格選項（表一~表十）
+
+/* =========================================================
+   C114 表十三：氣候與資材投入（溫度／雨量 × 6–8 使用量）
+   把神岡站逐時氣候整理成每日，與各溫室 6–8（補水／施肥／其他資材）的回報確認歷史逐日對齊。
+   只讀取，不寫入。已結束月份的每日氣候存在本機（localStorage），再次開啟不必重讀逐時資料。
+   ========================================================= */
+async function climateDailyForMonth(year, month) {
+  const ym = `${year}-${String(month).padStart(2, "0")}`;
+  const now = new Date();
+  const curYm = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`;
+  if (ym > curYm) return {};
+  const cacheKey = `bf_climate_daily_v1:${ym}`;
+  if (ym < curYm) { try { const c = localStorage.getItem(cacheKey); if (c) return JSON.parse(c); } catch (_) {} }
+  const out = {};
+  try {
+    await window.firebaseReady;
+    const listRes = await window.storage.list(`environment:outdoor:hour:${ym}`);
+    const keys = (listRes && listRes.keys) || [];
+    if (keys.length) {
+      const recs = await runWithLimit(keys, 6, async (k) => { try { const r = await window.storage.get(k); return r ? JSON.parse(r.value) : null; } catch (_e) { return null; } });
+      const acc = {};
+      recs.filter(Boolean).forEach((r) => {
+        const key = String(r.hourKey || r.hour || r.key || r.observedAt || r.obsTime || "");
+        if (key.slice(0, 7) !== ym) return;
+        const day = key.slice(0, 10);
+        const t = CLIMATE_N(r.temperature ?? r.temp ?? r.AirTemperature ?? r.TEMP);
+        const h = CLIMATE_N(r.humidity ?? r.RelativeHumidity ?? r.HUMD);
+        const rain = CLIMATE_N(r.rainfall ?? r.rain ?? r.precipitation ?? r.Precipitation ?? r.H_24R);
+        const a = (acc[day] ||= { tMax: null, tMin: null, tSum: 0, tN: 0, hSum: 0, hN: 0, rain: 0 });
+        if (t != null) { a.tMax = a.tMax == null ? t : Math.max(a.tMax, t); a.tMin = a.tMin == null ? t : Math.min(a.tMin, t); a.tSum += t; a.tN++; }
+        if (h != null) { a.hSum += h; a.hN++; }
+        if (rain != null) a.rain = Math.max(a.rain, rain);
+      });
+      Object.keys(acc).forEach((d) => {
+        const a = acc[d];
+        if (a.tMax == null) return;
+        out[d] = { tMax: a.tMax, tMin: a.tMin, tAvg: a.tN ? a.tSum / a.tN : null, hum: a.hN ? a.hSum / a.hN : null, rain: a.rain };
+      });
+    }
+    if (ym < curYm && Object.keys(out).length) { try { localStorage.setItem(cacheKey, JSON.stringify(out)); } catch (_) {} }
+  } catch (e) { console.warn("climateDailyForMonth", ym, e); }
+  return out;
+}
+
+const T13_TEMP_BINS = [
+  { key: "lt20", label: "< 20°C", lo: -99, hi: 20 },
+  { key: "20", label: "20–25°C", lo: 20, hi: 25 },
+  { key: "25", label: "25–28°C", lo: 25, hi: 28 },
+  { key: "28", label: "28–31°C", lo: 28, hi: 31 },
+  { key: "31", label: "31–34°C", lo: 31, hi: 34 },
+  { key: "34", label: "≥ 34°C", lo: 34, hi: 99 },
+];
+const T13_ALL = "全區合計";
+
+async function t13UsageByDay(zoneSel, ym) {
+  const zones = zoneSel === T13_ALL ? YIELD_DB_ZONES : [zoneSel];
+  const merged = {};
+  const parts = await Promise.all(zones.map((z) => fetchZoneworkConfirmedByDay(z, ym)));
+  parts.forEach((byDay) => {
+    Object.keys(byDay || {}).forEach((d) => {
+      const b = (merged[d] ||= {});
+      Object.keys(byDay[d]).forEach((k) => { b[k] = (b[k] || 0) + (Number(byDay[d][k]) || 0); });
+    });
+  });
+  return merged;
+}
+
+function ClimateMaterialReport({ onBack }) {
+  const now = new Date();
+  const [zone, setZone] = useState(T13_ALL);
+  const [year, setYear] = useState(now.getFullYear());
+  const [month, setMonth] = useState(now.getMonth() + 1);
+  const [view, setView] = useState("daily"); // daily=每日對照｜stats=溫度分級統計
+  const [statRange, setStatRange] = useState("year"); // month｜year｜all
+  const [days, setDays] = useState(null); // [{date, day, clim, use}]
+  const [stats, setStats] = useState(null);
+  const [loading, setLoading] = useState(false);
+  const [progress, setProgress] = useState("");
+  const [sel, setSel] = useState(null);
+
+  const buildDays = async (y, m) => {
+    const ym = `${y}-${String(m).padStart(2, "0")}`;
+    const [clim, use] = await Promise.all([climateDailyForMonth(y, m), t13UsageByDay(zone, ym)]);
+    const dim = new Date(y, m, 0).getDate();
+    const isCur = y === now.getFullYear() && m === now.getMonth() + 1;
+    const last = isCur ? now.getDate() : dim;
+    const arr = [];
+    for (let d = 1; d <= last; d++) {
+      const date = `${ym}-${String(d).padStart(2, "0")}`;
+      arr.push({ date, day: d, clim: clim[date] || null, use: use[date] || {} });
+    }
+    return arr;
+  };
+
+  // 每日對照
+  useEffect(() => {
+    if (view !== "daily") return undefined;
+    let alive = true;
+    (async () => { setLoading(true); setSel(null); setDays(null); const a = await buildDays(year, month); if (alive) { setDays(a); setLoading(false); } })();
+    return () => { alive = false; };
+  }, [view, zone, year, month]);
+
+  // 溫度分級統計
+  useEffect(() => {
+    if (view !== "stats") return undefined;
+    let alive = true;
+    (async () => {
+      setLoading(true); setStats(null);
+      const months = [];
+      if (statRange === "month") months.push([year, month]);
+      else if (statRange === "year") { const maxM = year === now.getFullYear() ? now.getMonth() + 1 : 12; for (let m = 1; m <= maxM; m++) months.push([year, m]); }
+      else { let y = now.getFullYear(), m = now.getMonth() + 1, empty = 0; for (let i = 0; i < 36 && empty < 2; i++) { months.push([y, m]); m--; if (m === 0) { m = 12; y--; } if (i >= 1) { /* 以氣候資料判斷往回是否還有資料 */ } } }
+      const all = [];
+      let emptyRun = 0;
+      for (let i = 0; i < months.length; i++) {
+        if (!alive) return;
+        const [y, m] = months[i];
+        setProgress(`${y}/${m}`);
+        const arr = await buildDays(y, m);
+        const withClim = arr.filter((d) => d.clim);
+        if (statRange === "all") { if (!withClim.length) { emptyRun++; if (emptyRun >= 2) break; continue; } emptyRun = 0; }
+        all.push(...withClim);
+      }
+      const agg = (list) => {
+        const n = list.length;
+        const sum = (f) => list.reduce((s, d) => s + f(d), 0);
+        const tons = sum((d) => zwSumKeys(d.use, WATER_TONS_KEYS)), mins = sum((d) => zwSumKeys(d.use, WATER_MIN_KEYS));
+        const waterDays = list.filter((d) => zwSumKeys(d.use, WATER_TONS_KEYS) + zwSumKeys(d.use, WATER_MIN_KEYS) > 0).length;
+        const fertDays = list.filter((d) => zwSumKeys(d.use, SOLID_KEYS) + zwSumKeys(d.use, LIQUID_KEYS) > 0).length;
+        return { n, tonsAvg: n ? tons / n : 0, minsAvg: n ? mins / n : 0, tons, mins, waterDays, fertDays, tMaxAvg: n ? sum((d) => d.clim.tMax) / n : null };
+      };
+      const bins = T13_TEMP_BINS.map((b) => ({ ...b, ...agg(all.filter((d) => d.clim.tMax >= b.lo && d.clim.tMax < b.hi)) }));
+      const rainy = agg(all.filter((d) => (d.clim.rain || 0) >= 1)), dry = agg(all.filter((d) => (d.clim.rain || 0) < 1));
+      if (alive) { setStats({ bins, rainy, dry, total: agg(all), from: all.length ? all[0].date : null, to: all.length ? all[all.length - 1].date : null }); setLoading(false); setProgress(""); }
+    })();
+    return () => { alive = false; };
+  }, [view, zone, year, month, statRange]);
+
+  const f1 = (v) => v == null ? "—" : Number(v).toFixed(1);
+  const f0 = (v) => v == null ? "—" : Math.round(v);
+  const niceMax = (v) => { if (!(v > 0)) return 1; const p = Math.pow(10, Math.floor(Math.log10(v))); const r = v / p; return (r <= 1 ? 1 : r <= 2 ? 2 : r <= 5 ? 5 : 10) * p; };
+  const btn = (on) => on ? { background: C.wine, color: "white", fontWeight: 700 } : { background: "white", color: C.ink, border: `1px solid ${C.line}` };
+  const years = []; for (let y = 2026; y <= now.getFullYear(); y++) years.push(y);
+
+  // ---------- 每日對照圖 ----------
+  const dailyChart = () => {
+    if (!days) return null;
+    const n = Math.max(days.length, 1);
+    const W = 360, x0 = 30, x1 = 326, cw = (x1 - x0) / n;
+    const pTop = 24, pBot = 150, bTop = 180, bBot = 286, strip = 302, H = 316;
+    const yT = (t) => pBot - Math.min(50, Math.max(0, t)) / 50 * (pBot - pTop);
+    const yR = (r) => pBot - Math.min(1000, Math.max(0, r)) / 1000 * (pBot - pTop);
+    const tonsMax = niceMax(Math.max(0, ...days.map((d) => zwSumKeys(d.use, WATER_TONS_KEYS))));
+    const minsMax = niceMax(Math.max(0, ...days.map((d) => zwSumKeys(d.use, WATER_MIN_KEYS))));
+    const yTon = (v) => bBot - Math.min(1, v / tonsMax) * (bBot - bTop);
+    const yMin = (v) => bBot - Math.min(1, v / minsMax) * (bBot - bTop);
+    const bw = Math.max(2.5, Math.min(10, cw * 0.36));
+    const segs = (f) => { const out = []; let cur = []; days.forEach((d, i) => { const v = d.clim ? f(d.clim) : null; if (v != null) cur.push(`${(x0 + cw * (i + 0.5)).toFixed(1)},${yT(v).toFixed(1)}`); else { if (cur.length > 1) out.push(cur.join(" ")); cur = []; } }); if (cur.length > 1) out.push(cur.join(" ")); return out; };
+    const every = n > 20 ? 5 : 1;
+    const g = [];
+    [0, 10, 20, 30, 40, 50].forEach((t) => g.push(React.createElement('g', { key: "gt" + t },
+      React.createElement('line', { x1: x0, y1: yT(t), x2: x1, y2: yT(t), stroke: "#EEE7DB", strokeWidth: 0.7, strokeDasharray: t ? "2 3" : "" }),
+      React.createElement('text', { x: x0 - 3, y: yT(t) + 3, fontSize: 8.5, textAnchor: "end", fill: "#B5453F" }, `${t}°`),
+      React.createElement('text', { x: x1 + 3, y: yT(t) + 3, fontSize: 8, fill: "#5E9C97" }, `${t * 20}`))));
+    [0, 0.5, 1].forEach((f) => g.push(React.createElement('g', { key: "gb" + f },
+      React.createElement('line', { x1: x0, y1: bBot - f * (bBot - bTop), x2: x1, y2: bBot - f * (bBot - bTop), stroke: "#EEE7DB", strokeWidth: 0.7, strokeDasharray: f ? "2 3" : "" }),
+      React.createElement('text', { x: x0 - 3, y: bBot - f * (bBot - bTop) + 3, fontSize: 8.5, textAnchor: "end", fill: "#2E6F8E" }, f1(tonsMax * f).replace(/\.0$/, "")),
+      React.createElement('text', { x: x1 + 3, y: bBot - f * (bBot - bTop) + 3, fontSize: 8.5, fill: "#B8742A" }, f1(minsMax * f).replace(/\.0$/, "")))));
+    g.push(React.createElement('text', { key: "u1", x: x0 - 3, y: pBot + 12, fontSize: 8, textAnchor: "end", fill: "#B5453F" }, "°C"));
+    g.push(React.createElement('text', { key: "u2", x: x1 + 3, y: pBot + 12, fontSize: 8, fill: "#5E9C97" }, "雨mm"));
+    g.push(React.createElement('text', { key: "u3", x: x0 - 3, y: bTop - 6, fontSize: 8, textAnchor: "end", fill: "#2E6F8E" }, "溝灌噸"));
+    g.push(React.createElement('text', { key: "u4", x: x1 + 3, y: bTop - 6, fontSize: 8, fill: "#B8742A" }, "噴灌分"));
+    days.forEach((d, i) => {
+      const cx = x0 + cw * (i + 0.5), on = sel === d.day;
+      const tons = zwSumKeys(d.use, WATER_TONS_KEYS), mins = zwSumKeys(d.use, WATER_MIN_KEYS);
+      const fert = zwSumKeys(d.use, SOLID_KEYS) > 0, other = zwSumKeys(d.use, LIQUID_KEYS) > 0;
+      g.push(React.createElement('g', { key: "d" + d.day, onClick: () => setSel(on ? null : d.day), style: { cursor: "pointer" } },
+        React.createElement('rect', { x: x0 + cw * i, y: 0, width: cw, height: H, fill: on ? "#FFF6C8" : "transparent" }),
+        (d.day === 1 || d.day % every === 0) && React.createElement('text', { x: cx, y: 13, fontSize: 9, textAnchor: "middle", fill: "#3A5BA0" }, d.day),
+        d.clim && d.clim.rain > 0 && React.createElement('rect', { x: cx - bw, y: yR(d.clim.rain), width: bw * 2, height: Math.max(1.2, pBot - yR(d.clim.rain)), fill: "#9CC9C5", opacity: 0.85 }),
+        tons > 0 && React.createElement('rect', { x: cx - bw - 0.3, y: yTon(tons), width: bw, height: Math.max(1.2, bBot - yTon(tons)), fill: "#3F86A8" }),
+        mins > 0 && React.createElement('rect', { x: cx + 0.3, y: yMin(mins), width: bw, height: Math.max(1.2, bBot - yMin(mins)), fill: "#E6A04E" }),
+        fert && React.createElement('circle', { cx: cx - (other ? 2.6 : 0), cy: strip, r: 2.4, fill: "#8B5A2B" }),
+        other && React.createElement('circle', { cx: cx + (fert ? 2.6 : 0), cy: strip, r: 2.4, fill: "#4E9A5B" })
+      ));
+    });
+    segs((c) => c.tMax).forEach((p, k) => g.push(React.createElement('polyline', { key: "h" + k, points: p, fill: "none", stroke: "#D9453F", strokeWidth: 1.8, strokeLinejoin: "round", style: { pointerEvents: "none" } })));
+    segs((c) => c.tMin).forEach((p, k) => g.push(React.createElement('polyline', { key: "l" + k, points: p, fill: "none", stroke: "#2F7FD1", strokeWidth: 1.8, strokeLinejoin: "round", style: { pointerEvents: "none" } })));
+    days.forEach((d, i) => { if (!d.clim) return; const cx = x0 + cw * (i + 0.5);
+      g.push(React.createElement('circle', { key: "ph" + i, cx, cy: yT(d.clim.tMax), r: 1.6, fill: "#D9453F", style: { pointerEvents: "none" } }));
+      g.push(React.createElement('circle', { key: "pl" + i, cx, cy: yT(d.clim.tMin), r: 1.6, fill: "#2F7FD1", style: { pointerEvents: "none" } })); });
+    return React.createElement('svg', { viewBox: `0 0 ${W} ${H}`, style: { width: "100%", height: "auto", maxWidth: "100%", display: "block" } }, g);
+  };
+
+  const legend = (items) => React.createElement('div', { className: "text-xs flex flex-wrap gap-x-3 gap-y-1 mb-1", style: { color: C.inkSoft } },
+    items.map(([c, l, shape]) => React.createElement('span', { key: l }, React.createElement('span', { style: { display: "inline-block", width: shape === "line" ? 14 : 9, height: shape === "line" ? 3 : 9, borderRadius: shape === "dot" ? 9 : 2, background: c, marginRight: 4, verticalAlign: "middle" } }), l)));
+
+  const selDay = sel != null && days ? days.find((d) => d.day === sel) : null;
+  const useList = (u, keys) => keys.filter((k) => (Number(u[k]) || 0) > 0).map((k) => `${k} ${f1(u[k]).replace(/\.0$/, "")}`).join("、");
+
+  return React.createElement('div', { className: "min-h-screen flex flex-col", style: { background: C.cream } },
+    React.createElement(NavBar, { backLabel: "耗材與報表", onBack }),
+    React.createElement('div', { className: "px-4 py-3", style: { borderBottom: `1px solid ${C.line}`, background: C.paper } },
+      React.createElement('div', { style: { fontFamily: "Inter", fontWeight: 700, fontSize: 17, color: C.ink } }, "表十三・氣候與資材投入"),
+      React.createElement('div', { className: "text-xs mt-1", style: { color: C.inkSoft } }, "神岡站溫度、雨量 × 各溫室 6–8（補水／施肥／其他資材）回報紀錄，逐日對齊（純讀取）")
+    ),
+    React.createElement('div', { className: "p-4 flex flex-col gap-3", style: { fontFamily: "Inter" } },
+      React.createElement('div', { className: "flex flex-wrap gap-2" },
+        [T13_ALL, ...YIELD_DB_ZONES].map((z) => React.createElement('button', { key: z, onClick: () => setZone(z), className: "px-3 py-1.5 rounded-full text-sm", style: btn(zone === z) }, z))),
+      React.createElement('div', { className: "flex flex-wrap gap-2 items-center" },
+        React.createElement('select', { value: year, onChange: (e) => setYear(Number(e.target.value)), className: "px-3 py-1.5 rounded-lg text-sm", style: { border: `1px solid ${C.line}`, background: "white" } }, years.map((y) => React.createElement('option', { key: y, value: y }, `${y}年`))),
+        (view === "daily" || statRange === "month") && React.createElement('select', { value: month, onChange: (e) => setMonth(Number(e.target.value)), className: "px-3 py-1.5 rounded-lg text-sm", style: { border: `1px solid ${C.line}`, background: "white" } }, Array.from({ length: 12 }, (_, i) => React.createElement('option', { key: i + 1, value: i + 1 }, `${i + 1}月`))),
+        React.createElement('button', { onClick: () => setView("daily"), className: "px-3 py-1.5 rounded-lg text-sm", style: btn(view === "daily") }, "每日對照"),
+        React.createElement('button', { onClick: () => setView("stats"), className: "px-3 py-1.5 rounded-lg text-sm", style: btn(view === "stats") }, "溫度分級統計")),
+      loading && React.createElement('div', { className: "text-xs", style: { color: C.inkSoft } }, `讀取中 ${progress}…`),
+
+      view === "daily" && days && React.createElement('div', { className: "rounded-2xl p-3", style: { background: "#FFF", border: `1px solid ${C.line}` } },
+        React.createElement('div', { style: { fontWeight: 800, fontSize: 15, color: C.ink } }, `${zone}・${year}年${month}月 每日對照`),
+        legend([["#D9453F", "最高溫", "line"], ["#2F7FD1", "最低溫", "line"], ["#9CC9C5", "雨量"], ["#3F86A8", "溝灌（噸）"], ["#E6A04E", "噴灌（分鐘）"], ["#8B5A2B", "施肥", "dot"], ["#4E9A5B", "其他資材", "dot"]]),
+        dailyChart(),
+        React.createElement('div', { className: "text-xs mt-1", style: { color: C.inkSoft } }, "上半部：氣候（左軸溫度 0–50°C、右軸雨量 0–1000mm）　下半部：當天回報的用水（左軸溝灌、右軸噴灌）　最下方圓點：有施肥／其他資材　點任一天看明細"),
+        selDay && React.createElement('div', { className: "mt-3 rounded-xl p-3 text-sm", style: { background: C.cream, border: `1px solid ${C.line}` } },
+          React.createElement('div', { style: { fontWeight: 800, color: C.ink, marginBottom: 4 } }, `${selDay.date}（${zone}）`),
+          [["最高／最低溫", selDay.clim ? `${f1(selDay.clim.tMax)} ／ ${f1(selDay.clim.tMin)} °C` : "沒有氣候資料"], ["雨量", selDay.clim ? `${f1(selDay.clim.rain)} mm` : "—"], ["平均濕度", selDay.clim && selDay.clim.hum != null ? `${f1(selDay.clim.hum)} %` : "—"],
+           ["溝灌", `${f1(zwSumKeys(selDay.use, WATER_TONS_KEYS))} 噸`], ["噴灌", `${f1(zwSumKeys(selDay.use, WATER_MIN_KEYS))} 分鐘`],
+           ["施肥", useList(selDay.use, SOLID_KEYS) || "—"], ["其他資材", useList(selDay.use, LIQUID_KEYS) || "—"]]
+            .map(([k, v]) => React.createElement('div', { key: k, className: "flex justify-between py-0.5 gap-3" }, React.createElement('span', { style: { color: C.inkSoft } }, k), React.createElement('span', { style: { fontWeight: 700, color: C.ink, textAlign: "right" } }, v))))
+      ),
+
+      view === "stats" && React.createElement('div', { className: "rounded-2xl p-3", style: { background: "#FFF", border: `1px solid ${C.line}` } },
+        React.createElement('div', { className: "flex gap-2 mb-2" }, [["month", "本月"], ["year", "本年"], ["all", "全部資料"]].map(([k, l]) => React.createElement('button', { key: k, onClick: () => setStatRange(k), className: "px-3 py-1 rounded-lg text-xs", style: btn(statRange === k) }, l))),
+        stats && React.createElement(React.Fragment, null,
+          React.createElement('div', { style: { fontWeight: 800, fontSize: 15, color: C.ink } }, `${zone}・依當日最高溫分級的平均用水`),
+          React.createElement('div', { className: "text-xs mb-2", style: { color: C.inkSoft } }, stats.from ? `統計期間 ${stats.from} ～ ${stats.to}，共 ${stats.total.n} 天有氣候資料；平均＝該溫度級距所有天數的平均（沒澆水的日子算 0）` : "這段期間沒有氣候資料"),
+          stats.total.n > 0 && React.createElement('div', { className: "overflow-x-auto" },
+            React.createElement('table', { className: "w-full text-xs", style: { borderCollapse: "collapse", minWidth: 330 } },
+              React.createElement('thead', null, React.createElement('tr', { style: { background: C.cream } },
+                ["當日最高溫", "天數", "溝灌 噸/日", "噴灌 分/日", "有澆水天數"].map((h) => React.createElement('th', { key: h, className: "px-2 py-1.5 text-right first:text-left", style: { borderBottom: `1px solid ${C.line}` } }, h)))),
+              React.createElement('tbody', null,
+                [...stats.bins, { key: "sep" }, { key: "rain", label: "雨天（≥1mm）", ...stats.rainy }, { key: "dry", label: "無雨", ...stats.dry }, { key: "all", label: "全部", ...stats.total }].map((b) => b.key === "sep"
+                  ? React.createElement('tr', { key: "sep" }, React.createElement('td', { colSpan: 5, style: { height: 6 } }))
+                  : React.createElement('tr', { key: b.key, style: { borderBottom: `1px solid ${C.line}`, color: b.n ? C.ink : "#BBB", fontWeight: b.key === "all" ? 700 : 400 } },
+                    React.createElement('td', { className: "px-2 py-1.5" }, b.label),
+                    React.createElement('td', { className: "px-2 py-1.5 text-right" }, b.n),
+                    React.createElement('td', { className: "px-2 py-1.5 text-right" }, b.n ? f1(b.tonsAvg) : "—"),
+                    React.createElement('td', { className: "px-2 py-1.5 text-right" }, b.n ? f1(b.minsAvg) : "—"),
+                    React.createElement('td', { className: "px-2 py-1.5 text-right" }, b.n ? `${b.waterDays}（${Math.round(b.waterDays / b.n * 100)}%）` : "—")))))),
+          stats.total.n > 0 && (() => {
+            const rows = stats.bins.filter((b) => b.n);
+            const mx = Math.max(1, ...rows.map((b) => b.minsAvg)), tx = Math.max(1, ...rows.map((b) => b.tonsAvg));
+            return React.createElement('div', { className: "mt-3 flex flex-col gap-1.5" },
+              React.createElement('div', { className: "text-xs", style: { color: C.inkSoft } }, "每日平均用水 vs 當日最高溫"),
+              rows.map((b) => React.createElement('div', { key: b.key, className: "text-xs" },
+                React.createElement('div', { style: { color: C.ink, marginBottom: 2 } }, `${b.label}（${b.n} 天）`),
+                React.createElement('div', { className: "flex items-center gap-2" }, React.createElement('div', { style: { height: 8, width: `${b.minsAvg / mx * 70}%`, minWidth: b.minsAvg > 0 ? 2 : 0, background: "#E6A04E", borderRadius: 3 } }), React.createElement('span', { style: { color: "#B8742A" } }, `噴灌 ${f1(b.minsAvg)} 分`)),
+                React.createElement('div', { className: "flex items-center gap-2 mt-0.5" }, React.createElement('div', { style: { height: 8, width: `${b.tonsAvg / tx * 70}%`, minWidth: b.tonsAvg > 0 ? 2 : 0, background: "#3F86A8", borderRadius: 3 } }), React.createElement('span', { style: { color: "#2E6F8E" } }, `溝灌 ${f1(b.tonsAvg)} 噸`)))));
+          })(),
+          React.createElement('div', { className: "text-xs mt-3", style: { color: C.inkSoft, lineHeight: 1.6 } }, "資料天數越多越準。目前氣候資料從近期才開始累積，樣本少的級距僅供參考；累積一個完整產季後，就能看出「多熱時要多澆多少水」的規律。")
+        )
+      )
+    )
+  );
+}
+
 function ReportsHub({ onBack, loggedInId, calendarRole, shortcutKey = null }) {
   const now = new Date();
   // 捷徑只指定要開哪一張表；年份／月份仍沿用功能7原本的選擇流程。
@@ -9124,6 +9389,9 @@ function ReportsHub({ onBack, loggedInId, calendarRole, shortcutKey = null }) {
   }
   if (openKey === "componentZoneCompare") {
     return React.createElement(ComponentZoneCompareReport, { onBack: () => shortcutKey ? onBack() : setOpenKey(null),} );
+  }
+  if (openKey === "climateMaterial") {
+    return React.createElement(ClimateMaterialReport, { onBack: () => shortcutKey ? onBack() : setOpenKey(null),} );
   }
 
   return (
