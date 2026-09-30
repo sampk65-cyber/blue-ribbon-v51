@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-<title>完全體 V5.1.C120・藍帶無花果</title>
+<title>完全體 V5.1.C122・藍帶無花果</title>
 <meta name="apple-mobile-web-app-capable" content="yes" />
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
 <meta name="apple-mobile-web-app-title" content="藍帶無花果" />
@@ -717,7 +717,7 @@ const C = {
   tiffanyLight: "#B8ECE5",
   tiffanyText: "#2E8577",
 };
-const APP_VERSION = 'V5.1.C120';
+const APP_VERSION = 'V5.1.C122';
 const FONT_LINK = "https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,600;9..144,700&family=Inter:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap";
 
 const WORK_ITEMS = [
@@ -8351,15 +8351,20 @@ function zwDayFromStamp(stamp) {
 // C82/V5.024：模組層級快取——同一個(分區,年月)只真的打一次 Firestore，之後不管是
 // 切分區、算單一分區顯示值、還是算跨分區的座標軸上限，都共用同一份結果，不用重複讀取。
 const _zoneworkMonthCache = new Map();
-async function fetchZoneworkConfirmedByDay(zoneName, ym) {
+// C122：與表三完全相同的計數規則——
+//   1. 完全相同的回報（同品項、同數量、同時間、同回報人、同指定事件）只算一次（早期資料曾被重複寫入）；
+//   2. 只認日期落在這份月文件所屬月份的回報（表三月曆同樣只顯示本月日期）。
+// 同時保留逐筆明細，讓「看當期」可以點柱子核對每一筆。
+const _zoneworkEntryCache = new Map();
+async function fetchZoneworkEntries(zoneName, ym) {
   const zoneId = ZONEWORK_ID_BY_NAME[zoneName] || zoneName;
   const cacheKey = `${zoneId}:${ym}`;
-  if (_zoneworkMonthCache.has(cacheKey)) return _zoneworkMonthCache.get(cacheKey);
+  if (_zoneworkEntryCache.has(cacheKey)) return _zoneworkEntryCache.get(cacheKey);
   const promise = (async () => {
-    const out = {};
+    const list = []; const seen = new Set(); let dup = 0, offMonth = 0;
     try {
       const res = await window.storage.get(`zonework:${zoneId}:${ym}`, true);
-      if (!res) return out;
+      if (!res) return { list, dup, offMonth };
       const zdata = JSON.parse(res.value);
       (zdata.confirmHistory || []).forEach((h) => {
         if (!h || !h.rowKey) return;
@@ -8367,14 +8372,39 @@ async function fetchZoneworkConfirmedByDay(zoneName, ym) {
         if (isNaN(qty) || qty <= 0) return;
         const dateStr = zwDayFromStamp(h.at);
         if (!dateStr) return;
-        if (!out[dateStr]) out[dateStr] = {};
-        out[dateStr][h.rowKey] = (out[dateStr][h.rowKey] || 0) + qty;
+        if (dateStr.slice(0, 7) !== ym) { offMonth++; return; }
+        const person = h.personName || h.personId || "";
+        const sig = [h.rowKey, qty, h.at, person, h.eventId || ""].join("|");
+        if (seen.has(sig)) { dup++; return; }
+        seen.add(sig);
+        list.push({ date: dateStr, rowKey: h.rowKey, qty, at: h.at, person, eventId: h.eventId || null });
       });
     } catch (e) { /* 讀不到就當這個月沒有資料 */ }
+    return { list, dup, offMonth };
+  })();
+  _zoneworkEntryCache.set(cacheKey, promise);
+  return promise;
+}
+async function fetchZoneworkConfirmedByDay(zoneName, ym) {
+  const zoneId = ZONEWORK_ID_BY_NAME[zoneName] || zoneName;
+  const cacheKey = `${zoneId}:${ym}`;
+  if (_zoneworkMonthCache.has(cacheKey)) return _zoneworkMonthCache.get(cacheKey);
+  const promise = (async () => {
+    const out = {};
+    const { list } = await fetchZoneworkEntries(zoneName, ym);
+    list.forEach((e) => { if (!out[e.date]) out[e.date] = {}; out[e.date][e.rowKey] = (out[e.date][e.rowKey] || 0) + e.qty; });
     return out;
   })();
   _zoneworkMonthCache.set(cacheKey, promise);
   return promise;
+}
+async function fetchZoneworkEntriesForRange(zoneName, startDate, endDate, keys) {
+  const months = []; let d = new Date(startDate + "T00:00:00"); const endD = new Date(endDate + "T00:00:00");
+  while (d <= endD) { const ym = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`; if (!months.includes(ym)) months.push(ym); d.setDate(d.getDate() + 1); }
+  const out = []; let dup = 0;
+  for (const ym of months) { const r = await fetchZoneworkEntries(zoneName, ym); dup += r.dup; r.list.forEach((e) => { if (e.date >= startDate && e.date <= endDate && (!keys || keys.includes(e.rowKey))) out.push(e); }); }
+  out.sort((a, b) => a.date < b.date ? -1 : a.date > b.date ? 1 : 0);
+  return { list: out, dup };
 }
 function zwSumKeys(bucket, keys) {
   let total = 0;
@@ -8838,6 +8868,7 @@ function UsageTimeModeControls({ mode, setMode, year, setYear, month, setMonth, 
 function ZoneUsageProfileReport({ onBack }) {
   const nowYear = new Date().getFullYear();
   const [persp, setPersp] = useState("trend"); // C118：看走勢｜看當期
+  const [syncScale, setSyncScale] = useState(true); // C121：六區統一刻度
   const [mode, setMode] = useState("month");
   const [year, setYear] = useState(nowYear >= 2026 ? nowYear : 2026);
   const [month, setMonth] = useState(new Date().getMonth() + 1);
@@ -8857,7 +8888,7 @@ function ZoneUsageProfileReport({ onBack }) {
     try {
       const periods = usagePeriodsForMode(mode, year, month);
       const labels = [];
-      const series = {};
+      const series = {}; const maxAll = {};
       itemsForParam.forEach((k) => { series[k] = []; });
       for (let i = 0; i < periods.length; i++) {
         const p = periods[i];
@@ -8866,8 +8897,12 @@ function ZoneUsageProfileReport({ onBack }) {
         labels.push(p.label);
         const vals = await Promise.all(itemsForParam.map((k) => fetchZoneworkItemRange(zone, k, p.start, p.end)));
         itemsForParam.forEach((k, ki) => series[k].push(vals[ki]));
+        // C121：同時讀其他分區同品項，取六區最大值作為統一刻度上限
+        const others = await Promise.all(YIELD_DB_ZONES.filter((z) => z !== zone).map((z) => Promise.all(itemsForParam.map((k) => fetchZoneworkItemRange(z, k, p.start, p.end)))));
+        others.forEach((arr) => arr.forEach((v, ki) => { const k = itemsForParam[ki]; if (v != null && v > (maxAll[k] || 0)) maxAll[k] = v; }));
+        itemsForParam.forEach((k, ki) => { if (vals[ki] != null && vals[ki] > (maxAll[k] || 0)) maxAll[k] = vals[ki]; });
       }
-      setData({ labels, series });
+      setData({ labels, series, maxAll });
     } catch (e) { setError("讀取失敗：" + (e.message || e)); }
     setLoading(false); setProgress("");
   };
@@ -8882,6 +8917,7 @@ function ZoneUsageProfileReport({ onBack }) {
 
   const maxOf = (keys) => {
     let m = 0;
+    if (syncScale && data && data.maxAll) { keys.forEach((k) => { if ((data.maxAll[k] || 0) > m) m = data.maxAll[k]; }); return m; } // C121：六區統一刻度
     keys.forEach((k) => (data && data.series[k] || []).forEach((v) => { if (v != null && v > m) m = v; }));
     return m;
   };
@@ -8954,6 +8990,7 @@ function ZoneUsageProfileReport({ onBack }) {
         )
       ),
       persp === "trend" && React.createElement(UsageTimeModeControls, { mode, setMode, year, setYear, month, setMonth, nowYear }),
+      persp === "trend" && React.createElement("label", { className: "flex items-center gap-2 mb-3 text-sm", style: { color: C.ink, fontWeight: 700 } }, React.createElement("input", { type: "checkbox", checked: syncScale, onChange: (e) => setSyncScale(e.target.checked) }), "六區統一刻度（以六區最大值為上限，切換溫室可直接比高低）"),
       React.createElement("label", { className: "flex items-center gap-2 text-xs mb-3", style: { color: C.inkSoft, cursor: "pointer" } },
         React.createElement("input", { type: "checkbox", checked: showLabels, onChange: (e) => setShowLabels(e.target.checked) }),
         "顯示數值標籤"
@@ -9439,6 +9476,7 @@ function YieldMaterialRainReport({ onBack }) {
   const [cats, setCats] = useState(["溝灌"]);
   const [liquidSel, setLiquidSel] = useState(() => [...OTHER_MATERIALS]);
   const [showLabels, setShowLabels] = useState(true);
+  const [syncScale, setSyncScale] = useState(true); // C121：六區統一刻度
   const [data, setData] = useState(null); // { periods:[{label,start,end}], yield[], rain[], usage[{item:qty}] }
   const [loading, setLoading] = useState(false);
   const [progress, setProgress] = useState("");
@@ -9458,20 +9496,24 @@ function YieldMaterialRainReport({ onBack }) {
       setLoading(true); setError(""); setData(null); setSel(null);
       try {
         const periods = periodsForMode();
-        const zones = zone === T14_ALL ? YIELD_DB_ZONES : [zone];
+        // C121：六個分區都讀，才能讓刻度以「六區中的最大值」為上限（統一刻度），選到的分區／全場由各區加總而來
         const yieldArr = [], rainArr = [], usageArr = [];
+        const yieldAll = {}, usageAll = {}; YIELD_DB_ZONES.forEach((z) => { yieldAll[z] = []; usageAll[z] = []; });
         for (let i = 0; i < periods.length; i++) {
           if (!alive) return;
           setProgress(`${i + 1}/${periods.length}`);
           const p = periods[i];
-          const [y, r, u] = await Promise.all([
-            fetchYieldZonesPeriodTotal(zones, p.start, p.end, YIELD_GRADES),
+          const [per, r] = await Promise.all([
+            Promise.all(YIELD_DB_ZONES.map((z) => Promise.all([fetchYieldZonesPeriodTotal([z], p.start, p.end, YIELD_GRADES), t14UsageForRange([z], p.start, p.end)]))),
             t14RainForRange(p.start, p.end),
-            t14UsageForRange(zones, p.start, p.end),
           ]);
-          yieldArr.push(y); rainArr.push(r); usageArr.push(u);
+          YIELD_DB_ZONES.forEach((z, zi) => { yieldAll[z].push(per[zi][0]); usageAll[z].push(per[zi][1]); });
+          const pick = zone === T14_ALL ? YIELD_DB_ZONES : [zone];
+          const u = {}; let y = 0;
+          pick.forEach((z) => { const zi = YIELD_DB_ZONES.indexOf(z); y += Number(per[zi][0]) || 0; Object.keys(per[zi][1]).forEach((k) => { u[k] = (u[k] || 0) + (Number(per[zi][1][k]) || 0); }); });
+          yieldArr.push(Math.round(y * 10) / 10); rainArr.push(r); usageArr.push(u);
         }
-        if (alive) setData({ periods, yield: yieldArr, rain: rainArr, usage: usageArr });
+        if (alive) setData({ periods, yield: yieldArr, rain: rainArr, usage: usageArr, yieldAll, usageAll });
       } catch (e) { if (alive) setError("讀取失敗：" + (e.message || e)); }
       if (alive) { setLoading(false); setProgress(""); }
     })();
@@ -9492,12 +9534,17 @@ function YieldMaterialRainReport({ onBack }) {
     const plotW = W - padL - padR, plotH = H - padT - padB, base = padT + plotH;
     const cw = plotW / Math.max(1, n);
     const xc = (i) => padL + cw * (i + 0.5);
-    const yieldAxis = niceAxis(Math.max(0, ...data.yield.filter((v) => v != null)), 5);
+    // C121：統一刻度＝以六區中最大值為上限（全場檢視仍用全場自己的刻度）
+    const useSync = syncScale && zone !== T14_ALL && data.yieldAll;
+    const yieldAxis = niceAxis(useSync ? Math.max(0, ...YIELD_DB_ZONES.flatMap((z) => data.yieldAll[z].filter((v) => v != null))) : Math.max(0, ...data.yield.filter((v) => v != null)), 5);
     const rainAxis = climateRainAxis(Math.max(0, ...data.rain.filter((v) => v != null))); // C120：固定 0–1000mm
     const yY = (v) => padT + (1 - v / yieldAxis.max) * plotH;
     const yR = (v) => padT + (1 - Math.min(v, rainAxis.max) / rainAxis.max) * plotH;
     const catTotals = (c, i) => itemsOf(c).map((k) => Number(data.usage[i][k]) || 0);
-    const catAxes = {}; activeCats.forEach((c) => { catAxes[c.key] = niceAxis(Math.max(0, ...data.usage.map((_, i) => catTotals(c, i).reduce((s, v) => s + v, 0))), 5); });
+    const catTotalsOf = (u, c) => itemsOf(c).reduce((s, k) => s + (Number(u[k]) || 0), 0);
+    const catAxes = {}; activeCats.forEach((c) => {
+      const mx = useSync ? Math.max(0, ...YIELD_DB_ZONES.flatMap((z) => data.usageAll[z].map((u) => catTotalsOf(u, c)))) : Math.max(0, ...data.usage.map((u) => catTotalsOf(u, c)));
+      catAxes[c.key] = niceAxis(mx, 5); });
     const groupW = Math.min(cw * 0.72, 16 * Math.max(1, activeCats.length));
     const bw = groupW / Math.max(1, activeCats.length);
     const g = [];
@@ -9563,6 +9610,7 @@ function YieldMaterialRainReport({ onBack }) {
       React.createElement('div', null, React.createElement('div', { className: "text-xs mb-1", style: { color: C.inkSoft } }, "資材（可單選或複選；選多類時各自一根柱、各用自己的刻度）"),
         React.createElement('div', { className: "flex flex-wrap gap-2" }, T14_CATS.map((c) => React.createElement('button', { key: c.key, onClick: () => setCats((prev) => prev.includes(c.key) ? prev.filter((x) => x !== c.key) : [...prev, c.key]), className: "px-3 py-1.5 rounded-full text-sm", style: cats.includes(c.key) ? { background: c.colors[0], color: "white", fontWeight: 700 } : { background: "white", color: C.ink, border: `1px solid ${C.line}` } }, `${c.label}（${c.unit}）`))),
         cats.includes("液態") && React.createElement('div', { className: "flex flex-wrap gap-1.5 mt-2" }, OTHER_MATERIALS.map((k, ki) => React.createElement('button', { key: k, onClick: () => setLiquidSel((prev) => prev.includes(k) ? prev.filter((x) => x !== k) : [...prev, k]), className: "px-2 py-1 rounded-full text-xs", style: liquidSel.includes(k) ? { background: T14_CATS[3].colors[ki % 7], color: "white" } : { background: "white", color: C.inkSoft, border: `1px solid ${C.line}` } }, k)))),
+      persp === "trend" && zone !== T14_ALL && React.createElement('label', { className: "flex items-center gap-2 text-sm", style: { color: C.ink, fontWeight: 700 } }, React.createElement('input', { type: "checkbox", checked: syncScale, onChange: (e) => setSyncScale(e.target.checked) }), "六區統一刻度（以六區最大值為上限，切換溫室可直接比高低）"),
       persp === "trend" && React.createElement('label', { className: "flex items-center gap-2 text-sm", style: { color: C.inkSoft } }, React.createElement('input', { type: "checkbox", checked: showLabels, onChange: (e) => setShowLabels(e.target.checked) }), "顯示數值標籤（看年、看月）"),
       persp === "snap" && React.createElement(PeriodSnapshot, {
         initialGran: mode, startYear: 2020, groupBy: "zone", zones: YIELD_DB_ZONES, highlightZone: zone === T14_ALL ? null : zone, yieldGrades: YIELD_GRADES, showRain: true, title: "六個分區並列",
@@ -9577,6 +9625,9 @@ function YieldMaterialRainReport({ onBack }) {
           React.createElement('span', null, "☁️ 雨量（雲朵高度，右軸）"),
           activeCats.flatMap((c) => itemsOf(c).map((k, ki) => React.createElement('span', { key: c.key + k }, React.createElement('span', { style: { display: "inline-block", width: 9, height: 9, borderRadius: 2, background: c.colors[ki % c.colors.length], marginRight: 3, verticalAlign: "middle" } }), `${k}（${c.unit}）`)))),
         chart(),
+        syncScale && zone !== T14_ALL && data.yieldAll && React.createElement('div', { className: "text-xs mt-1", style: { color: C.wine, fontWeight: 700 } }, (() => {
+          const tops = YIELD_DB_ZONES.map((z) => ({ z, y: Math.max(0, ...data.yieldAll[z].filter((v) => v != null)) })).sort((a, b) => b.y - a.y);
+          return `統一刻度：產能上限取六區最大值（${tops[0].z} ${niceLabel(Math.round(tops[0].y))} kg），資材上限同樣取六區最大值`; })()),
         React.createElement('div', { className: "text-xs mt-1", style: { color: C.inkSoft } }, activeCats.length > 1 ? "選了多類資材：每類一根柱、各用自己的刻度（柱高代表該類在這段期間的相對多寡），實際數字請看標籤或點該期明細。" : "點任一期看明細。"),
         sp && React.createElement('div', { className: "mt-3 rounded-xl p-3 text-sm", style: { background: C.cream, border: `1px solid ${C.line}` } },
           React.createElement('div', { style: { fontWeight: 800, color: C.ink, marginBottom: 4 } }, `${sp.p.label}（${sp.p.start} ～ ${sp.p.end}）`),
@@ -9618,6 +9669,29 @@ function snapListFor(gran, year, startYear) {
 
 // groupBy="zone"：列＝溫室，每個指標一個區塊；groupBy="item"：列＝品項（單一溫室）
 // metrics：[{ key, label, unit, color, keys:[回報品項] }]；yieldGrades：要算產能時給品級陣列
+
+// C122：當期柱子的逐筆明細（與表三同一規則：已去除重複、只認本月日期）
+function SnapEntryList({ zone, keys, unit, start, end, onClose }) {
+  const [st, setSt] = useState(null);
+  useEffect(() => { let alive = true; setSt(null);
+    fetchZoneworkEntriesForRange(zone, start, end, keys).then((r) => { if (alive) setSt(r); });
+    return () => { alive = false; }; }, [zone, start, end, keys.join(",")]);
+  const total = st ? Math.round(st.list.reduce((s, e) => s + e.qty, 0) * 10) / 10 : 0;
+  return React.createElement('div', { className: "mt-2 rounded-lg p-2 text-xs", style: { background: C.cream, border: `1px solid ${C.line}`, fontFamily: "Inter" } },
+    React.createElement('div', { className: "flex justify-between items-center mb-1" },
+      React.createElement('span', { style: { fontWeight: 800, color: C.ink, fontSize: 13 } }, `${zone}・逐筆回報`),
+      React.createElement('button', { onClick: onClose, className: "px-2 py-0.5 rounded", style: { border: `1px solid ${C.line}`, background: "white" } }, "關閉")),
+    !st ? React.createElement('div', { style: { color: C.inkSoft } }, "讀取中…")
+      : st.list.length === 0 ? React.createElement('div', { style: { color: C.inkSoft } }, "這一期沒有回報紀錄")
+      : React.createElement(React.Fragment, null,
+          st.list.map((e, i) => React.createElement('div', { key: i, className: "flex justify-between gap-2 py-0.5", style: { borderBottom: `1px dashed ${C.line}` } },
+            React.createElement('span', { style: { color: C.inkSoft, whiteSpace: "nowrap" } }, e.date.slice(5).replace("-", "/")),
+            React.createElement('span', { style: { flex: 1, color: C.ink } }, `${e.rowKey}${e.person ? `・${e.person}` : ""}`),
+            React.createElement('span', { style: { fontWeight: 700, color: C.ink, fontFamily: "IBM Plex Mono, monospace" } }, `${niceLabel(e.qty)} ${unit}`))),
+          React.createElement('div', { className: "flex justify-between pt-1", style: { fontWeight: 800, color: C.ink } }, React.createElement('span', null, `共 ${st.list.length} 筆`), React.createElement('span', null, `合計 ${niceLabel(total)} ${unit}`)),
+          st.dup > 0 && React.createElement('div', { className: "mt-1", style: { color: C.alert } }, `※ 原始資料中有 ${st.dup} 筆完全重複的回報，已自動只算一次（與表三相同）`)));
+}
+
 function PeriodSnapshot({ initialGran = "month", startYear = 2020, groupBy = "zone", zones, highlightZone = null, metrics, yieldGrades = null, showRain = false, title = "" }) {
   const todayStr = localYMD(new Date()); const nowY = new Date().getFullYear();
   const [gran, setGran] = useState(initialGran === "period" || initialGran === "week" || initialGran === "day" || initialGran === "year" ? initialGran : "month");
@@ -9626,6 +9700,8 @@ function PeriodSnapshot({ initialGran = "month", startYear = 2020, groupBy = "zo
   const [day, setDay] = useState(todayStr);
   const [res, setRes] = useState(null);
   const [loading, setLoading] = useState(false);
+  const [combine, setCombine] = useState("sum"); // C122：sum＝加總（疊加）｜split＝並列
+  const [pick, setPick] = useState(null);         // C122：點選的柱子（看逐筆明細）
 
   const list = gran === "day" ? [] : snapListFor(gran, year, startYear);
   const curIdx = gran === "year" ? (idx == null ? list.length - 1 : idx) : (idx == null ? list.length - 1 : Math.min(idx, list.length - 1));
@@ -9634,6 +9710,7 @@ function PeriodSnapshot({ initialGran = "month", startYear = 2020, groupBy = "zo
     : (list[curIdx] || null);
 
   useEffect(() => { setIdx(null); }, [gran, year]);
+  useEffect(() => { setPick(null); }, [gran, year, idx, day]);
   const zonesKey = zones.join(","), metricsKey = metrics.map((m) => m.key + ":" + m.keys.join("+")).join("|"), gradesKey = (yieldGrades || []).join(",");
   useEffect(() => {
     if (!range) { setRes(null); return undefined; }
@@ -9661,13 +9738,16 @@ function PeriodSnapshot({ initialGran = "month", startYear = 2020, groupBy = "zo
   const nice1 = (v) => v == null ? "—" : niceLabel(Math.round(v * 10) / 10);
   const years = []; for (let y = startYear; y <= nowY; y++) years.push(y);
 
-  // C119：當期也用直立柱狀圖，與走勢圖同一種表達方式（每個指標一張圖，橫軸＝溫室或品項）
+  // C119：當期用直立柱狀圖（與走勢同一種表達）。C122：多品項可選「加總（疊加）」或「並列（各品項一根）」，點柱子看逐筆明細。
   const zoneColor = (name) => (typeof ZONE_COLORS !== "undefined" && ZONE_COLORS[name]) || null;
-  const vchart = (key, label, unit, rows, total) => {
-    const W = 360, H = 210, padL = 44, padR = 10, padT = 24, padB = 30;
+  const itemColor = (k, i) => (typeof ZONEWORK_ITEM_COLORS !== "undefined" && ZONEWORK_ITEM_COLORS[k]) || ["#4E9A5B", "#7CB342", "#2E7D6B", "#9CCC65", "#558B2F", "#26A69A", "#AED581", "#8B5A2B", "#C9954F"][i % 9];
+  const vchart = (key, label, unit, rows, total, opts = {}) => {
+    const split = opts.split && rows.some((r) => r.segs && r.segs.length > 1);
+    const W = 360, H = 220, padL = 44, padR = 10, padT = 26, padB = 30;
     const plotW = W - padL - padR, plotH = H - padT - padB, base = padT + plotH;
-    const ax = niceAxis(Math.max(0, ...rows.map((r) => r.v || 0)), 4);
-    const cw = plotW / Math.max(1, rows.length), bw = Math.min(40, cw * 0.62);
+    const peak = split ? Math.max(0, ...rows.flatMap((r) => (r.segs || []).map((sg) => sg.v || 0))) : Math.max(0, ...rows.map((r) => r.v || 0));
+    const ax = niceAxis(peak, 4);
+    const cw = plotW / Math.max(1, rows.length), bw = Math.min(40, cw * 0.66);
     const y = (v) => padT + (1 - v / ax.max) * plotH;
     const g = [];
     for (let k = 0; k <= 4; k++) {
@@ -9676,33 +9756,53 @@ function PeriodSnapshot({ initialGran = "month", startYear = 2020, groupBy = "zo
       g.push(React.createElement('text', { key: "t" + k, x: padL - 5, y: yv + 3.5, fontSize: 10, textAnchor: "end", fill: C.inkSoft, fontFamily: "IBM Plex Mono, monospace" }, niceLabel(ax.step * k) + (k === 4 ? unit : "")));
     }
     rows.forEach((r, i) => {
-      const cx = padL + cw * (i + 0.5), v = r.v || 0;
+      const cx = padL + cw * (i + 0.5), v = r.v || 0, picked = pick && pick.block === key && pick.name === r.name;
+      const kids = [React.createElement('rect', { key: "hit", x: padL + cw * i, y: padT - 20, width: cw, height: plotH + 44, fill: picked ? "#FFF6C8" : "transparent" })];
+      const segs = (r.segs && r.segs.length) ? r.segs : [{ k: "_", v, color: r.color }];
       if (v > 0) {
-        g.push(React.createElement('rect', { key: "b" + i, x: cx - bw / 2, y: y(v), width: bw, height: base - y(v), rx: 2, fill: r.color, opacity: r.dim ? 0.45 : 1 }));
-        g.push(React.createElement('text', { key: "v" + i, x: cx, y: y(v) - 4, fontSize: 10.5, textAnchor: "middle", fill: C.ink, fontWeight: 700, fontFamily: "IBM Plex Mono, monospace" }, nice1(v)));
-      } else g.push(React.createElement('text', { key: "z" + i, x: cx, y: base - 4, fontSize: 10, textAnchor: "middle", fill: "#BBB", fontFamily: "IBM Plex Mono, monospace" }, "0"));
-      g.push(React.createElement('text', { key: "x" + i, x: cx, y: base + 16, fontSize: 11, textAnchor: "middle", fill: r.hl ? C.wine : C.inkSoft, fontWeight: r.hl ? 800 : 400 }, r.name));
+        if (split && segs.length > 1) {
+          const sw = bw / segs.length;
+          segs.forEach((sg, si) => { if (!(sg.v > 0)) return; const x = cx - bw / 2 + si * sw;
+            kids.push(React.createElement('rect', { key: "s" + si, x: x + 0.5, y: y(sg.v), width: Math.max(1, sw - 1), height: base - y(sg.v), fill: sg.color, opacity: r.dim ? 0.5 : 1 }));
+            if (sw >= 9) kids.push(React.createElement('text', { key: "sv" + si, x: x + sw / 2, y: y(sg.v) - 3, fontSize: 8, textAnchor: "middle", fill: C.ink, fontFamily: "IBM Plex Mono, monospace" }, nice1(sg.v))); });
+        } else {
+          let acc = 0;
+          segs.forEach((sg, si) => { const sv = sg.v || 0; if (!(sv > 0)) return; const y1 = y(acc + sv), y0 = y(acc); acc += sv;
+            kids.push(React.createElement('rect', { key: "s" + si, x: cx - bw / 2, y: y1, width: bw, height: Math.max(1, y0 - y1), fill: sg.color, opacity: r.dim ? 0.5 : 1 })); });
+          kids.push(React.createElement('text', { key: "v", x: cx, y: y(v) - 4, fontSize: 10.5, textAnchor: "middle", fill: C.ink, fontWeight: 700, fontFamily: "IBM Plex Mono, monospace" }, nice1(v)));
+        }
+      } else kids.push(React.createElement('text', { key: "z", x: cx, y: base - 4, fontSize: 10, textAnchor: "middle", fill: "#BBB", fontFamily: "IBM Plex Mono, monospace" }, "0"));
+      kids.push(React.createElement('text', { key: "x", x: cx, y: base + 16, fontSize: 11, textAnchor: "middle", fill: r.hl ? C.wine : C.inkSoft, fontWeight: r.hl ? 800 : 400 }, r.name));
+      g.push(React.createElement('g', { key: "c" + i, onClick: () => opts.keys && setPick(picked ? null : { block: key, name: r.name, zone: r.zone || zones[0], keys: opts.keys, unit }), style: { cursor: opts.keys ? "pointer" : "default" } }, kids));
     });
+    const legendKeys = rows.find((r) => r.segs && r.segs.length > 1);
     return React.createElement('div', { key, className: "rounded-xl p-2 mb-2", style: { background: "#FFF", border: `1px solid ${C.line}` } },
-      React.createElement('div', { className: "flex justify-between items-baseline px-1" },
+      React.createElement('div', { className: "flex justify-between items-baseline px-1 gap-2" },
         React.createElement('span', { style: { fontWeight: 800, color: C.ink, fontSize: 14 } }, `${label}（${unit}）`),
-        total != null && React.createElement('span', { className: "text-xs", style: { color: C.inkSoft } }, `合計 ${nice1(total)} ${unit}`)),
-      React.createElement('svg', { viewBox: `0 0 ${W} ${H}`, style: { width: "100%", height: "auto", maxWidth: "100%", display: "block" } }, g));
+        total != null && React.createElement('span', { className: "text-xs", style: { color: C.inkSoft, whiteSpace: "nowrap" } }, `合計 ${nice1(total)} ${unit}`)),
+      legendKeys && React.createElement('div', { className: "flex flex-wrap gap-x-2 gap-y-0.5 px-1 mt-1 text-xs", style: { color: C.inkSoft } }, legendKeys.segs.map((sg) => React.createElement('span', { key: sg.k }, React.createElement('span', { style: { display: "inline-block", width: 8, height: 8, borderRadius: 2, background: sg.color, marginRight: 3 } }), sg.k))),
+      React.createElement('svg', { viewBox: `0 0 ${W} ${H}`, style: { width: "100%", height: "auto", maxWidth: "100%", display: "block" } }, g),
+      pick && pick.block === key && React.createElement(SnapEntryList, { zone: pick.zone, keys: pick.keys, unit: pick.unit, start: range.start, end: range.end, onClose: () => setPick(null) }));
   };
   const sum = (rows) => Math.round(rows.reduce((s, r) => s + (r.v || 0), 0) * 10) / 10;
+  const multiKey = metrics.some((m) => m.keys.length > 1);
 
   let blocks = [];
   if (res) {
     if (groupBy === "zone") {
-      const mk = (getV, color) => res.rows.map((r) => ({ name: r.zone, v: getV(r), hl: r.zone === highlightZone, dim: highlightZone && r.zone !== highlightZone, color: zoneColor(r.zone) && metrics.length === 1 && !yieldGrades ? zoneColor(r.zone) : color }));
+      const mk = (getV, color) => res.rows.map((r) => ({ name: r.zone, zone: r.zone, v: getV(r), hl: r.zone === highlightZone, dim: highlightZone && r.zone !== highlightZone, color: zoneColor(r.zone) && metrics.length === 1 && !yieldGrades && metrics[0].keys.length === 1 ? zoneColor(r.zone) : color }));
       if (yieldGrades) { const rows = mk((r) => r.yield, C.tableColor); blocks.push(vchart("yield", "產能", "kg", rows, rows.length > 1 ? sum(rows) : null)); }
-      metrics.forEach((m) => { const rows = mk((r) => r.vals[m.key], m.color); blocks.push(vchart(m.key, m.label, m.unit, rows, rows.length > 1 ? sum(rows) : null)); });
+      metrics.forEach((m) => {
+        const rows = mk((r) => r.vals[m.key], m.color).map((row, ri) => ({ ...row, segs: m.keys.length > 1 ? m.keys.map((k, ki) => ({ k, v: Math.round((Number(res.rows[ri].raw[k]) || 0) * 10) / 10, color: itemColor(k, ki) })) : null }));
+        blocks.push(vchart(m.key, m.label, m.unit, rows, rows.length > 1 ? sum(rows) : null, { split: combine === "split", keys: m.keys }));
+      });
     } else {
       const r0 = res.rows[0] || { vals: {} };
       if (yieldGrades) blocks.push(vchart("yield", "產能", "kg", [{ name: zones[0], v: r0.yield, color: C.tableColor }], null));
       [...new Set(metrics.map((m) => m.unit))].forEach((u) => {
-        const rows = metrics.filter((m) => m.unit === u).map((m) => ({ name: m.label, v: r0.vals[m.key] || 0, color: m.color }));
-        blocks.push(vchart("u" + u, rows.length === 1 ? rows[0].name : `${zones[0]}・單位 ${u}`, u, rows, rows.length > 1 ? sum(rows) : null));
+        const ms = metrics.filter((m) => m.unit === u);
+        const rows = ms.map((m) => ({ name: m.label, zone: zones[0], v: r0.vals[m.key] || 0, color: m.color }));
+        blocks.push(vchart("u" + u, rows.length === 1 ? rows[0].name : `${zones[0]}・單位 ${u}`, u, rows, rows.length > 1 ? sum(rows) : null, { keys: ms.flatMap((m) => m.keys) }));
       });
     }
   }
@@ -9720,6 +9820,11 @@ function PeriodSnapshot({ initialGran = "month", startYear = 2020, groupBy = "zo
     range && React.createElement('div', { className: "text-xs mb-2 text-center", style: { color: C.inkSoft } },
       `${title ? title + "・" : ""}${range.start === range.end ? range.start : `${range.start} ～ ${range.end}`}`,
       res && showRain ? `　☁️ 雨量 ${res.rain == null ? "無氣候資料" : nice1(res.rain) + " mm"}` : ""),
+    groupBy === "zone" && multiKey && React.createElement('div', { className: "flex gap-2 mb-2 items-center" },
+      React.createElement('span', { className: "text-xs", style: { color: C.inkSoft } }, "多品項："),
+      React.createElement('button', { onClick: () => setCombine("sum"), className: "px-3 py-1 rounded-lg text-sm", style: btn(combine === "sum") }, "加總（疊加）"),
+      React.createElement('button', { onClick: () => setCombine("split"), className: "px-3 py-1 rounded-lg text-sm", style: btn(combine === "split") }, "並列（各品項）")),
+    React.createElement('div', { className: "text-xs mb-2", style: { color: C.inkSoft } }, "點任一根柱子，可看這一期的逐筆回報明細"),
     loading && React.createElement('div', { className: "text-xs mb-2", style: { color: C.inkSoft } }, "讀取中…"),
     !loading && res && blocks,
     !loading && res && metrics.length === 0 && !yieldGrades && React.createElement('div', { className: "text-sm", style: { color: C.alert } }, "請至少選擇一項資材"));
