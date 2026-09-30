@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-<title>完全體 V5.1.C118・藍帶無花果</title>
+<title>完全體 V5.1.C120・藍帶無花果</title>
 <meta name="apple-mobile-web-app-capable" content="yes" />
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
 <meta name="apple-mobile-web-app-title" content="藍帶無花果" />
@@ -717,7 +717,7 @@ const C = {
   tiffanyLight: "#B8ECE5",
   tiffanyText: "#2E8577",
 };
-const APP_VERSION = 'V5.1.C118';
+const APP_VERSION = 'V5.1.C120';
 const FONT_LINK = "https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,600;9..144,700&family=Inter:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap";
 
 const WORK_ITEMS = [
@@ -8088,6 +8088,13 @@ async function fetchYieldZonesPeriodTotal(zones, startDate, endDate, grades) {
 
 // C115：圖表刻度工具——取「好讀」的整數刻度（1、1.2、1.5、2、2.5、3、4、5、6、8 × 10ⁿ），並保留約 10% 頂部空間，
 // 讓最高的柱子／點不會貼到圖框上緣，刻度也不會出現 27.5、13732 這種難讀的數字。
+
+// C120：氣候固定刻度（全系統一致）——溫度 0–45°C、雨量 0–1000mm，都切 5 格、共用格線：
+// 溫度 0/9/18/27/36/45 對應雨量 0/200/400/600/800/1000。
+// 雨量只有在單期超過 1000mm（例如「看年」的全年雨量）時，才自動延伸為 1000 的整數倍，避免柱子被截斷。
+const CLIMATE_T_MAX = 45, CLIMATE_R_MAX = 1000, CLIMATE_T_TICKS = [0, 9, 18, 27, 36, 45];
+function climateRainAxis(maxRain) { const m = Math.max(CLIMATE_R_MAX, Math.ceil((Number(maxRain) || 0) / 1000) * 1000); return { max: m, step: m / 5 }; }
+
 function niceAxis(maxVal, intervals) {
   const v = Math.max(Number(maxVal) || 0, 0) * 1.1;
   if (!(v > 0)) return { max: intervals, step: 1 };
@@ -8203,9 +8210,9 @@ function ClimateYieldReport({ onBack }) {
   // 雨量＝依資料取好讀的上限（年約 0–2000、月約 0–500），不再用 300mm 斷軸；
   // 溫度＝固定 0–50°C（與表五一致）；產能＝依資料取好讀的上限並保留頂部空間。
   const AXIS_N = 5;
-  const rainAxis = niceAxis(data ? Math.max(0, ...data.rain.filter((v) => v != null)) : 0, AXIS_N);
+  const rainAxis = climateRainAxis(data ? Math.max(0, ...data.rain.filter((v) => v != null)) : 0); // C120：固定 0–1000mm
   const yRain = (v) => padT + (1 - Math.min(v, rainAxis.max) / rainAxis.max) * plotH;
-  const TEMP_MIN = 0, TEMP_MAX = 50;
+  const TEMP_MIN = 0, TEMP_MAX = CLIMATE_T_MAX;
   const yTemp = (v) => padT + (1 - (v - TEMP_MIN) / (TEMP_MAX - TEMP_MIN)) * plotH;
   const yieldAxis = niceAxis(data ? Math.max(0, ...data.yield.filter((v) => v != null)) : 0, AXIS_N);
   const yieldMax = yieldAxis.max;
@@ -8234,7 +8241,7 @@ function ClimateYieldReport({ onBack }) {
   const rainAxisGrid = rainTickVals.map((val) => (
     React.createElement("line", { key: val, x1: padL, y1: yRain(val), x2: W - padR, y2: yRain(val), stroke: C.line, strokeWidth: 1 })
   ));
-  const tempAxisTicks = [0, 10, 20, 30, 40, 50].map((val) => (
+  const tempAxisTicks = CLIMATE_T_TICKS.map((val) => (
     React.createElement("text", { key: val, x: W - padR + 8, y: yTemp(val) + 4, fontSize: 11.5, fill: C.coral, textAnchor: "start", fontFamily: "IBM Plex Mono, monospace" }, val + "℃")
   ));
   const yieldAxisTicks = Array.from({ length: AXIS_N + 1 }, (_, k) => yieldAxis.step * k).map((val, k) => (
@@ -9271,7 +9278,7 @@ function ClimateMaterialReport({ onBack }) {
     const n = Math.max(days.length, 1);
     const W = 360, x0 = 30, x1 = 326, cw = (x1 - x0) / n;
     const pTop = 24, pBot = 150, bTop = 180, bBot = 286, strip = 302, H = 316;
-    const yT = (t) => pBot - Math.min(50, Math.max(0, t)) / 50 * (pBot - pTop);
+    const yT = (t) => pBot - Math.min(CLIMATE_T_MAX, Math.max(0, t)) / CLIMATE_T_MAX * (pBot - pTop);
     const yR = (r) => pBot - Math.min(1000, Math.max(0, r)) / 1000 * (pBot - pTop);
     const tonsMax = niceMax(Math.max(0, ...days.map((d) => zwSumKeys(d.use, WATER_TONS_KEYS))));
     const minsMax = niceMax(Math.max(0, ...days.map((d) => zwSumKeys(d.use, WATER_MIN_KEYS))));
@@ -9281,10 +9288,10 @@ function ClimateMaterialReport({ onBack }) {
     const segs = (f) => { const out = []; let cur = []; days.forEach((d, i) => { const v = d.clim ? f(d.clim) : null; if (v != null) cur.push(`${(x0 + cw * (i + 0.5)).toFixed(1)},${yT(v).toFixed(1)}`); else { if (cur.length > 1) out.push(cur.join(" ")); cur = []; } }); if (cur.length > 1) out.push(cur.join(" ")); return out; };
     const every = n > 20 ? 5 : 1;
     const g = [];
-    [0, 10, 20, 30, 40, 50].forEach((t) => g.push(React.createElement('g', { key: "gt" + t },
+    CLIMATE_T_TICKS.forEach((t) => g.push(React.createElement('g', { key: "gt" + t },
       React.createElement('line', { x1: x0, y1: yT(t), x2: x1, y2: yT(t), stroke: "#EEE7DB", strokeWidth: 0.7, strokeDasharray: t ? "2 3" : "" }),
       React.createElement('text', { x: x0 - 3, y: yT(t) + 3, fontSize: 8.5, textAnchor: "end", fill: "#B5453F" }, `${t}°`),
-      React.createElement('text', { x: x1 + 3, y: yT(t) + 3, fontSize: 8, fill: "#5E9C97" }, `${t * 20}`))));
+      React.createElement('text', { x: x1 + 3, y: yT(t) + 3, fontSize: 8, fill: "#5E9C97" }, `${Math.round(t / CLIMATE_T_MAX * CLIMATE_R_MAX)}`))));
     [0, 0.5, 1].forEach((f) => g.push(React.createElement('g', { key: "gb" + f },
       React.createElement('line', { x1: x0, y1: bBot - f * (bBot - bTop), x2: x1, y2: bBot - f * (bBot - bTop), stroke: "#EEE7DB", strokeWidth: 0.7, strokeDasharray: f ? "2 3" : "" }),
       React.createElement('text', { x: x0 - 3, y: bBot - f * (bBot - bTop) + 3, fontSize: 8.5, textAnchor: "end", fill: "#2E6F8E" }, f1(tonsMax * f).replace(/\.0$/, "")),
@@ -9341,7 +9348,7 @@ function ClimateMaterialReport({ onBack }) {
         React.createElement('div', { style: { fontWeight: 800, fontSize: 15, color: C.ink } }, `${zone}・${year}年${month}月 每日對照`),
         legend([["#D9453F", "最高溫", "line"], ["#2F7FD1", "最低溫", "line"], ["#9CC9C5", "雨量"], ["#3F86A8", "溝灌（噸）"], ["#E6A04E", "噴灌（分鐘）"], ["#8B5A2B", "施肥", "dot"], ["#4E9A5B", "其他資材", "dot"]]),
         dailyChart(),
-        React.createElement('div', { className: "text-xs mt-1", style: { color: C.inkSoft } }, "上半部：氣候（左軸溫度 0–50°C、右軸雨量 0–1000mm）　下半部：當天回報的用水（左軸溝灌、右軸噴灌）　最下方圓點：有施肥／其他資材　點任一天看明細"),
+        React.createElement('div', { className: "text-xs mt-1", style: { color: C.inkSoft } }, "上半部：氣候（左軸溫度 0–45°C、右軸雨量 0–1000mm）　下半部：當天回報的用水（左軸溝灌、右軸噴灌）　最下方圓點：有施肥／其他資材　點任一天看明細"),
         selDay && React.createElement('div', { className: "mt-3 rounded-xl p-3 text-sm", style: { background: C.cream, border: `1px solid ${C.line}` } },
           React.createElement('div', { style: { fontWeight: 800, color: C.ink, marginBottom: 4 } }, `${selDay.date}（${zone}）`),
           [["最高／最低溫", selDay.clim ? `${f1(selDay.clim.tMax)} ／ ${f1(selDay.clim.tMin)} °C` : "沒有氣候資料"], ["雨量", selDay.clim ? `${f1(selDay.clim.rain)} mm` : "—"], ["平均濕度", selDay.clim && selDay.clim.hum != null ? `${f1(selDay.clim.hum)} %` : "—"],
@@ -9486,7 +9493,7 @@ function YieldMaterialRainReport({ onBack }) {
     const cw = plotW / Math.max(1, n);
     const xc = (i) => padL + cw * (i + 0.5);
     const yieldAxis = niceAxis(Math.max(0, ...data.yield.filter((v) => v != null)), 5);
-    const rainAxis = niceAxis(Math.max(0, ...data.rain.filter((v) => v != null)), 5);
+    const rainAxis = climateRainAxis(Math.max(0, ...data.rain.filter((v) => v != null))); // C120：固定 0–1000mm
     const yY = (v) => padT + (1 - v / yieldAxis.max) * plotH;
     const yR = (v) => padT + (1 - Math.min(v, rainAxis.max) / rainAxis.max) * plotH;
     const catTotals = (c, i) => itemsOf(c).map((k) => Number(data.usage[i][k]) || 0);
@@ -9654,37 +9661,49 @@ function PeriodSnapshot({ initialGran = "month", startYear = 2020, groupBy = "zo
   const nice1 = (v) => v == null ? "—" : niceLabel(Math.round(v * 10) / 10);
   const years = []; for (let y = startYear; y <= nowY; y++) years.push(y);
 
-  const bar = (v, max, color) => React.createElement('div', { style: { flex: 1, height: 12, background: "#F1ECE3", borderRadius: 6, overflow: "hidden" } },
-    React.createElement('div', { style: { width: `${max > 0 ? Math.max(v > 0 ? 2 : 0, v / max * 100) : 0}%`, height: "100%", background: color, borderRadius: 6 } }));
-  const block = (key, label, unit, color, rows) => {
-    const max = Math.max(0, ...rows.map((r) => r.v || 0)); const total = Math.round(rows.reduce((s, r) => s + (r.v || 0), 0) * 10) / 10;
-    return React.createElement('div', { key, className: "rounded-xl p-3 mb-2", style: { background: "#FFF", border: `1px solid ${C.line}` } },
-      React.createElement('div', { className: "flex justify-between items-baseline mb-1.5" },
-        React.createElement('span', { style: { fontWeight: 800, color: C.ink } }, React.createElement('span', { style: { display: "inline-block", width: 10, height: 10, borderRadius: 3, background: color, marginRight: 6 } }), `${label}（${unit}）`),
-        rows.length > 1 && React.createElement('span', { className: "text-xs", style: { color: C.inkSoft } }, `合計 ${nice1(total)} ${unit}`)),
-      rows.map((r) => React.createElement('div', { key: r.name, className: "flex items-center gap-2 py-0.5 text-sm" },
-        React.createElement('span', { style: { width: 64, flexShrink: 0, color: r.hl ? C.wine : C.ink, fontWeight: r.hl ? 800 : 500 } }, r.name),
-        bar(r.v || 0, max, color),
-        React.createElement('span', { style: { width: 64, textAlign: "right", flexShrink: 0, fontWeight: 700, color: (r.v || 0) > 0 ? C.ink : "#BBB", fontFamily: "IBM Plex Mono, monospace" } }, (r.v || 0) > 0 ? nice1(r.v) : "0"))));
+  // C119：當期也用直立柱狀圖，與走勢圖同一種表達方式（每個指標一張圖，橫軸＝溫室或品項）
+  const zoneColor = (name) => (typeof ZONE_COLORS !== "undefined" && ZONE_COLORS[name]) || null;
+  const vchart = (key, label, unit, rows, total) => {
+    const W = 360, H = 210, padL = 44, padR = 10, padT = 24, padB = 30;
+    const plotW = W - padL - padR, plotH = H - padT - padB, base = padT + plotH;
+    const ax = niceAxis(Math.max(0, ...rows.map((r) => r.v || 0)), 4);
+    const cw = plotW / Math.max(1, rows.length), bw = Math.min(40, cw * 0.62);
+    const y = (v) => padT + (1 - v / ax.max) * plotH;
+    const g = [];
+    for (let k = 0; k <= 4; k++) {
+      const yv = padT + plotH * (1 - k / 4);
+      g.push(React.createElement('line', { key: "l" + k, x1: padL, y1: yv, x2: W - padR, y2: yv, stroke: C.line, strokeWidth: 0.8, strokeDasharray: k ? "3 3" : "" }));
+      g.push(React.createElement('text', { key: "t" + k, x: padL - 5, y: yv + 3.5, fontSize: 10, textAnchor: "end", fill: C.inkSoft, fontFamily: "IBM Plex Mono, monospace" }, niceLabel(ax.step * k) + (k === 4 ? unit : "")));
+    }
+    rows.forEach((r, i) => {
+      const cx = padL + cw * (i + 0.5), v = r.v || 0;
+      if (v > 0) {
+        g.push(React.createElement('rect', { key: "b" + i, x: cx - bw / 2, y: y(v), width: bw, height: base - y(v), rx: 2, fill: r.color, opacity: r.dim ? 0.45 : 1 }));
+        g.push(React.createElement('text', { key: "v" + i, x: cx, y: y(v) - 4, fontSize: 10.5, textAnchor: "middle", fill: C.ink, fontWeight: 700, fontFamily: "IBM Plex Mono, monospace" }, nice1(v)));
+      } else g.push(React.createElement('text', { key: "z" + i, x: cx, y: base - 4, fontSize: 10, textAnchor: "middle", fill: "#BBB", fontFamily: "IBM Plex Mono, monospace" }, "0"));
+      g.push(React.createElement('text', { key: "x" + i, x: cx, y: base + 16, fontSize: 11, textAnchor: "middle", fill: r.hl ? C.wine : C.inkSoft, fontWeight: r.hl ? 800 : 400 }, r.name));
+    });
+    return React.createElement('div', { key, className: "rounded-xl p-2 mb-2", style: { background: "#FFF", border: `1px solid ${C.line}` } },
+      React.createElement('div', { className: "flex justify-between items-baseline px-1" },
+        React.createElement('span', { style: { fontWeight: 800, color: C.ink, fontSize: 14 } }, `${label}（${unit}）`),
+        total != null && React.createElement('span', { className: "text-xs", style: { color: C.inkSoft } }, `合計 ${nice1(total)} ${unit}`)),
+      React.createElement('svg', { viewBox: `0 0 ${W} ${H}`, style: { width: "100%", height: "auto", maxWidth: "100%", display: "block" } }, g));
   };
+  const sum = (rows) => Math.round(rows.reduce((s, r) => s + (r.v || 0), 0) * 10) / 10;
 
   let blocks = [];
   if (res) {
     if (groupBy === "zone") {
-      if (yieldGrades) blocks.push(block("yield", "產能", "kg", C.tableColor, res.rows.map((r) => ({ name: r.zone, v: r.yield, hl: r.zone === highlightZone }))));
-      metrics.forEach((m) => blocks.push(block(m.key, m.label, m.unit, m.color, res.rows.map((r) => ({ name: r.zone, v: r.vals[m.key], hl: r.zone === highlightZone })))));
+      const mk = (getV, color) => res.rows.map((r) => ({ name: r.zone, v: getV(r), hl: r.zone === highlightZone, dim: highlightZone && r.zone !== highlightZone, color: zoneColor(r.zone) && metrics.length === 1 && !yieldGrades ? zoneColor(r.zone) : color }));
+      if (yieldGrades) { const rows = mk((r) => r.yield, C.tableColor); blocks.push(vchart("yield", "產能", "kg", rows, rows.length > 1 ? sum(rows) : null)); }
+      metrics.forEach((m) => { const rows = mk((r) => r.vals[m.key], m.color); blocks.push(vchart(m.key, m.label, m.unit, rows, rows.length > 1 ? sum(rows) : null)); });
     } else {
       const r0 = res.rows[0] || { vals: {} };
-      const units = [...new Set(metrics.map((m) => m.unit))];
-      units.forEach((u) => { const ms = metrics.filter((m) => m.unit === u);
-        blocks.push(React.createElement('div', { key: "u" + u, className: "rounded-xl p-3 mb-2", style: { background: "#FFF", border: `1px solid ${C.line}` } },
-          React.createElement('div', { className: "flex justify-between items-baseline mb-1.5" }, React.createElement('span', { style: { fontWeight: 800, color: C.ink } }, `單位：${u}`), ms.length > 1 && React.createElement('span', { className: "text-xs", style: { color: C.inkSoft } }, `合計 ${nice1(ms.reduce((s, m) => s + (r0.vals[m.key] || 0), 0))} ${u}`)),
-          (() => { const max = Math.max(0, ...ms.map((m) => r0.vals[m.key] || 0)); return ms.map((m) => React.createElement('div', { key: m.key, className: "flex items-center gap-2 py-0.5 text-sm" },
-            React.createElement('span', { style: { width: 72, flexShrink: 0 } }, React.createElement('span', { style: { display: "inline-block", width: 8, height: 8, borderRadius: 2, background: m.color, marginRight: 4 } }), m.label),
-            bar(r0.vals[m.key] || 0, max, m.color),
-            React.createElement('span', { style: { width: 60, textAlign: "right", flexShrink: 0, fontWeight: 700, color: (r0.vals[m.key] || 0) > 0 ? C.ink : "#BBB", fontFamily: "IBM Plex Mono, monospace" } }, nice1(r0.vals[m.key] || 0)))); })()));
+      if (yieldGrades) blocks.push(vchart("yield", "產能", "kg", [{ name: zones[0], v: r0.yield, color: C.tableColor }], null));
+      [...new Set(metrics.map((m) => m.unit))].forEach((u) => {
+        const rows = metrics.filter((m) => m.unit === u).map((m) => ({ name: m.label, v: r0.vals[m.key] || 0, color: m.color }));
+        blocks.push(vchart("u" + u, rows.length === 1 ? rows[0].name : `${zones[0]}・單位 ${u}`, u, rows, rows.length > 1 ? sum(rows) : null));
       });
-      if (yieldGrades) blocks.unshift(block("yield", "產能", "kg", C.tableColor, [{ name: zones[0], v: r0.yield, hl: false }]));
     }
   }
 
@@ -10622,7 +10641,7 @@ function ClimateOverview({ mode, year, month, daily, dailyLoading, onOpenMonth }
   const withData = cols.filter((c) => c.stat);
   const f1 = (v) => v == null ? "—" : Number(v).toFixed(1);
   const f0 = (v) => v == null ? "—" : Math.round(v);
-  const T_MIN = 0, T_MAX = 50, R_MAX = 1000;
+  const T_MIN = 0, T_MAX = CLIMATE_T_MAX, R_MAX = CLIMATE_R_MAX;
   // C113：組合圖——雨量＝柱（右軸 0–1000mm），最高溫＝紅線、最低溫＝藍線（左軸 0–50°C），同一個繪圖區
   const W = 360, H = 290, x0 = 28, x1 = 322, pTop = 24, pBot = 262;
   const n = Math.max(cols.length, 1), cw = (x1 - x0) / n;
@@ -10646,10 +10665,10 @@ function ClimateOverview({ mode, year, month, daily, dailyLoading, onOpenMonth }
         React.createElement('span', null, React.createElement('span', { style: { display: "inline-block", width: 10, height: 10, borderRadius: 2, background: "#9CC9C5", marginRight: 4, verticalAlign: "middle" } }), mode === "month" ? "日雨量" : "月雨量", "（右軸）"),
         loading ? React.createElement('span', null, `讀取中 ${progress}…`) : null),
       React.createElement('svg', { viewBox: `0 0 ${W} ${H}`, style: { width: "100%", height: "auto", maxWidth: "100%", display: "block" } },
-        [0, 10, 20, 30, 40, 50].map((t) => React.createElement('g', { key: "t" + t },
+        CLIMATE_T_TICKS.map((t) => React.createElement('g', { key: "t" + t },
           React.createElement('line', { x1: x0, y1: yT(t), x2: x1, y2: yT(t), stroke: "#EEE7DB", strokeWidth: 0.8, strokeDasharray: t === 0 ? "" : "2 3" }),
           React.createElement('text', { x: x0 - 4, y: yT(t) + 3.5, fontSize: 10, textAnchor: "end", fill: "#B5453F", fontFamily: "Inter" }, `${t}°`),
-          React.createElement('text', { x: x1 + 4, y: yT(t) + 3.5, fontSize: 9, textAnchor: "start", fill: "#5E9C97", fontFamily: "Inter" }, `${t * 20}`))),
+          React.createElement('text', { x: x1 + 4, y: yT(t) + 3.5, fontSize: 9, textAnchor: "start", fill: "#5E9C97", fontFamily: "Inter" }, `${Math.round(t / CLIMATE_T_MAX * CLIMATE_R_MAX)}`))),
         React.createElement('text', { x: x0 - 4, y: pBot + 22, fontSize: 9, textAnchor: "end", fill: "#B5453F", fontFamily: "Inter" }, "°C"),
         React.createElement('text', { x: x1 + 4, y: pBot + 22, fontSize: 9, textAnchor: "start", fill: "#5E9C97", fontFamily: "Inter" }, "mm"),
         cols.map((c, i) => {
@@ -10688,7 +10707,7 @@ function ClimateOverview({ mode, year, month, daily, dailyLoading, onOpenMonth }
         mode === "year" && onOpenMonth && React.createElement('button', { onClick: () => onOpenMonth(sc.key), className: "w-full mt-2 py-2 rounded-lg text-sm", style: { background: C.wine, color: "white", fontWeight: 700 } }, `看 ${sc.label} 每日資料圖`)
       ),
       React.createElement('div', { className: "text-xs mt-2", style: { color: C.inkSoft, fontFamily: "Inter", lineHeight: 1.6 } },
-        "刻度固定：左軸溫度 0–50°C、右軸雨量 0–1000mm，不同月份、年份可直接比較。年觀測的最高／最低＝每日最高、最低溫的月平均；雨量＝每日24小時累積雨量加總。資料來源：中央氣象署神岡站逐時觀測。")
+        "刻度固定：左軸溫度 0–45°C、右軸雨量 0–1000mm，不同月份、年份可直接比較。年觀測的最高／最低＝每日最高、最低溫的月平均；雨量＝每日24小時累積雨量加總。資料來源：中央氣象署神岡站逐時觀測。")
     )
   );
 }
