@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-<title>完全體 V5.1.C123・藍帶無花果</title>
+<title>完全體 V5.1.C124・藍帶無花果</title>
 <meta name="apple-mobile-web-app-capable" content="yes" />
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
 <meta name="apple-mobile-web-app-title" content="藍帶無花果" />
@@ -717,7 +717,7 @@ const C = {
   tiffanyLight: "#B8ECE5",
   tiffanyText: "#2E8577",
 };
-const APP_VERSION = 'V5.1.C123';
+const APP_VERSION = 'V5.1.C124';
 const FONT_LINK = "https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,600;9..144,700&family=Inter:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap";
 
 const WORK_ITEMS = [
@@ -7671,7 +7671,18 @@ async function loadYieldArchiveDoc(db, zone, year) {
   _yieldArchiveCache.set(cacheKey, promise);
   return promise;
 }
+// C124：每日產能文件加上 10 分鐘的記憶體快取——六區＋多期間的報表會反覆讀到同一天，
+// 原本每次都重新向資料庫要，資料一多就像「一直在載入中」。
+const _yieldDayCache = new Map();
 async function loadYieldDayDoc(db, zone, dateStr) {
+  const ck = `${zone}:${dateStr}`; const hit = _yieldDayCache.get(ck);
+  if (hit && Date.now() - hit.t < 10 * 60 * 1000) return hit.p;
+  const p = loadYieldDayDocRaw(db, zone, dateStr);
+  _yieldDayCache.set(ck, { t: Date.now(), p });
+  p.catch(() => _yieldDayCache.delete(ck));
+  return p;
+}
+async function loadYieldDayDocRaw(db, zone, dateStr) {
   const id = `${YIELD_DB_PREFIX}priv__yield:${zone}:${dateStr}`;
   const snap = await db.collection(YIELD_DB_COLLECTION).doc(id).get();
   if (!snap.exists) return null;
@@ -8356,7 +8367,10 @@ const _zoneworkMonthCache = new Map();
 //   2. 只認日期落在這份月文件所屬月份的回報（表三月曆同樣只顯示本月日期）。
 // 同時保留逐筆明細，讓「看當期」可以點柱子核對每一筆。
 const _zoneworkEntryCache = new Map();
+// C124：回報系統（zonework）與氣候逐時資料的起始月份；更早的月份確定沒有資料，直接略過不讀。
+const ZONEWORK_START_YM = "2026-01", CLIMATE_START_YM = "2026-08";
 async function fetchZoneworkEntries(zoneName, ym) {
+  if (ym < ZONEWORK_START_YM) return { list: [], dup: 0, offMonth: 0 };
   const zoneId = ZONEWORK_ID_BY_NAME[zoneName] || zoneName;
   const cacheKey = `${zoneId}:${ym}`;
   if (_zoneworkEntryCache.has(cacheKey)) return _zoneworkEntryCache.get(cacheKey);
@@ -8665,26 +8679,29 @@ function ZoneMaterialYieldReport({ onBack }) {
   ));
   // 比值標籤：資材用量 ÷ 產能 × 100%，只在「產能>0」時顯示——非產季產能是0，除以0沒有意義，
   // 直接留空不畫，比硬塞一個0%或∞更清楚。
-  const ratioFmt = (v, y) => (y > 0 && v != null) ? `${((v / y) * 100).toFixed(1)}%` : "";
-  const ratioRow = (arr, color, rowY) => labels.map((_, i) => {
+  // C123 修正：比值只做「重量 ÷ 重量」。溝灌（噸）換成 kg（×1000）後 ÷ 產能 kg，以「倍」表示（每 1 kg 果實用幾 kg 水）；
+  // 液體肥（kg）÷ 產能（kg）以 % 表示；噴灌（分鐘）與固體肥（包）不是重量，不計算比值。
+  const ratioFmt = (v, y, kind) => {
+    if (!(y > 0) || v == null) return "";
+    if (kind === "tons") return `${((v * 1000) / y).toFixed(1)}倍`;
+    return `${((v / y) * 100).toFixed(1)}%`;
+  };
+  const ratioRow = (arr, color, rowY, kind) => labels.map((_, i) => {
     const y = zoneData && zoneData.yield ? zoneData.yield[i] : null;
     const v = arr ? arr[i] : null;
-    const txt = ratioFmt(v, y);
+    const txt = ratioFmt(v, y, kind);
     if (!txt) return null;
     return React.createElement("text", { key: i, x: xOf(i), y: rowY, fontSize: 9.5, fill: color, textAnchor: "middle", fontFamily: "IBM Plex Mono, monospace" }, txt);
   });
   const ratioLabels = param === "water"
-    ? React.createElement(React.Fragment, null,
-        ratioRow(zoneData && zoneData.tons, C.brandBlue, H - padB + 34),
-        ratioRow(zoneData && zoneData.minutes, C.leaf, H - padB + 48)
-      )
-    : ratioRow(
-        zoneData && (param === "solid" ? zoneData.solid : zoneData.liquid),
-        param === "solid" ? C.coral : C.leafSoft,
-        H - padB + 34
-      );
-  const ratioCaption = React.createElement("text", { x: padL, y: H - padB + (param === "water" ? 60 : 46), fontSize: 8.5, fill: C.inkSoft, textAnchor: "start", fontFamily: "Inter" },
-    param === "water" ? "灰階：噸/kg％、分鐘/kg％（產能=0時留空）" : `資材(${YIELD_PARAM_DEFS[param].unitLabel})÷產能(kg)×100%，產能=0時留空`);
+    ? ratioRow(zoneData && zoneData.tons, C.brandBlue, H - padB + 34, "tons")
+    : param === "liquid"
+      ? ratioRow(zoneData && zoneData.liquid, C.leafSoft, H - padB + 34, "pct")
+      : null;
+  const ratioCaption = React.createElement("text", { x: padL, y: H - padB + 48, fontSize: 8.5, fill: C.inkSoft, textAnchor: "start", fontFamily: "Inter" },
+    param === "water" ? "比值：溝灌水重（噸×1000＝kg）÷產能（kg）＝每1kg果實用幾kg水；噴灌為分鐘，不是重量，不計算比值（產能=0時留空）"
+      : param === "liquid" ? "比值：液體肥（kg）÷產能（kg）×100%，產能=0時留空"
+      : "固體肥以「包」計，不是重量，不計算與產能的比值");
   const gridY = [0, 0.25, 0.5, 0.75, 1].map((f) => (
     React.createElement("line", { key: f, x1: padL, y1: padT + f * plotH, x2: W - padR, y2: padT + f * plotH, stroke: C.line, strokeWidth: 1 })
   ));
@@ -9227,7 +9244,17 @@ const REPORT_SLOTS = [
    把神岡站逐時氣候整理成每日，與各溫室 6–8（補水／施肥／其他資材）的回報確認歷史逐日對齊。
    只讀取，不寫入。已結束月份的每日氣候存在本機（localStorage），再次開啟不必重讀逐時資料。
    ========================================================= */
+const _climateDailyMem = new Map();
 async function climateDailyForMonth(year, month) {
+  const ym = `${year}-${String(month).padStart(2, "0")}`;
+  if (ym < CLIMATE_START_YM) return {};
+  if (_climateDailyMem.has(ym)) return _climateDailyMem.get(ym);
+  const pr = climateDailyForMonthRaw(year, month);
+  _climateDailyMem.set(ym, pr);
+  setTimeout(() => _climateDailyMem.delete(ym), 5 * 60 * 1000);
+  return pr;
+}
+async function climateDailyForMonthRaw(year, month) {
   const ym = `${year}-${String(month).padStart(2, "0")}`;
   const now = new Date();
   const curYm = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`;
@@ -9556,20 +9583,26 @@ function YieldMaterialRainReport({ onBack }) {
         // C121：六個分區都讀，才能讓刻度以「六區中的最大值」為上限（統一刻度），選到的分區／全場由各區加總而來
         const yieldArr = [], rainArr = [], usageArr = [];
         const yieldAll = {}, usageAll = {}; YIELD_DB_ZONES.forEach((z) => { yieldAll[z] = []; usageAll[z] = []; });
-        for (let i = 0; i < periods.length; i++) {
+        // C124：同時讀 4 個期間，完成後依原本順序排回
+        let done = 0; const results = new Array(periods.length);
+        await runWithLimit(periods.map((p, i) => i), 4, async (i) => {
           if (!alive) return;
-          setProgress(`${i + 1}/${periods.length}`);
           const p = periods[i];
           const [per, r] = await Promise.all([
             Promise.all(YIELD_DB_ZONES.map((z) => Promise.all([fetchYieldZonesPeriodTotal([z], p.start, p.end, YIELD_GRADES), t14UsageForRange([z], p.start, p.end)]))),
             t14RainForRange(p.start, p.end),
           ]);
+          results[i] = { per, r };
+          done++; if (alive) setProgress(`${done}/${periods.length}`);
+        });
+        if (!alive) return;
+        results.forEach(({ per, r }) => {
           YIELD_DB_ZONES.forEach((z, zi) => { yieldAll[z].push(per[zi][0]); usageAll[z].push(per[zi][1]); });
           const pick = zone === T14_ALL ? YIELD_DB_ZONES : [zone];
           const u = {}; let y = 0;
           pick.forEach((z) => { const zi = YIELD_DB_ZONES.indexOf(z); y += Number(per[zi][0]) || 0; Object.keys(per[zi][1]).forEach((k) => { u[k] = (u[k] || 0) + (Number(per[zi][1][k]) || 0); }); });
           yieldArr.push(Math.round(y * 10) / 10); rainArr.push(r); usageArr.push(u);
-        }
+        });
         if (alive) setData({ periods, yield: yieldArr, rain: rainArr, usage: usageArr, yieldAll, usageAll });
       } catch (e) { if (alive) setError("讀取失敗：" + (e.message || e)); }
       if (alive) { setLoading(false); setProgress(""); }
@@ -9729,7 +9762,7 @@ function snapListFor(gran, year, startYear) {
 function SnapEntryList({ zone, keys, unit, start, end, onClose }) {
   const [st, setSt] = useState(null);
   useEffect(() => { let alive = true; setSt(null);
-    fetchZoneworkEntriesForRange(zone, start, end, keys).then((r) => { if (alive) setSt(r); });
+    fetchZoneworkEntriesForRange(zone, start, end, keys).then((r) => { if (alive) setSt(r); }).catch(() => { if (alive) setSt({ list: [], dup: 0, error: true }); });
     return () => { alive = false; }; }, [zone, start, end, keys.join(",")]);
   const total = st ? Math.round(st.list.reduce((s, e) => s + e.qty, 0) * 10) / 10 : 0;
   return React.createElement('div', { className: "mt-2 rounded-lg p-2 text-xs", style: { background: C.cream, border: `1px solid ${C.line}`, fontFamily: "Inter" } },
@@ -9757,6 +9790,7 @@ function PeriodSnapshot({ initialGran = "month", startYear = 2020, groupBy = "zo
   const [loading, setLoading] = useState(false);
   const [combine] = useItemCombine(); // C123：與走勢共用同一個「加總／並列」設定
   const [pick, setPick] = useState(null);         // C122：點選的柱子（看逐筆明細）
+  const [err, setErr] = useState("");
 
   const list = gran === "day" ? [] : snapListFor(gran, year, startYear);
   const curIdx = gran === "year" ? (idx == null ? list.length - 1 : idx) : (idx == null ? list.length - 1 : Math.min(idx, list.length - 1));
@@ -9771,14 +9805,17 @@ function PeriodSnapshot({ initialGran = "month", startYear = 2020, groupBy = "zo
     if (!range) { setRes(null); return undefined; }
     let alive = true;
     (async () => {
-      setLoading(true);
+      setLoading(true); setErr("");
+      try {
       const rows = await Promise.all(zones.map(async (z) => {
         const [u, y] = await Promise.all([t14UsageForRange([z], range.start, range.end), yieldGrades ? fetchYieldZonesPeriodTotal([z], range.start, range.end, yieldGrades) : Promise.resolve(null)]);
         const vals = {}; metrics.forEach((m) => { vals[m.key] = Math.round(m.keys.reduce((s, k) => s + (Number(u[k]) || 0), 0) * 10) / 10; });
         return { zone: z, vals, yield: y, raw: u };
       }));
       const rain = showRain ? await t14RainForRange(range.start, range.end) : null;
-      if (alive) { setRes({ rows, rain, range }); setLoading(false); }
+      if (alive) setRes({ rows, rain, range });
+      } catch (e) { if (alive) { setRes(null); setErr("讀取失敗：" + ((e && e.message) || e)); } }
+      finally { if (alive) setLoading(false); }
     })();
     return () => { alive = false; };
   }, [gran, range && range.start, range && range.end, zonesKey, metricsKey, gradesKey]);
@@ -9877,6 +9914,7 @@ function PeriodSnapshot({ initialGran = "month", startYear = 2020, groupBy = "zo
       res && showRain ? `　☁️ 雨量 ${res.rain == null ? "無氣候資料" : nice1(res.rain) + " mm"}` : ""),
     React.createElement('div', { className: "text-xs mb-2", style: { color: C.inkSoft } }, "點任一根柱子，可看這一期的逐筆回報明細"),
     loading && React.createElement('div', { className: "text-xs mb-2", style: { color: C.inkSoft } }, "讀取中…"),
+    !loading && err && React.createElement('div', { className: "text-sm mb-2", style: { color: C.alert } }, err, "（請稍後按「前一期／後一期」重試或重新整理）"),
     !loading && res && blocks,
     !loading && res && metrics.length === 0 && !yieldGrades && React.createElement('div', { className: "text-sm", style: { color: C.alert } }, "請至少選擇一項資材"));
 }
@@ -10706,6 +10744,7 @@ function ClimateDataReport({ year, month, onBack }) {
    ========================================================= */
 async function climateMonthStats(year, month) {
   const ym = `${year}-${String(month).padStart(2, "0")}`;
+  if (ym < CLIMATE_START_YM) return null;
   const now = new Date();
   const curYm = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`;
   if (ym > curYm) return null;
