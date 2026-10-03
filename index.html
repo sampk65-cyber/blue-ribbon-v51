@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-<title>完全體 V5.1.C126・藍帶無花果</title>
+<title>完全體 V5.1.C127・藍帶無花果</title>
 <meta name="apple-mobile-web-app-capable" content="yes" />
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
 <meta name="apple-mobile-web-app-title" content="藍帶無花果" />
@@ -717,7 +717,7 @@ const C = {
   tiffanyLight: "#B8ECE5",
   tiffanyText: "#2E8577",
 };
-const APP_VERSION = 'V5.1.C126';
+const APP_VERSION = 'V5.1.C127';
 const FONT_LINK = "https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,600;9..144,700&family=Inter:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap";
 
 const WORK_ITEMS = [
@@ -8507,18 +8507,21 @@ function ItemCombineToggle({ value, onChange, note }) {
     note && React.createElement("span", { className: "text-xs", style: { color: C.inkSoft } }, note));
 }
 // 畫一個時間點的多品項柱：sum＝疊成一根（頂端標總量）；split＝各品項一根並排（各自標數字）
-function itemBarsAt(keyp, cx, groupW, items, yFn, base, combine, showLabels, fmt) {
+function itemBarsAt(keyp, cx, groupW, items, yFn, base, combine, showLabels, fmt, opts = {}) {
   const out = []; const active = items.filter((it) => it.v > 0);
   if (!active.length) return out;
+  const minH = opts.minH || 1;
   if (combine === "split" && items.length > 1) {
-    const sw = groupW / items.length;
-    items.forEach((it, i) => { if (!(it.v > 0)) return; const x = cx - groupW / 2 + i * sw;
-      out.push(React.createElement("rect", { key: `${keyp}s${i}`, x: x + sw * 0.08, y: yFn(it.v), width: sw * 0.84, height: Math.max(1, base - yFn(it.v)), fill: it.color, rx: 2 }));
+    // C127：compact＝只替「當天有用量」的品項排位，柱子不會因為沒用量的品項而被擠成細線
+    const slots = opts.compact ? active : items;
+    const sw = groupW / slots.length;
+    slots.forEach((it, i) => { if (!(it.v > 0)) return; const x = cx - groupW / 2 + i * sw;
+      out.push(React.createElement("rect", { key: `${keyp}s${i}`, x: x + sw * 0.08, y: Math.min(yFn(it.v), base - minH), width: sw * 0.84, height: Math.max(minH, base - yFn(it.v)), fill: it.color, rx: Math.min(2, sw * 0.3) }));
       if (showLabels) out.push(React.createElement("text", { key: `${keyp}t${i}`, x: x + sw / 2, y: yFn(it.v) - 4, fontSize: 9.5, fill: it.color, textAnchor: "middle", fontFamily: "IBM Plex Mono, monospace" }, fmt(it.v))); });
   } else {
     let acc = 0; const w = Math.min(groupW, 26);
     items.forEach((it, i) => { if (!(it.v > 0)) return; const y1 = yFn(acc + it.v), y0 = yFn(acc); acc += it.v;
-      out.push(React.createElement("rect", { key: `${keyp}s${i}`, x: cx - w / 2, y: y1, width: w, height: Math.max(1, y0 - y1), fill: it.color })); });
+      out.push(React.createElement("rect", { key: `${keyp}s${i}`, x: cx - w / 2, y: Math.min(y1, y0 - minH), width: w, height: Math.max(minH, y0 - y1), fill: it.color })); });
     if (showLabels) out.push(React.createElement("text", { key: `${keyp}t`, x: cx, y: yFn(acc) - 4, fontSize: 10, fill: C.ink, fontWeight: 700, textAnchor: "middle", fontFamily: "IBM Plex Mono, monospace" }, fmt(acc)));
   }
   return out;
@@ -8865,10 +8868,19 @@ const ZONEWORK_ITEMS = [
   { key: "鈣鎂粉", unit: "kg" },
   { key: "微量元素", unit: "kg" },
 ];
+// C127：全系統品項顏色統一（表八、十一～十四共用）。
+// 補水＝藍／橘、固態＝棕色系、液態 7 種＝冷色系「深淺交錯」並加入灰色，避免整排綠色分不出來。
+// 暖紅留給最高溫、淺青綠留給雨量，品項不使用這兩種顏色。
 const ZONEWORK_ITEM_COLORS = {
-  溝灌: "#2E5FA3", 噴灌: "#4E7C6B",
-  米糠: "#E0785F", 金旺: "#5B2A45",
-  黃豆: "#2E5FA3", 水果: "#E0785F", 硝酸鉀: "#4E7C6B", 磷酸一鉀: "#5B2A45", 硫酸鉀: "#C9A227", 鈣鎂粉: "#8B5FBF", 微量元素: "#2B2119",
+  溝灌: "#2F6FA8", 噴灌: "#E39B3D",
+  米糠: "#8B5A2B", 金旺: "#C9954F",
+  黃豆: "#546E7A", 水果: "#9DB8DC", 硝酸鉀: "#2B7A78", 磷酸一鉀: "#B7A9D6", 硫酸鉀: "#5A4E8C", 鈣鎂粉: "#A3A8B0", 微量元素: "#3A3F47",
+}
+// C127：淺色底用深色字，深色底用白字（品項按鈕）。
+function itemInk(hex) {
+  const h = String(hex || "").replace("#", ""); if (h.length !== 6) return "white";
+  const r = parseInt(h.slice(0, 2), 16), g = parseInt(h.slice(2, 4), 16), b = parseInt(h.slice(4, 6), 16);
+  return (0.299 * r + 0.587 * g + 0.114 * b) > 160 ? "#2B2119" : "white";
 };
 async function fetchZoneworkItemRange(zoneName, itemKey, startDate, endDate) {
   const months = [];
@@ -9056,7 +9068,7 @@ function ZoneUsageProfileReport({ onBack }) {
             return React.createElement("button", {
               key: k, onClick: () => setSelectedMaterials((prev) => checked ? prev.filter((x) => x !== k) : [...prev, k]),
               className: "px-2.5 py-1 rounded-full text-xs",
-              style: checked ? { background: ZONEWORK_ITEM_COLORS[k], color: "white", fontWeight: 700 } : { background: "white", color: C.inkSoft, border: `1px solid ${C.line}` },
+              style: checked ? { background: ZONEWORK_ITEM_COLORS[k], color: itemInk(ZONEWORK_ITEM_COLORS[k]), fontWeight: 700 } : { background: "white", color: C.inkSoft, border: `1px solid ${C.line}` },
             }, k);
           })
         )
@@ -9182,7 +9194,7 @@ function ComponentZoneCompareReport({ onBack }) {
       React.createElement("div", { className: "flex gap-2 flex-wrap mb-3" },
         ...ZONEWORK_ITEMS.map((it) => React.createElement("button", {
           key: it.key, onClick: () => setItem(it.key), className: "px-2.5 py-1.5 rounded-full text-sm",
-          style: item === it.key ? { background: ZONEWORK_ITEM_COLORS[it.key], color: "white", fontWeight: 700 } : { background: "white", color: C.ink, border: `1px solid ${C.line}` },
+          style: item === it.key ? { background: ZONEWORK_ITEM_COLORS[it.key], color: itemInk(ZONEWORK_ITEM_COLORS[it.key]), fontWeight: 700 } : { background: "white", color: C.ink, border: `1px solid ${C.line}` },
         }, `${it.key}(${it.unit})`))
       ),
       persp === "trend" && React.createElement(UsageTimeModeControls, { mode, setMode, year, setYear, month, setMonth, nowYear }),
@@ -9402,7 +9414,11 @@ function ClimateMaterialReport({ onBack }) {
   const dailyChart = () => {
     if (!days) return null;
     const n = Math.max(days.length, 1);
-    const W = 360, x0 = 30, x1 = 326, cw = (x1 - x0) / n;
+    // C127：並列時依「單日最多同時有幾根柱子」決定寬度；太擠就加寬，外框可左右滑動（每根柱至少約 3.5 單位寬）
+    const barsOnDay = (d) => activeCats.reduce((s2, c) => { const its = itemsOf(c); const act = its.filter((k) => (Number(d.use[k]) || 0) > 0).length; return s2 + (combine === "split" && its.length > 1 ? Math.max(1, act) : 1); }, 0);
+    const maxBars = Math.max(1, ...days.map(barsOnDay));
+    const needCw = maxBars * 3.5 / 0.9;
+    const W = Math.max(360, Math.ceil(30 + 34 + n * needCw)), x0 = 30, x1 = W - 34, cw = (x1 - x0) / n;
     const pTop = 24, pBot = 150, bTop = 180, bBot = 286, strip = 302, H = 316;
     const yT = (t) => pBot - Math.min(CLIMATE_T_MAX, Math.max(0, t)) / CLIMATE_T_MAX * (pBot - pTop);
     const yR = (r) => pBot - Math.min(1000, Math.max(0, r)) / 1000 * (pBot - pTop);
@@ -9432,15 +9448,17 @@ function ClimateMaterialReport({ onBack }) {
       const cx = x0 + cw * (i + 0.5), on = sel === d.day;
       const tons = zwSumKeys(d.use, WATER_TONS_KEYS), mins = zwSumKeys(d.use, WATER_MIN_KEYS);
       const fert = zwSumKeys(d.use, SOLID_KEYS) > 0, other = zwSumKeys(d.use, LIQUID_KEYS) > 0;
+      const dotSolid = fert && !cats.includes("固態"), dotLiquid = other && !cats.includes("液態");
       g.push(React.createElement('g', { key: "d" + d.day, onClick: () => setSel(on ? null : d.day), style: { cursor: "pointer" } },
         React.createElement('rect', { x: x0 + cw * i, y: 0, width: cw, height: H, fill: on ? "#FFF6C8" : "transparent" }),
         (d.day === 1 || d.day % every === 0) && React.createElement('text', { x: cx, y: 13, fontSize: 9, textAnchor: "middle", fill: "#3A5BA0" }, d.day),
         d.clim && d.clim.rain > 0 && React.createElement('rect', { x: cx - bw, y: yR(d.clim.rain), width: bw * 2, height: Math.max(1.2, pBot - yR(d.clim.rain)), fill: "#9CC9C5", opacity: 0.85 }),
-        ...activeCats.flatMap((c, ci) => { const groupW = Math.min(cw * 0.86, 9 * activeCats.length + 2), subW = groupW / activeCats.length;
+        ...activeCats.flatMap((c, ci) => { const groupW = cw * 0.9, subW = groupW / activeCats.length;
           const gx = cx - groupW / 2 + subW * (ci + 0.5); const ax = catAx[c.key];
-          return itemBarsAt(`m${c.key}${i}`, gx, subW * 0.95, itemsOf(c).map((k, ki) => ({ k, v: Number(d.use[k]) || 0, color: c.colors[ki % c.colors.length] })), (v) => bBot - Math.min(1, v / ax.max) * (bBot - bTop), bBot, combine, false, (v) => niceLabel(v)); }),
-        fert && React.createElement('circle', { cx: cx - (other ? 2.6 : 0), cy: strip, r: 2.4, fill: "#8B5A2B" }),
-        other && React.createElement('circle', { cx: cx + (fert ? 2.6 : 0), cy: strip, r: 2.4, fill: "#4E9A5B" })
+          return itemBarsAt(`m${c.key}${i}`, gx, subW * 0.95, itemsOf(c).map((k) => ({ k, v: Number(d.use[k]) || 0, color: catColor(c, k) })), (v) => bBot - Math.min(1, v / ax.max) * (bBot - bTop), bBot, combine, false, (v) => niceLabel(v), { compact: true, minH: 2 }); }),
+        // C127：圓點只標「沒有畫成柱子」的類別；已選固態／液態時，柱子就代表了，不再重複標點
+        dotSolid && React.createElement('circle', { cx: cx - (dotLiquid ? 2.6 : 0), cy: strip, r: 2.4, fill: "#8B5A2B" }),
+        dotLiquid && React.createElement('circle', { cx: cx + (dotSolid ? 2.6 : 0), cy: strip, r: 2.4, fill: "#546E7A" })
       ));
     });
     segs((c) => c.tMax).forEach((p, k) => g.push(React.createElement('polyline', { key: "h" + k, points: p, fill: "none", stroke: "#D9453F", strokeWidth: 1.8, strokeLinejoin: "round", style: { pointerEvents: "none" } })));
@@ -9448,7 +9466,8 @@ function ClimateMaterialReport({ onBack }) {
     days.forEach((d, i) => { if (!d.clim) return; const cx = x0 + cw * (i + 0.5);
       g.push(React.createElement('circle', { key: "ph" + i, cx, cy: yT(d.clim.tMax), r: 1.6, fill: "#D9453F", style: { pointerEvents: "none" } }));
       g.push(React.createElement('circle', { key: "pl" + i, cx, cy: yT(d.clim.tMin), r: 1.6, fill: "#2F7FD1", style: { pointerEvents: "none" } })); });
-    return React.createElement('svg', { viewBox: `0 0 ${W} ${H}`, style: { width: "100%", height: "auto", maxWidth: "100%", display: "block" } }, g);
+    const svg = React.createElement('svg', { viewBox: `0 0 ${W} ${H}`, style: { width: W > 360 ? `${Math.round(W / 360 * 100)}%` : "100%", height: "auto", maxWidth: W > 360 ? "none" : "100%", display: "block" } }, g);
+    return W > 360 ? React.createElement('div', { style: { overflowX: "auto", WebkitOverflowScrolling: "touch" } }, svg) : svg;
   };
 
   const legend = (items) => React.createElement('div', { className: "text-xs flex flex-wrap gap-x-3 gap-y-1 mb-1", style: { color: C.inkSoft } },
@@ -9476,11 +9495,12 @@ function ClimateMaterialReport({ onBack }) {
       view === "daily" && days && React.createElement('div', { className: "rounded-2xl p-3", style: { background: "#FFF", border: `1px solid ${C.line}` } },
         React.createElement('div', { style: { fontWeight: 800, fontSize: 15, color: C.ink } }, `${zone}・${year}年${month}月 每日對照`),
         React.createElement('div', { className: "flex flex-wrap gap-1.5 my-2" }, T14_CATS.map((c) => React.createElement('button', { key: c.key, onClick: () => setCats((prev) => prev.includes(c.key) ? prev.filter((x) => x !== c.key) : [...prev, c.key]), className: "px-3 py-1 rounded-full text-sm", style: cats.includes(c.key) ? { background: c.colors[0], color: "white", fontWeight: 700 } : { background: "white", color: C.ink, border: `1px solid ${C.line}` } }, `${c.label}（${c.unit}）`))),
-        cats.includes("液態") && React.createElement('div', { className: "flex flex-wrap gap-1.5 mb-2" }, OTHER_MATERIALS.map((k, ki) => React.createElement('button', { key: k, onClick: () => setLiquidSel((prev) => prev.includes(k) ? prev.filter((x) => x !== k) : [...prev, k]), className: "px-2 py-0.5 rounded-full text-xs", style: liquidSel.includes(k) ? { background: T14_CATS[3].colors[ki % 7], color: "white" } : { background: "white", color: C.inkSoft, border: `1px solid ${C.line}` } }, k))),
+        cats.includes("液態") && React.createElement('div', { className: "flex flex-wrap gap-1.5 mb-2" }, OTHER_MATERIALS.map((k, ki) => React.createElement('button', { key: k, onClick: () => setLiquidSel((prev) => prev.includes(k) ? prev.filter((x) => x !== k) : [...prev, k]), className: "px-2 py-0.5 rounded-full text-xs", style: liquidSel.includes(k) ? { background: catColor(T14_CATS[3], k), color: itemInk(catColor(T14_CATS[3], k)) } : { background: "white", color: C.inkSoft, border: `1px solid ${C.line}` } }, k))),
         activeCats.some((c) => itemsOf(c).length > 1) && React.createElement(ItemCombineToggle, { value: combine, onChange: setCombine }),
-        legend([["#D9453F", "最高溫", "line"], ["#2F7FD1", "最低溫", "line"], ["#9CC9C5", "雨量"], ...activeCats.flatMap((c) => itemsOf(c).map((k, ki) => [c.colors[ki % c.colors.length], `${k}（${c.unit}）`])), ["#8B5A2B", "施肥", "dot"], ["#4E9A5B", "其他資材", "dot"]]),
+        legend([["#D9453F", "最高溫", "line"], ["#2F7FD1", "最低溫", "line"], ["#9CC9C5", "雨量"], ...activeCats.flatMap((c) => itemsOf(c).map((k) => [catColor(c, k), `${k}（${c.unit}）`])), ...(!cats.includes("固態") ? [["#8B5A2B", "有固態施肥", "dot"]] : []), ...(!cats.includes("液態") ? [["#546E7A", "有液態資材", "dot"]] : [])]),
+        combine === "split" && activeCats.reduce((s2, c) => s2 + itemsOf(c).length, 0) > 4 && React.createElement('div', { className: "text-xs mb-1 px-2 py-1 rounded-lg", style: { background: "#FFF6C8", color: "#7A5B00" } }, "並列品項較多：柱子只替當天有用量的品項排位，圖可左右滑動；要看總量請改「加總」，或點某一天看明細。"),
         dailyChart(),
-        React.createElement('div', { className: "text-xs mt-1", style: { color: C.inkSoft } }, "上半部：氣候（左軸溫度 0–45°C、右軸雨量 0–1000mm）　下半部：當天回報的資材（選兩類時左右軸各一類；單位不同一律並列）　最下方圓點：有施肥／其他資材　點任一天看明細"),
+        React.createElement('div', { className: "text-xs mt-1", style: { color: C.inkSoft } }, "上半部：氣候（左軸溫度 0–45°C、右軸雨量 0–1000mm）　下半部：當天回報的資材（選兩類時左右軸各一類；單位不同一律並列）　最下方圓點：當天有固態施肥／液態資材，但目前沒有選來畫柱　點任一天：黃色標示那一天，下方顯示當天明細"),
         selDay && React.createElement('div', { className: "mt-3 rounded-xl p-3 text-sm", style: { background: C.cream, border: `1px solid ${C.line}` } },
           React.createElement('div', { style: { fontWeight: 800, color: C.ink, marginBottom: 4 } }, `${selDay.date}（${zone}）`),
           [["最高／最低溫", selDay.clim ? `${f1(selDay.clim.tMax)} ／ ${f1(selDay.clim.tMin)} °C` : "沒有氣候資料"], ["雨量", selDay.clim ? `${f1(selDay.clim.rain)} mm` : "—"], ["平均濕度", selDay.clim && selDay.clim.hum != null ? `${f1(selDay.clim.hum)} %` : "—"],
@@ -9531,12 +9551,14 @@ function ClimateMaterialReport({ onBack }) {
    雨量＝雲朵下雨圖示，雲朵的高度代表雨量（右外軸）。看年／月／15天／週。只讀取。
    ========================================================= */
 const T14_CATS = [
-  { key: "溝灌", label: "溝灌", unit: "噸", items: ["溝灌"], colors: ["#2F6FA8"] },
-  { key: "噴灌", label: "噴灌", unit: "分", items: ["噴灌"], colors: ["#E39B3D"] },
-  { key: "固態", label: "固態", unit: "包", items: ["米糠", "金旺"], colors: ["#8B5A2B", "#C9954F"] },
-  { key: "液態", label: "液態", unit: "kg", items: OTHER_MATERIALS, colors: ["#4E9A5B", "#7CB342", "#2E7D6B", "#9CCC65", "#558B2F", "#26A69A", "#AED581"] },
+  { key: "溝灌", label: "溝灌", unit: "噸", items: ["溝灌"], colors: [ZONEWORK_ITEM_COLORS["溝灌"]] },
+  { key: "噴灌", label: "噴灌", unit: "分", items: ["噴灌"], colors: [ZONEWORK_ITEM_COLORS["噴灌"]] },
+  { key: "固態", label: "固態", unit: "包", items: ["米糠", "金旺"], colors: [ZONEWORK_ITEM_COLORS["米糠"], ZONEWORK_ITEM_COLORS["金旺"]] },
+  { key: "液態", label: "液態", unit: "kg", items: OTHER_MATERIALS, colors: OTHER_MATERIALS.map((k) => ZONEWORK_ITEM_COLORS[k] || "#546E7A") },
 ];
 const T14_ALL = "全場";
+// C127：品項顏色依「品項本身」固定，不隨勾選順序改變。
+const catColor = (c, k) => ZONEWORK_ITEM_COLORS[k] || c.colors[Math.max(0, c.items.indexOf(k)) % c.colors.length];
 
 async function t14RainForRange(startDate, endDate) {
   let d = new Date(startDate + "T00:00:00"); const endD = new Date(endDate + "T00:00:00");
@@ -9668,7 +9690,7 @@ function YieldMaterialRainReport({ onBack }) {
         const ca = catAxes[c.key]; const vals = catTotals(c, i);
         const gx = cx - groupW / 2 + ci * bw + bw / 2;
         // C123：同類多品項依共用設定「加總（疊加）｜並列（各品項）」
-        kids.push(...itemBarsAt(`b${c.key}${i}`, gx, bw * 0.92, itemsOf(c).map((k, ki) => ({ k, v: vals[ki] || 0, color: c.colors[ki % c.colors.length] })), (v) => padT + (1 - Math.min(v, ca.max) / ca.max) * plotH, base, combine, showLabels && (mode === "year" || mode === "month"), (v) => niceLabel(Math.round(v * 10) / 10)));
+        kids.push(...itemBarsAt(`b${c.key}${i}`, gx, bw * 0.92, itemsOf(c).map((k, ki) => ({ k, v: vals[ki] || 0, color: catColor(c, k) })), (v) => padT + (1 - Math.min(v, ca.max) / ca.max) * plotH, base, combine, showLabels && (mode === "year" || mode === "month"), (v) => niceLabel(Math.round(v * 10) / 10)));
       });
       const r = data.rain[i];
       if (r != null && r > 0) {
@@ -9708,7 +9730,7 @@ function YieldMaterialRainReport({ onBack }) {
         React.createElement('div', { className: "flex flex-wrap gap-2" }, [T14_ALL, ...YIELD_DB_ZONES].map((z) => React.createElement('button', { key: z, onClick: () => setZone(z), className: "px-3 py-1.5 rounded-full text-sm", style: btn(zone === z) }, z)))),
       React.createElement('div', null, React.createElement('div', { className: "text-xs mb-1", style: { color: C.inkSoft } }, "資材（可單選或複選；選多類時各自一根柱、各用自己的刻度）"),
         React.createElement('div', { className: "flex flex-wrap gap-2" }, T14_CATS.map((c) => React.createElement('button', { key: c.key, onClick: () => setCats((prev) => prev.includes(c.key) ? prev.filter((x) => x !== c.key) : [...prev, c.key]), className: "px-3 py-1.5 rounded-full text-sm", style: cats.includes(c.key) ? { background: c.colors[0], color: "white", fontWeight: 700 } : { background: "white", color: C.ink, border: `1px solid ${C.line}` } }, `${c.label}（${c.unit}）`))),
-        cats.includes("液態") && React.createElement('div', { className: "flex flex-wrap gap-1.5 mt-2" }, OTHER_MATERIALS.map((k, ki) => React.createElement('button', { key: k, onClick: () => setLiquidSel((prev) => prev.includes(k) ? prev.filter((x) => x !== k) : [...prev, k]), className: "px-2 py-1 rounded-full text-xs", style: liquidSel.includes(k) ? { background: T14_CATS[3].colors[ki % 7], color: "white" } : { background: "white", color: C.inkSoft, border: `1px solid ${C.line}` } }, k)))),
+        cats.includes("液態") && React.createElement('div', { className: "flex flex-wrap gap-1.5 mt-2" }, OTHER_MATERIALS.map((k, ki) => React.createElement('button', { key: k, onClick: () => setLiquidSel((prev) => prev.includes(k) ? prev.filter((x) => x !== k) : [...prev, k]), className: "px-2 py-1 rounded-full text-xs", style: liquidSel.includes(k) ? { background: catColor(T14_CATS[3], k), color: itemInk(catColor(T14_CATS[3], k)) } : { background: "white", color: C.inkSoft, border: `1px solid ${C.line}` } }, k)))),
       activeCats.some((c) => itemsOf(c).length > 1) && React.createElement(ItemCombineToggle, { value: combine, onChange: setCombine }),
       persp === "trend" && zone !== T14_ALL && React.createElement('label', { className: "flex items-center gap-2 text-sm", style: { color: C.ink, fontWeight: 700 } }, React.createElement('input', { type: "checkbox", checked: syncScale, onChange: (e) => setSyncScale(e.target.checked) }), "六區統一刻度（以六區最大值為上限，切換溫室可直接比高低）"),
       persp === "trend" && React.createElement('label', { className: "flex items-center gap-2 text-sm", style: { color: C.inkSoft } }, React.createElement('input', { type: "checkbox", checked: showLabels, onChange: (e) => setShowLabels(e.target.checked) }), "顯示數值標籤（看年、看月）"),
@@ -9723,7 +9745,7 @@ function YieldMaterialRainReport({ onBack }) {
         React.createElement('div', { className: "text-xs flex flex-wrap gap-x-3 gap-y-1 my-1", style: { color: C.inkSoft } },
           React.createElement('span', null, React.createElement('span', { style: { display: "inline-block", width: 14, height: 3, background: C.tableColor, marginRight: 4, verticalAlign: "middle" } }), "產能（左軸）"),
           React.createElement('span', null, "☁️ 雨量（雲朵高度，右軸）"),
-          activeCats.flatMap((c) => itemsOf(c).map((k, ki) => React.createElement('span', { key: c.key + k }, React.createElement('span', { style: { display: "inline-block", width: 9, height: 9, borderRadius: 2, background: c.colors[ki % c.colors.length], marginRight: 3, verticalAlign: "middle" } }), `${k}（${c.unit}）`)))),
+          activeCats.flatMap((c) => itemsOf(c).map((k, ki) => React.createElement('span', { key: c.key + k }, React.createElement('span', { style: { display: "inline-block", width: 9, height: 9, borderRadius: 2, background: catColor(c, k), marginRight: 3, verticalAlign: "middle" } }), `${k}（${c.unit}）`)))),
         chart(),
         syncScale && zone !== T14_ALL && data.yieldAll && React.createElement('div', { className: "text-xs mt-1", style: { color: C.wine, fontWeight: 700 } }, (() => {
           const tops = YIELD_DB_ZONES.map((z) => ({ z, y: Math.max(0, ...data.yieldAll[z].filter((v) => v != null)) })).sort((a, b) => b.y - a.y);
@@ -9844,7 +9866,7 @@ function PeriodSnapshot({ initialGran = "month", startYear = 2020, groupBy = "zo
 
   // C119：當期用直立柱狀圖（與走勢同一種表達）。C122：多品項可選「加總（疊加）」或「並列（各品項一根）」，點柱子看逐筆明細。
   const zoneColor = (name) => (typeof ZONE_COLORS !== "undefined" && ZONE_COLORS[name]) || null;
-  const itemColor = (k, i) => (typeof ZONEWORK_ITEM_COLORS !== "undefined" && ZONEWORK_ITEM_COLORS[k]) || ["#4E9A5B", "#7CB342", "#2E7D6B", "#9CCC65", "#558B2F", "#26A69A", "#AED581", "#8B5A2B", "#C9954F"][i % 9];
+  const itemColor = (k, i) => (typeof ZONEWORK_ITEM_COLORS !== "undefined" && ZONEWORK_ITEM_COLORS[k]) || ["#546E7A", "#9DB8DC", "#2B7A78", "#B7A9D6", "#5A4E8C", "#A3A8B0", "#3A3F47", "#8B5A2B", "#C9954F"][i % 9];
   const vchart = (key, label, unit, rows, total, opts = {}) => {
     const split = opts.split && rows.some((r) => r.segs && r.segs.length > 1);
     const W = 360, H = 220, padL = 44, padR = 10, padT = 26, padB = 30;
