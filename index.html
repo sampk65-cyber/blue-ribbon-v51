@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-<title>完全體 V5.1.C132・藍帶無花果</title>
+<title>完全體 V5.1.C133・藍帶無花果</title>
 <meta name="apple-mobile-web-app-capable" content="yes" />
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
 <meta name="apple-mobile-web-app-title" content="藍帶無花果" />
@@ -717,7 +717,7 @@ const C = {
   tiffanyLight: "#B8ECE5",
   tiffanyText: "#2E8577",
 };
-const APP_VERSION = 'V5.1.C132';
+const APP_VERSION = 'V5.1.C133';
 const FONT_LINK = "https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,600;9..144,700&family=Inter:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap";
 
 const WORK_ITEMS = [
@@ -4301,14 +4301,18 @@ function AttendanceMenu({ onBack, role, loggedInId }) {
   const submitLeave = async () => {
     if (!loggedInId || !leaveType) { setMsg("請選擇假別"); return; }
     // C130：請假時詢問是否扣特休（彈性工時不詢問）
+    // C133：只有「事假」「其他」詢問是否扣特休；「特休」直接扣 1 天；其餘假別不扣
     let deductAnnual = false;
-    if (leaveType !== "彈性工時") {
+    const askAnnual = leaveType === "事假" || leaveType === "其他";
+    if (askAnnual || leaveType === "特休") {
       const yr = +dateKey.slice(0, 4);
       const s = annualSummary(myAnnualCfg, myList.filter((r) => r && r.date !== dateKey), yr, dateKey);
       const info = s.configured
         ? `${yr}年特休可用 ${s.remain} 天（已生效 ${s.effective}／已休 ${s.used}）`
         : "尚未設定特休額度（請主管於主管模式設定）";
-      deductAnnual = window.confirm(`本次請假「${leaveType}」是否扣特休 1 天？\n${info}\n\n確定＝扣特休　取消＝不扣特休`);
+      deductAnnual = askAnnual
+        ? window.confirm(`本次請假「${leaveType}」是否扣特休 1 天？\n${info}\n\n確定＝扣特休　取消＝不扣特休`)
+        : true;
       if (deductAnnual && s.configured && s.remain < 1) {
         if (!window.confirm(`特休剩餘不足（剩 ${s.remain} 天），仍要扣特休嗎？`)) { setMsg("已取消，尚未送出請假"); return; }
       }
@@ -4333,7 +4337,7 @@ function AttendanceMenu({ onBack, role, loggedInId }) {
         updatedAt: Date.now(),
       };
       await saveRec(next);
-      setMsg(`已登記請假：${leaveType}${leaveType === "彈性工時" ? `（${leaveHours || 0}小時）` : ""}${deductAnnual ? "・扣特休 1 天" : "・不扣特休"}`);
+      setMsg(`已登記請假：${leaveType}${leaveType === "彈性工時" ? `（${leaveHours || 0}小時）` : ""}${deductAnnual ? "・扣特休 1 天" : (askAnnual ? "・不扣特休" : "")}`);
     } catch (e) { setMsg("請假登記失敗"); }
     setBusy(false);
   };
