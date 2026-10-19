@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-<title>完全體 V5.1.C133・藍帶無花果</title>
+<title>完全體 V5.1.C134・藍帶無花果</title>
 <meta name="apple-mobile-web-app-capable" content="yes" />
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
 <meta name="apple-mobile-web-app-title" content="藍帶無花果" />
@@ -717,7 +717,7 @@ const C = {
   tiffanyLight: "#B8ECE5",
   tiffanyText: "#2E8577",
 };
-const APP_VERSION = 'V5.1.C133';
+const APP_VERSION = 'V5.1.C134';
 const FONT_LINK = "https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,600;9..144,700&family=Inter:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap";
 
 const WORK_ITEMS = [
@@ -1178,6 +1178,10 @@ async function runWithLimit(items, limit, worker) {
 }
 // 共用功能表格狀元件：確保「整體功能表」與「分區功能表」外觀邏輯一致
 // 已串接（有key）的功能表往上排列；未串接（3/6/9/10）集中收進單一「未開發」資料夾格，不佔用獨立格位
+// C134：功能表依「閱覽權限」嚴格顯示——沒有閱覽權限的功能表一律反白、標示「尚未開發」、不可點擊。
+// MENU_VIEW_CHECK 由主程式每次渲染時依登入者權限設定（key → 是否可閱覽）。
+let MENU_VIEW_CHECK = null;
+const MENU_KEY_INDEX = { personnel: 0, permissions: 1, yield: 2, workfolders: 3, calendar: 4, photos: 5, materials: 6, trees: 7, environment: 8, attendance: 9 };
 function ModuleGrid({ onPick, pendingPermCount = 0 }) {
   const active = STUB_MODULES.filter((m) => m.key);
   const inactive = STUB_MODULES.filter((m) => !m.key);
@@ -1185,6 +1189,18 @@ function ModuleGrid({ onPick, pendingPermCount = 0 }) {
     React.createElement('div', { className: "grid grid-cols-2 gap-3"  ,}
       , active.map((m, i) => {
         const Icon = m.icon;
+        const allowed = !MENU_VIEW_CHECK || MENU_VIEW_CHECK(m.key);
+        if (!allowed) {
+          return React.createElement('button', {
+            key: m.key, disabled: true,
+            className: "rounded-xl p-4 flex flex-col gap-2 text-left relative",
+            style: { background: "#F0EBE0", border: `1px solid ${C.line}`, opacity: 0.55, cursor: "default" },
+          },
+            React.createElement(Icon, { size: 18, color: C.inkSoft }),
+            React.createElement('span', { className: "text-sm", style: { color: C.inkSoft, fontFamily: "Inter", fontWeight: 500, whiteSpace: "pre-line" } }, m.label),
+            React.createElement('span', { className: "absolute top-2 right-2 px-1.5 py-0.5 rounded", style: { background: "#00000010", color: C.inkSoft, fontFamily: "Inter", fontWeight: 600, fontSize: 10 } }, "尚未開發")
+          );
+        }
         const tag = m.key === "materials" ? "月報表" : m.key === "calendar" ? "總行事曆" : m.key === "workfolders" ? "工項提示" : null;
         const isNew = m.key === "permissions" && pendingPermCount > 0;
         return (
@@ -14193,6 +14209,34 @@ function AppMain({ initialRole, initialId, onLogoutToSplash }) {
   };
   const photoRole = () => photoAccess().edit ? "manager" : "guest";
 
+  // C134：全功能表共用的閱覽權限判斷（嚴格）。
+  //  - A01（設計者）、B01（創辦人）全開；功能表8 另沿用 A/B 帳號全開。
+  //  - 其他帳號：必須是啟用中的人員，且功能表2 該項有勾「閱覽」或「變更」；
+  //    舊資料沒有逐項設定時，才看權限層級（修改／閱覽＝可閱覽，回饋＝不可）。
+  //  - 功能表10 上下班打卡：每位登入者都要打卡，登入即可使用。
+  const menuAccess = (idx) => {
+    if (role === "designer" || role === "founder") return { view: true, edit: true };
+    if (idx === 7 && /^[AB]/i.test(String(loggedInId || "").trim())) return { view: true, edit: true };
+    if (idx === 9 && loggedInId) return { view: true, edit: false };
+    const p = currentPersonPerm;
+    if (!loggedInId || !p || p.status !== "active") return { view: false, edit: false };
+    const hasItem = !!(p.menuPerms && Object.prototype.hasOwnProperty.call(p.menuPerms, idx));
+    const item = hasItem ? (p.menuPerms[idx] || {}) : {};
+    const edit = hasItem ? !!item.edit : p.tier === "修改";
+    const view = edit || (hasItem ? !!item.view : p.tier === "閱覽");
+    return { view, edit };
+  };
+  MENU_VIEW_CHECK = (key) => { const i = MENU_KEY_INDEX[key]; return i == null ? true : menuAccess(i).view; };
+  const guardMenu = (key, fn) => () => {
+    const i = MENU_KEY_INDEX[key];
+    if (i != null && !menuAccess(i).view) {
+      const m = STUB_MODULES[i];
+      window.alert(`目前帳號尚未開啟「${m ? String(m.label).replace(/\n/g, "") : key}」的閱覽權限。`);
+      return;
+    }
+    fn();
+  };
+
   // 功能表8：A/B級帳號可縱觀並修改全部履歷；其他帳號完全依個別閱覽／修改權限。
   const treeAccess = () => {
     if (/^[AB]/i.test(String(loggedInId || "").trim())) return { view: true, edit: true };
@@ -14444,18 +14488,18 @@ function AppMain({ initialRole, initialId, onLogoutToSplash }) {
       , atMap && (
         React.createElement(MapLogin, {
           onEnter: enterZone,
-          onOpenReport: () => openGlobalView("report"),
-          onOpenCalendar: () => openCalendarPortal(loggedInId, roleForMenu(4)),
-          onOpenFolders: () => openFolders(null),
-          onOpenPhotos: () => openPhotos(() => openGlobalView("photos")),
-          onOpenTrees: () => openTrees(() => openGlobalView("trees")),
-          onOpenPersonnel: () => openGlobalView("personnel"),
-          onOpenPermissions: () => openGlobalView("permissions"),
-          onOpenYield: () => openYieldPortal(loggedInId, roleForMenu(2)),
-          onOpenEnvironment: () => openGlobalView("environment"),
-          onOpenAttendance: () => prepareAttendanceOnOpen(() => openGlobalView("attendance")),
-          onBossTable: (key) => openGlobalView(key === "materials" ? "report1" : "report3"),
-          onIpadReport: (z) => openFolders(z.id),
+          onOpenReport: guardMenu("materials", () => openGlobalView("report")),
+          onOpenCalendar: guardMenu("calendar", () => openCalendarPortal(loggedInId, roleForMenu(4))),
+          onOpenFolders: guardMenu("workfolders", () => openFolders(null)),
+          onOpenPhotos: guardMenu("photos", () => openPhotos(() => openGlobalView("photos"))),
+          onOpenTrees: guardMenu("trees", () => openTrees(() => openGlobalView("trees"))),
+          onOpenPersonnel: guardMenu("personnel", () => openGlobalView("personnel")),
+          onOpenPermissions: guardMenu("permissions", () => openGlobalView("permissions")),
+          onOpenYield: guardMenu("yield", () => openYieldPortal(loggedInId, roleForMenu(2))),
+          onOpenEnvironment: guardMenu("environment", () => openGlobalView("environment")),
+          onOpenAttendance: guardMenu("attendance", () => prepareAttendanceOnOpen(() => openGlobalView("attendance"))),
+          onBossTable: (key) => guardMenu("materials", () => openGlobalView(key === "materials" ? "report1" : "report3"))(),
+          onIpadReport: (z) => guardMenu("workfolders", () => openFolders(z.id))(),
           onOpenNotices: () => { setNoticeFocus(Date.now()); openFolders(null); },
           pendingPermCount: pendingPermCount,
           role: role,
@@ -14481,16 +14525,16 @@ function AppMain({ initialRole, initialId, onLogoutToSplash }) {
         React.createElement(FunctionMenu, {
           zone: zone,
           onBack: backToMenu,
-          onOpenReport: () => openGlobalView("report"),
-          onOpenCalendar: () => openGlobalEmbed(() => openCalendarPortal(loggedInId, role)),
-          onOpenFolders: () => openFolders(null),
-          onOpenPhotos: () => openPhotos(() => openGlobalView("photos")),
-          onOpenTrees: () => openTrees(() => openGlobalView("trees")),
-          onOpenPersonnel: () => openGlobalView("personnel"),
-          onOpenPermissions: () => openGlobalView("permissions"),
-          onOpenYield: () => openGlobalEmbed(() => openYieldPortal(loggedInId, role)),
-          onOpenEnvironment: () => openGlobalView("environment"),
-          onOpenAttendance: () => prepareAttendanceOnOpen(() => openGlobalView("attendance")),
+          onOpenReport: guardMenu("materials", () => openGlobalView("report")),
+          onOpenCalendar: guardMenu("calendar", () => openGlobalEmbed(() => openCalendarPortal(loggedInId, role))),
+          onOpenFolders: guardMenu("workfolders", () => openFolders(null)),
+          onOpenPhotos: guardMenu("photos", () => openPhotos(() => openGlobalView("photos"))),
+          onOpenTrees: guardMenu("trees", () => openTrees(() => openGlobalView("trees"))),
+          onOpenPersonnel: guardMenu("personnel", () => openGlobalView("personnel")),
+          onOpenPermissions: guardMenu("permissions", () => openGlobalView("permissions")),
+          onOpenYield: guardMenu("yield", () => openGlobalEmbed(() => openYieldPortal(loggedInId, role))),
+          onOpenEnvironment: guardMenu("environment", () => openGlobalView("environment")),
+          onOpenAttendance: guardMenu("attendance", () => prepareAttendanceOnOpen(() => openGlobalView("attendance"))),
           pendingPermCount: pendingPermCount,}
         )
       )
