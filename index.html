@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-<title>完全體 V5.1.C137・藍帶無花果</title>
+<title>完全體 V5.1.C138・藍帶無花果</title>
 <meta name="apple-mobile-web-app-capable" content="yes" />
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
 <meta name="apple-mobile-web-app-title" content="藍帶無花果" />
@@ -717,7 +717,7 @@ const C = {
   tiffanyLight: "#B8ECE5",
   tiffanyText: "#2E8577",
 };
-const APP_VERSION = 'V5.1.C137';
+const APP_VERSION = 'V5.1.C138';
 const FONT_LINK = "https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,600;9..144,700&family=Inter:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap";
 
 const WORK_ITEMS = [
@@ -8279,7 +8279,7 @@ function YieldLongTermReport({ onBack }) {
           },
             // C92：全域CSS有 svg{max-width:100%}，會把寬度壓成螢幕寬、高度卻不變，圖被縮小置中，
             // 上下留出大片空白。這裡指定 maxWidth:none，保持原尺寸，改由外層左右滑動。
-            React.createElement("svg", { viewBox: `0 0 ${W} ${H}`, preserveAspectRatio: "xMinYMin meet", style: fit ? { width: "100%", height: "auto", maxWidth: "100%", display: "block" } : { width: W, height: H, maxWidth: "none", display: "block" } },
+            React.createElement("svg", { viewBox: `0 0 ${W} ${H}`, preserveAspectRatio: "xMinYMin meet", style: fit ? { width: "100%", height: "auto", maxWidth: Math.max(W, 600) + "px", margin: "0 auto", display: "block" } : { width: W, height: H, maxWidth: "none", display: "block" } },
               gridLines(), chartLinesFor(result.byZone[zn]), xTicks()
             )
           )
@@ -9790,7 +9790,7 @@ function ClimateMaterialReport({ onBack }) {
     days.forEach((d, i) => { if (!d.clim) return; const cx = x0 + cw * (i + 0.5);
       g.push(React.createElement('circle', { key: "ph" + i, cx, cy: yT(d.clim.tMax), r: 1.6, fill: "#D9453F", style: { pointerEvents: "none" } }));
       g.push(React.createElement('circle', { key: "pl" + i, cx, cy: yT(d.clim.tMin), r: 1.6, fill: "#2F7FD1", style: { pointerEvents: "none" } })); });
-    return React.createElement('svg', { viewBox: `0 0 ${W} ${H}`, style: { width: "100%", height: "auto", maxWidth: "100%", display: "block" } }, g);
+    return React.createElement('svg', { viewBox: `0 0 ${W} ${H}`, style: { width: "100%", height: "auto", maxWidth: Math.max(W, 600) + "px", margin: "0 auto", display: "block" } }, g);
   };
 
   const legend = (items) => React.createElement('div', { className: "text-xs flex flex-wrap gap-x-3 gap-y-1 mb-1", style: { color: C.inkSoft } },
@@ -10227,7 +10227,7 @@ function PeriodSnapshot({ initialGran = "month", startYear = 2020, groupBy = "zo
         React.createElement('span', { style: { fontWeight: 800, color: C.ink, fontSize: 14 } }, `${label}（${unit}）`),
         total != null && React.createElement('span', { className: "text-xs", style: { color: C.inkSoft, whiteSpace: "nowrap" } }, `合計 ${nice1(total)} ${unit}`)),
       legendKeys && React.createElement('div', { className: "flex flex-wrap gap-x-2 gap-y-0.5 px-1 mt-1 text-xs", style: { color: C.inkSoft } }, legendKeys.segs.map((sg) => React.createElement('span', { key: sg.k }, React.createElement('span', { style: { display: "inline-block", width: 8, height: 8, borderRadius: 2, background: sg.color, marginRight: 3 } }), sg.k))),
-      React.createElement('svg', { viewBox: `0 0 ${W} ${H}`, style: { width: "100%", height: "auto", maxWidth: "100%", display: "block" } }, g),
+      React.createElement('svg', { viewBox: `0 0 ${W} ${H}`, style: { width: "100%", height: "auto", maxWidth: Math.max(W, 600) + "px", margin: "0 auto", display: "block" } }, g),
       pick && pick.block === key && React.createElement(SnapEntryList, { zone: pick.zone, keys: pick.keys, unit: pick.unit, start: range.start, end: range.end, onClose: () => setPick(null) }));
   };
   const sum = (rows) => Math.round(rows.reduce((s, r) => s + (r.v || 0), 0) * 10) / 10;
@@ -11222,7 +11222,7 @@ function ClimateOverview({ mode, year, month, daily, dailyLoading, onOpenMonth }
         React.createElement('span', null, React.createElement('span', { style: { display: "inline-block", width: 14, height: 3, borderRadius: 2, background: "#2F7FD1", marginRight: 4, verticalAlign: "middle" } }), mode === "month" ? "最低溫" : "平均最低溫", "（左軸）"),
         React.createElement('span', null, React.createElement('span', { style: { display: "inline-block", width: 10, height: 10, borderRadius: 2, background: "#9CC9C5", marginRight: 4, verticalAlign: "middle" } }), mode === "month" ? "日雨量" : "月雨量", "（右軸）"),
         loading ? React.createElement('span', null, `讀取中 ${progress}…`) : null),
-      React.createElement('svg', { viewBox: `0 0 ${W} ${H}`, style: { width: "100%", height: "auto", maxWidth: "100%", display: "block" } },
+      React.createElement('svg', { viewBox: `0 0 ${W} ${H}`, style: { width: "100%", height: "auto", maxWidth: Math.max(W, 600) + "px", margin: "0 auto", display: "block" } },
         CLIMATE_T_TICKS.map((t) => React.createElement('g', { key: "t" + t },
           React.createElement('line', { x1: x0, y1: yT(t), x2: x1, y2: yT(t), stroke: "#EEE7DB", strokeWidth: 0.8, strokeDasharray: t === 0 ? "" : "2 3" }),
           React.createElement('text', { x: x0 - 4, y: yT(t) + 3.5, fontSize: 10, textAnchor: "end", fill: "#B5453F", fontFamily: "Inter" }, `${t}°`),
