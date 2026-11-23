@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-<title>完全體 V5.1.C138・藍帶無花果</title>
+<title>完全體 V5.1.C139・藍帶無花果</title>
 <meta name="apple-mobile-web-app-capable" content="yes" />
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
 <meta name="apple-mobile-web-app-title" content="藍帶無花果" />
@@ -717,9 +717,10 @@ const C = {
   tiffanyLight: "#B8ECE5",
   tiffanyText: "#2E8577",
 };
-const APP_VERSION = 'V5.1.C138';
+const APP_VERSION = 'V5.1.C139';
 const FONT_LINK = "https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,600;9..144,700&family=Inter:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap";
 
+const OTHER_MATERIALS = ["黃豆", "水果", "硝酸鉀", "磷酸一鉀", "硫酸鉀", "鈣鎂粉", "微量元素", "硝酸鈣"];
 const WORK_ITEMS = [
   { id: 1, name: "打芽(側)", type: "level" },
   { id: 2, name: "打芽(地)", type: "level" },
@@ -728,7 +729,7 @@ const WORK_ITEMS = [
   { id: 5, name: "覆蓋", type: "level" },
   { id: 6, name: "補水", type: "checkbox", options: ["溝灌", "噴灌"] },
   { id: 7, name: "施肥", type: "checkbox", options: ["米糠", "金旺"] },
-  { id: 8, name: "其他資材", type: "checkbox", options: ["黃豆", "水果", "硝酸鉀", "磷酸一鉀", "硫酸鉀", "鈣鎂粉", "微量元素"] },
+  { id: 8, name: "其他資材", type: "checkbox", options: OTHER_MATERIALS },
 ];
 const ROLE_LABELS = { designer: "設計者", manager: "管理者", founder: "創辦人", user: "使用者", guest: "來賓" };
 const ROLE_ORDER = ["designer", "manager", "founder", "user", "guest"];
@@ -6074,8 +6075,6 @@ function currentMonthKey() {
   return `${seg[0]}-${seg[1]}`;
 }
 
-const OTHER_MATERIALS = ["黃豆", "水果", "硝酸鉀", "磷酸一鉀", "硫酸鉀", "鈣鎂粉", "微量元素"];
-
 // 施肥數量月報表：品項來自表格6/7/8
 const REPORT_ROWS = [
   { key: "溝灌", label: "補水－溝灌", unit: "噸" },
@@ -6810,15 +6809,13 @@ function CellWorkTable({ zone, cellId, role, onClose, ym, workDate, loggedInId, 
       }
     });
     if (historyEntries.length === 0) return;
-    // 回報後清空 8 的選項與數量，避免與 confirmedTotals 重複加總
+    // 保留指定用量供歷史快照使用；報表依實際回報量統計。
     let next = {
       ...zoneData,
       confirmedTotals: totals,
       progress: { ...zoneData.progress, 8: 1 },
       confirmedBy: { ...zoneData.confirmedBy, 8: nextConfirmedBy },
       pending: { ...zoneData.pending, 8: false },
-      multi8Main: [],
-      extra8: {},
       timestamps: { ...zoneData.timestamps, 8: { ...zoneData.timestamps[8], ackAt: eventStampFor(zoneData, 8, workDate) } },
     };
     next = appendHistory(next, historyEntries);
@@ -9199,18 +9196,12 @@ const ZONEWORK_ITEMS = [
   { key: "噴灌", unit: "分鐘" },
   { key: "米糠", unit: "包" },
   { key: "金旺", unit: "包" },
-  { key: "黃豆", unit: "kg" },
-  { key: "水果", unit: "kg" },
-  { key: "硝酸鉀", unit: "kg" },
-  { key: "磷酸一鉀", unit: "kg" },
-  { key: "硫酸鉀", unit: "kg" },
-  { key: "鈣鎂粉", unit: "kg" },
-  { key: "微量元素", unit: "kg" },
+  ...OTHER_MATERIALS.map((key) => ({ key, unit: "kg" })),
 ];
 const ZONEWORK_ITEM_COLORS = {
   溝灌: "#2E5FA3", 噴灌: "#4E7C6B",
   米糠: "#E0785F", 金旺: "#5B2A45",
-  黃豆: "#2E5FA3", 水果: "#E0785F", 硝酸鉀: "#4E7C6B", 磷酸一鉀: "#5B2A45", 硫酸鉀: "#C9A227", 鈣鎂粉: "#8B5FBF", 微量元素: "#2B2119",
+  黃豆: "#2E5FA3", 水果: "#E0785F", 硝酸鉀: "#4E7C6B", 磷酸一鉀: "#5B2A45", 硫酸鉀: "#C9A227", 鈣鎂粉: "#8B5FBF", 微量元素: "#2B2119", 硝酸鈣: "#247B97",
 };
 async function fetchZoneworkItemRange(zoneName, itemKey, startDate, endDate) {
   const months = [];
@@ -9272,7 +9263,7 @@ function UsageTimeModeControls({ mode, setMode, year, setYear, month, setMonth, 
 
 /* =========================================================
    表11：溫室用量側寫——固定一個溫室，攤開它用了哪些細項（溝灌/噴灌/米糠/
-   金旺/7種其他資材，共11條），看這個溫室的長期使用組成。C87/V5.028 新增。
+   金旺/其他資材），看這個溫室的長期使用組成。C87/V5.028 新增。
    ========================================================= */
 function ZoneUsageProfileReport({ onBack }) {
   const nowYear = new Date().getFullYear();
@@ -9283,8 +9274,8 @@ function ZoneUsageProfileReport({ onBack }) {
   const [year, setYear] = useState(nowYear >= 2026 ? nowYear : 2026);
   const [month, setMonth] = useState(new Date().getMonth() + 1);
   const [zone, setZone] = useState(YIELD_DB_ZONES[0]);
-  const [param, setParam] = useState("water"); // "water" | "solid" | "liquid"——單位不同，分開看，不會11條擠在一起
-  const [selectedMaterials, setSelectedMaterials] = useState(() => [...LIQUID_KEYS]); // 液態肥7項可複選
+  const [param, setParam] = useState("water"); // "water" | "solid" | "liquid"——單位不同，分開看，分組顯示
+  const [selectedMaterials, setSelectedMaterials] = useState(() => [...LIQUID_KEYS]); // 液態肥可複選
   const [showLabels, setShowLabels] = useState(true);
   const [loading, setLoading] = useState(false);
   const [progress, setProgress] = useState("");
@@ -9876,7 +9867,7 @@ const T14_CATS = [
   { key: "溝灌", label: "溝灌", unit: "噸", items: ["溝灌"], colors: ["#2F6FA8"] },
   { key: "噴灌", label: "噴灌", unit: "分", items: ["噴灌"], colors: ["#E39B3D"] },
   { key: "固態", label: "固態", unit: "包", items: ["米糠", "金旺"], colors: ["#8B5A2B", "#C9954F"] },
-  { key: "液態", label: "液態", unit: "kg", items: OTHER_MATERIALS, colors: ["#4E9A5B", "#7CB342", "#2E7D6B", "#9CCC65", "#558B2F", "#26A69A", "#AED581"] },
+  { key: "液態", label: "液態", unit: "kg", items: OTHER_MATERIALS, colors: ["#4E9A5B", "#7CB342", "#2E7D6B", "#9CCC65", "#558B2F", "#26A69A", "#AED581", "#247B97"] },
 ];
 const T14_ALL = "全場";
 
