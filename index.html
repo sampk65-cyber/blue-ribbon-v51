@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-<title>完全體 V5.1.C142・藍帶無花果</title>
+<title>完全體 V5.1.C143・藍帶無花果</title>
 <meta name="apple-mobile-web-app-capable" content="yes" />
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
 <meta name="apple-mobile-web-app-title" content="藍帶無花果" />
@@ -718,18 +718,21 @@ const C = {
   tiffanyLight: "#B8ECE5",
   tiffanyText: "#2E8577",
 };
-const APP_VERSION = 'V5.1.C142';
+const APP_VERSION = 'V5.1.C143';
 const FONT_LINK = "https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,600;9..144,700&family=Inter:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap";
 
-const OTHER_MATERIALS = ["黃豆", "水果", "硝酸鉀", "磷酸一鉀", "硫酸鉀", "鈣鎂粉", "微量元素", "硝酸鈣"];
+const OTHER_DEFAULTS = ["黃豆", "水果", "硝酸鉀", "磷酸一鉀", "硫酸鉀", "鈣鎂粉", "微量元素", "硝酸鈣"];
+// C143：工作7施肥、工作8其他資材也可管理清單。尚未存過清單時沿用以下預設；存過之後以雲端清單為準。
+const OTHER_MATERIALS = [...OTHER_DEFAULTS], OTHER_ACTIVE = [...OTHER_DEFAULTS]; // 8：ALL／ACTIVE
+const SOLID_KEYS = ["米糠", "金旺"], FERT7_ACTIVE = ["米糠", "金旺"]; // 7：ALL／ACTIVE
 // C140：工作9微生物、工作10葉面肥。清單可由設計者/管理者編輯、跨分區共用；微生物單位為「公升」、葉面肥單位為「公克」。
 // ACTIVE＝可選用；ALL＝含已停用（舊回報與統計要保留，所以只停用、不刪除、不改名）。陣列一律原地修改，已引用的統計才會同步。
 const MULTI_MAIN = { 8: "multi8Main", 9: "multi9Main", 10: "multi10Main" };
 const MULTI_EXTRA = { 8: "extra8", 9: "extra9", 10: "extra10" };
-const MULTI_UNIT = { 8: "kg", 9: "公升", 10: "公克" };
+const MULTI_UNIT = { 7: "包", 8: "kg", 9: "公升", 10: "公克" };
 const MICRO_ACTIVE = [], MICRO_ALL = [], FOLIAR_ACTIVE = [], FOLIAR_ALL = [];
-const ZONE_LIST_KEYS = { 9: "zoneMicrobeList", 10: "zoneFoliarList" };
-const ZONE_LIST_ARRAYS = { 9: { active: MICRO_ACTIVE, all: MICRO_ALL }, 10: { active: FOLIAR_ACTIVE, all: FOLIAR_ALL } };
+const ZONE_LIST_KEYS = { 7: "zoneFertList", 8: "zoneOtherList", 9: "zoneMicrobeList", 10: "zoneFoliarList" };
+const ZONE_LIST_ARRAYS = { 7: { active: FERT7_ACTIVE, all: SOLID_KEYS }, 8: { active: OTHER_ACTIVE, all: OTHER_MATERIALS }, 9: { active: MICRO_ACTIVE, all: MICRO_ALL }, 10: { active: FOLIAR_ACTIVE, all: FOLIAR_ALL } };
 const DYN_PALETTE = ["#6A4C93", "#1982C4", "#8AC926", "#FF595E", "#FFB400", "#2A9D8F", "#B5651D", "#D81E5B", "#3D5A80", "#7A9E34"];
 function applyZoneMaterialList(itemId, obj) {
   const a = ZONE_LIST_ARRAYS[itemId];
@@ -745,9 +748,10 @@ function ensureZoneMaterialLists(force) {
   if (_zmlPromise && !force) return _zmlPromise;
   _zmlPromise = (async () => {
     try {
-      for (const id of [9, 10]) {
+      for (const id of [7, 8, 9, 10]) {
         const res = await window.storage.get(ZONE_LIST_KEYS[id], true);
-        applyZoneMaterialList(id, res ? JSON.parse(res.value) : { active: [], archived: [] });
+        if (res) applyZoneMaterialList(id, JSON.parse(res.value));
+        else if (id >= 9) applyZoneMaterialList(id, { active: [], archived: [] });
       }
       _zmlLoaded = true;
     } catch (e) { console.warn("微生物/葉面肥清單讀取失敗", e); }
@@ -762,8 +766,8 @@ const WORK_ITEMS = [
   { id: 4, name: "剪葉", type: "level" },
   { id: 5, name: "覆蓋", type: "level" },
   { id: 6, name: "補水", type: "checkbox", options: ["溝灌", "噴灌"] },
-  { id: 7, name: "施肥", type: "checkbox", options: ["米糠", "金旺"] },
-  { id: 8, name: "其他資材", type: "checkbox", options: OTHER_MATERIALS },
+  { id: 7, name: "施肥", type: "checkbox", options: FERT7_ACTIVE },
+  { id: 8, name: "其他資材", type: "checkbox", options: OTHER_ACTIVE },
   { id: 9, name: "微生物", type: "checkbox", options: MICRO_ACTIVE },
   { id: 10, name: "葉面肥", type: "checkbox", options: FOLIAR_ACTIVE },
 ];
@@ -2369,14 +2373,14 @@ function DaySprayPicker({ day, year, month, drugList, fertilizerList, editable, 
 }
 
 function ZoneMaterialListManager({ itemId, onClose, onChanged }) {
-  const title = itemId === 9 ? "微生物（菌種）" : "葉面肥（配方）";
+  const title = { 7: "施肥（肥料品項）", 8: "其他資材", 9: "微生物（菌種）", 10: "葉面肥（配方）" }[itemId];
   const arrs = ZONE_LIST_ARRAYS[itemId];
   const [active, setActive] = useState([...arrs.active]);
   const [archived, setArchived] = useState(arrs.all.filter((n) => !arrs.active.includes(n)));
   const [name, setName] = useState("");
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState("");
-  const taken = () => new Set([...OTHER_MATERIALS, "溝灌", "噴灌", "米糠", "金旺", ...MICRO_ALL, ...FOLIAR_ALL]);
+  const taken = () => new Set(["溝灌", "噴灌", ...SOLID_KEYS, ...OTHER_MATERIALS, ...MICRO_ALL, ...FOLIAR_ALL]);
   const save = async (a, r) => {
     setBusy(true); setErr("");
     try {
@@ -2393,7 +2397,7 @@ function ZoneMaterialListManager({ itemId, onClose, onChanged }) {
     setName(""); save([...active, n], archived);
   };
   const row = (n, isActive) => React.createElement('div', { key: n, className: "flex items-center justify-between p-2.5 rounded-lg", style: { background: C.cream, opacity: isActive ? 1 : 0.7 } }
-    , React.createElement('span', { className: "text-sm", style: { fontFamily: "Inter", color: C.ink } }, n)
+    , React.createElement('span', { className: "text-sm", style: { fontFamily: "Inter", color: C.ink } }, n === "金旺" ? "金旺特" : n)
     , React.createElement('button', { disabled: busy, onClick: () => isActive ? save(active.filter((x) => x !== n), [...archived, n]) : save([...active, n], archived.filter((x) => x !== n)), className: "text-xs px-2 py-1 rounded", style: { background: isActive ? `${C.alert}18` : C.leaf, color: isActive ? C.alert : "white", fontFamily: "Inter", fontWeight: 700 } }, isActive ? "停用" : "啟用"));
   return ReactDOM.createPortal(React.createElement('div', { className: "fixed inset-0 flex items-end", style: { background: "rgba(43,33,25,0.5)", zIndex: 99999 }, onClick: (e) => { e.stopPropagation(); onClose(); } }
     , React.createElement('div', { className: "w-full rounded-t-2xl p-5", style: { background: C.paper, maxHeight: "85vh", overflowY: "auto" }, onClick: (e) => e.stopPropagation() }
@@ -2405,7 +2409,7 @@ function ZoneMaterialListManager({ itemId, onClose, onChanged }) {
         , active.map((n) => row(n, true))
         , active.length === 0 && React.createElement('div', { className: "text-xs", style: { color: C.inkSoft, fontFamily: "Inter" } }, "尚未新增任何項目"))
       , React.createElement('div', { className: "flex gap-2 mb-2" }
-        , React.createElement('input', { value: name, onChange: (e) => setName(e.target.value), placeholder: itemId === 9 ? "新增菌種名稱" : "新增配方名稱", className: "flex-1 px-3 py-2 rounded-lg text-sm", style: { border: `1px solid ${C.line}`, fontFamily: "Inter" } })
+        , React.createElement('input', { value: name, onChange: (e) => setName(e.target.value), placeholder: { 7: "新增肥料品項名稱", 8: "新增資材名稱", 9: "新增菌種名稱", 10: "新增配方名稱" }[itemId], className: "flex-1 px-3 py-2 rounded-lg text-sm", style: { border: `1px solid ${C.line}`, fontFamily: "Inter" } })
         , React.createElement('button', { disabled: busy || !name.trim(), onClick: add, className: "px-4 py-2 rounded-lg text-sm", style: { background: C.leaf, color: "white", fontFamily: "Inter", fontWeight: 700, opacity: (busy || !name.trim()) ? 0.4 : 1 } }, "新增"))
       , err && React.createElement('div', { className: "text-xs mb-2", style: { color: C.alert, fontFamily: "Inter" } }, err)
       , archived.length > 0 && React.createElement('div', { style: { borderTop: `1px solid ${C.line}`, paddingTop: 12 } }
@@ -6159,11 +6163,8 @@ function currentMonthKey() {
 const REPORT_ROWS = [
   { key: "溝灌", label: "補水－溝灌", unit: "噸" },
   { key: "噴灌", label: "補水－噴灌", unit: "分鐘" },
-  { key: "米糠", label: "施肥－米糠", unit: "包" },
-  { key: "金旺", label: "施肥－金旺", unit: "包" },
-  ...OTHER_MATERIALS.map((s) => ({ key: s, label: `其他資材－${s}`, unit: "kg" })),
 ];
-const REPORT_BASE_LEN = REPORT_ROWS.length;
+const REPORT_BASE_LEN = REPORT_ROWS.length; // 之後的列（施肥／其他資材／微生物／葉面肥）由 rebuildDynamicStats 依清單重建
 
 // 共用：列印/存PDF + LINE/Email 快速分享列
 // 列印走瀏覽器原生列印功能（存PDF後，手機通常會有原生分享選單可接LINE/Email/訊息等）
@@ -6285,6 +6286,8 @@ function CellWorkTable({ zone, cellId, role, onClose, ym, workDate, loggedInId, 
     return () => document.body.classList.remove("cell-work-open");
   }, []);
   const canEditRole = role === "designer" || role === "manager" || role === "founder";
+  // C143：工作7～10「管理清單」只有 A01、B01 可用；其他人只能勾選與填數量
+  const canManageLists = ["A01", "B01"].includes(String(loggedInId || "").toUpperCase());
   // C72/V5.016：拿掉先前把 founder 也算進 isUser 的寫死例外——這會讓創辦人(B01)看到
   // 「回報/確認」按鈕、「待確認」字樣等現場人員才該有的介面，跟 designer/manager 的
   // 指派畫面不一致。isUser 只代表「現場回報者」身分，只認 user 角色。
@@ -7370,7 +7373,9 @@ function CellWorkTable({ zone, cellId, role, onClose, ym, workDate, loggedInId, 
 
                   , [6, 7].includes(item.id) && (
                     React.createElement('div', { className: "flex flex-wrap gap-2 py-1" },
-                      item.options.map((opt) => {
+                      item.id === 7 && canManageLists && React.createElement('button', { onClick: () => setShowListMgr(7), className: "text-xs px-2 py-1 rounded", style: { background: C.cream, color: C.tableColor, border: `1px solid ${C.line}`, fontFamily: "Inter", fontWeight: 700, flexBasis: "100%" } }, "管理施肥清單"),
+                      item.id === 7 && canManageLists && showListMgr === 7 && React.createElement(ZoneMaterialListManager, { itemId: 7, onClose: () => setShowListMgr(null), onChanged: () => setListTick((t) => t + 1) }),
+                      (item.id === 7 ? [...item.options, ...selected67(7).filter((o) => !item.options.includes(o))] : item.options).map((opt) => {
                         const selected = selected67(item.id).includes(opt);
                         const unit = item.id === 6 ? (opt === "噴灌" ? "分鐘" : "噸") : "包";
                         return React.createElement('div', { key: opt, className: "flex items-center gap-1" },
@@ -7395,11 +7400,11 @@ function CellWorkTable({ zone, cellId, role, onClose, ym, workDate, loggedInId, 
                   )
                   , MULTI_MAIN[item.id] && (
                     React.createElement('div', { className: "flex flex-col gap-1.5 w-full"   ,}
-                      , [9, 10].includes(item.id) && canEditRole && React.createElement('button', { onClick: () => setShowListMgr(item.id), className: "text-xs px-2 py-1 rounded w-fit", style: { background: C.cream, color: C.tableColor, border: `1px solid ${C.line}`, fontFamily: "Inter", fontWeight: 700 } }, "管理" + item.name + "清單")
-                      , [9, 10].includes(item.id) && (item.options || []).length === 0 && React.createElement('span', { className: "text-xs", style: { color: C.inkSoft, fontFamily: "Inter" } }, "尚無項目" + (canEditRole ? "，請先按上方「管理」新增" : "，請請設計者／管理者新增"))
-                      , showListMgr === item.id && React.createElement(ZoneMaterialListManager, { itemId: item.id, onClose: () => setShowListMgr(null), onChanged: () => setListTick((t) => t + 1) })
+                      , [8, 9, 10].includes(item.id) && canManageLists && React.createElement('button', { onClick: () => setShowListMgr(item.id), className: "text-xs px-2 py-1 rounded w-fit", style: { background: C.cream, color: C.tableColor, border: `1px solid ${C.line}`, fontFamily: "Inter", fontWeight: 700 } }, "管理" + item.name + "清單")
+                      , [8, 9, 10].includes(item.id) && (item.options || []).length === 0 && React.createElement('span', { className: "text-xs", style: { color: C.inkSoft, fontFamily: "Inter" } }, "尚無項目" + (canManageLists ? "，請先按上方「管理」新增" : "，請聯絡 A01／B01 新增"))
+                      , canManageLists && showListMgr === item.id && React.createElement(ZoneMaterialListManager, { itemId: item.id, onClose: () => setShowListMgr(null), onChanged: () => setListTick((t) => t + 1) })
                       , React.createElement('div', { className: "flex items-center gap-1 flex-wrap"   ,}
-                        , item.options.map((opt) => {
+                        , [...item.options, ...(zoneData[MULTI_MAIN[item.id]] || []).filter((o) => !item.options.includes(o))].map((opt) => {
                           const selected = (zoneData[MULTI_MAIN[item.id]] || []).includes(opt);
                           return (
                             React.createElement('button', { key: opt, disabled: !editable, onClick: () => { toggleMultiMain(item.id, opt); scrollWorkBottom(); },
@@ -8786,7 +8791,7 @@ const ZONEWORK_ID_BY_NAME = { "一期": "p1", "二期": "p2", "三期": "zone3",
 // 不是逐次回報的歷史）。改成跟表三同一套資料來源(confirmHistory)後，年/月/15天/週都做得到。
 const WATER_TONS_KEYS = ["溝灌"];
 const WATER_MIN_KEYS = ["噴灌"];
-const SOLID_KEYS = ["米糠", "金旺"];
+// SOLID_KEYS 已改在檔案前段定義（可編輯清單的 ALL 陣列）
 const LIQUID_KEYS = OTHER_MATERIALS;
 function zwDayFromStamp(stamp) {
   if (!stamp) return null;
@@ -9254,7 +9259,7 @@ function ZoneMaterialYieldReport({ onBack }) {
       persp === "snap" && React.createElement(PeriodSnapshot, {
         initialGran: mode, startYear, groupBy: "zone", zones: YIELD_DB_ZONES, highlightZone: zone, yieldGrades: gradeSel, title: "六個分區並列，粗體為目前選的分區",
         metrics: param === "water" ? [{ key: "t", label: "溝灌", unit: "噸", color: "#2E5FA3", keys: WATER_TONS_KEYS }, { key: "m", label: "噴灌", unit: "分", color: "#5C7A52", keys: WATER_MIN_KEYS }]
-          : param === "solid" ? [{ key: "s", label: "固態（米糠＋金旺）", unit: "包", color: "#8B5A2B", keys: SOLID_KEYS }]
+          : param === "solid" ? [{ key: "s", label: `固態（${SOLID_KEYS.join("＋")}）`, unit: "包", color: "#8B5A2B", keys: SOLID_KEYS }]
           : [{ key: "l", label: `液態（${selectedMaterials.join("＋") || "未選"}）`, unit: "kg", color: C.leafSoft, keys: selectedMaterials }],
       }),
       persp === "trend" && data && React.createElement("div", { className: "mt-2" },
@@ -9300,9 +9305,6 @@ function dayPeriodsOfMonth(year, month) {
 const ZONEWORK_ITEMS = [
   { key: "溝灌", unit: "噸" },
   { key: "噴灌", unit: "分鐘" },
-  { key: "米糠", unit: "包" },
-  { key: "金旺", unit: "包" },
-  ...OTHER_MATERIALS.map((key) => ({ key, unit: "kg" })),
 ];
 const ZONEWORK_BASE_LEN = ZONEWORK_ITEMS.length;
 const ZONEWORK_ITEM_COLORS = {
@@ -9314,12 +9316,13 @@ function rebuildDynamicStats() {
   if (typeof REPORT_BASE_LEN === "undefined" || typeof ZONEWORK_BASE_LEN === "undefined") return;
   REPORT_ROWS.length = REPORT_BASE_LEN; ZONEWORK_ITEMS.length = ZONEWORK_BASE_LEN;
   let ci = 0;
-  [[MICRO_ALL, "微生物", "公升"], [FOLIAR_ALL, "葉面肥", "公克"]].forEach(([arr, label, u]) => arr.forEach((k) => {
+  [[SOLID_KEYS, "施肥", "包"], [OTHER_MATERIALS, "其他資材", "kg"], [MICRO_ALL, "微生物", "公升"], [FOLIAR_ALL, "葉面肥", "公克"]].forEach(([arr, label, u]) => arr.forEach((k) => {
     REPORT_ROWS.push({ key: k, label: `${label}－${k}`, unit: u });
     ZONEWORK_ITEMS.push({ key: k, unit: u });
-    ZONEWORK_ITEM_COLORS[k] = DYN_PALETTE[ci++ % DYN_PALETTE.length];
+    if (!ZONEWORK_ITEM_COLORS[k]) ZONEWORK_ITEM_COLORS[k] = DYN_PALETTE[ci++ % DYN_PALETTE.length];
   }));
 }
+rebuildDynamicStats();
 async function fetchZoneworkItemRange(zoneName, itemKey, startDate, endDate) {
   const months = [];
   let d = new Date(startDate + "T00:00:00");
@@ -9399,7 +9402,7 @@ function ZoneUsageProfileReport({ onBack }) {
   const [error, setError] = useState("");
   const [data, setData] = useState(null); // { labels[], series: { itemKey: [...] } }
 
-  const itemsForParam = param === "water" ? ["溝灌", "噴灌"] : param === "solid" ? ["米糠", "金旺"] : selectedMaterials;
+  const itemsForParam = param === "water" ? ["溝灌", "噴灌"] : param === "solid" ? SOLID_KEYS : selectedMaterials;
 
   const run = async () => {
     setLoading(true); setError(""); setData(null);
@@ -9983,7 +9986,7 @@ function ClimateMaterialReport({ onBack }) {
 const T14_CATS = [
   { key: "溝灌", label: "溝灌", unit: "噸", items: ["溝灌"], colors: ["#2F6FA8"] },
   { key: "噴灌", label: "噴灌", unit: "分", items: ["噴灌"], colors: ["#E39B3D"] },
-  { key: "固態", label: "固態", unit: "包", items: ["米糠", "金旺"], colors: ["#8B5A2B", "#C9954F"] },
+  { key: "固態", label: "固態", unit: "包", items: SOLID_KEYS, colors: ["#8B5A2B", "#C9954F", ...DYN_PALETTE] },
   { key: "液態", label: "液態", unit: "kg", items: OTHER_MATERIALS, colors: ["#4E9A5B", "#7CB342", "#2E7D6B", "#9CCC65", "#558B2F", "#26A69A", "#AED581", "#247B97"] },
   { key: "微生物", label: "微生物", unit: "公升", items: MICRO_ALL, colors: DYN_PALETTE },
   { key: "葉面肥", label: "葉面肥", unit: "公克", items: FOLIAR_ALL, colors: DYN_PALETTE },
@@ -10166,7 +10169,7 @@ function YieldMaterialRainReport({ onBack }) {
       persp === "trend" && React.createElement('label', { className: "flex items-center gap-2 text-sm", style: { color: C.inkSoft } }, React.createElement('input', { type: "checkbox", checked: showLabels, onChange: (e) => setShowLabels(e.target.checked) }), "顯示數值標籤（看年、看月）"),
       persp === "snap" && React.createElement(PeriodSnapshot, {
         initialGran: mode, startYear: 2020, groupBy: "zone", zones: YIELD_DB_ZONES, highlightZone: zone === T14_ALL ? null : zone, yieldGrades: YIELD_GRADES, showRain: true, title: "六個分區並列",
-        metrics: activeCats.map((c) => ({ key: c.key, label: c.key === "液態" ? `液態（${itemsOf(c).join("＋") || "未選"}）` : c.key === "固態" ? "固態（米糠＋金旺）" : c.label, unit: c.unit, color: c.colors[0], keys: itemsOf(c) })),
+        metrics: activeCats.map((c) => ({ key: c.key, label: c.key === "液態" ? `液態（${itemsOf(c).join("＋") || "未選"}）` : c.key === "固態" ? `固態（${SOLID_KEYS.join("＋")}）` : c.label, unit: c.unit, color: c.colors[0], keys: itemsOf(c) })),
       }),
       persp === "trend" && loading && React.createElement('div', { className: "text-xs", style: { color: C.inkSoft } }, `讀取中 ${progress}…`),
       persp === "trend" && error && React.createElement('div', { className: "text-sm", style: { color: C.alert } }, error),
@@ -11823,7 +11826,7 @@ function ZoneMaterialsReport({ year, month, onBack }) {
                 shown.map((en, idx) => React.createElement('span', {
                   key: idx,
                   className: "truncate w-full text-center",
-                  style: { color: en.itemId === 6 || en.rowKey === "溝灌" || en.rowKey === "噴灌" ? C.brandBlue : (["米糠", "金旺"].includes(en.rowKey) ? C.leaf : C.wine) },
+                  style: { color: en.itemId === 6 || en.rowKey === "溝灌" || en.rowKey === "噴灌" ? C.brandBlue : (SOLID_KEYS.includes(en.rowKey) ? C.leaf : C.wine) },
                 }, en.qty != null ? `${shortLabel(en.rowKey)}${en.qty}` : shortLabel(en.rowKey))),
                 more > 0 && React.createElement('span', { style: { color: C.inkSoft, fontSize: 8 } }, "+", more, " 全部")
               )
