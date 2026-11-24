@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-<title>完全體 V5.1.C139・藍帶無花果</title>
+<title>完全體 V5.1.C140・藍帶無花果</title>
 <meta name="apple-mobile-web-app-capable" content="yes" />
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
 <meta name="apple-mobile-web-app-title" content="藍帶無花果" />
@@ -364,6 +364,7 @@ const { useState, useEffect, useRef } = React;
 // 同一份月文件沿用原路徑；只能提交有讀取基準的交易，歷史只追加。
 const WorkDataSafety = (() => {
   const isWorkKey = key => /^(worklog|zonework):/.test(String(key));
+  const MAIN = {8:'multi8Main',9:'multi9Main',10:'multi10Main'}, EXTRA = {8:'extra8',9:'extra9',10:'extra10'};
   const copy = value => JSON.parse(JSON.stringify(value));
   const stable = value => JSON.stringify(value, function (_key, v) {
     if (v && typeof v === 'object' && !Array.isArray(v)) return Object.keys(v).sort().reduce((o,k) => { o[k] = v[k]; return o; }, {});
@@ -377,12 +378,12 @@ const WorkDataSafety = (() => {
   };
   const positive = value => (typeof value === 'number' || typeof value === 'string') && String(value).trim() !== '' && Number.isFinite(Number(value)) && Number(value) > 0;
   const options = (data,id) => {
-    const list = data[id === 6 ? 'multi6' : id === 7 ? 'multi7' : 'multi8Main'];
+    const list = data[id === 6 ? 'multi6' : id === 7 ? 'multi7' : MAIN[id]];
     if (Array.isArray(list) && list.length) return list;
-    return id !== 8 && data.checks && data.checks[id] ? [data.checks[id]] : [];
+    return !MAIN[id] && data.checks && data.checks[id] ? [data.checks[id]] : [];
   };
   const quantity = (data,id,opt) => {
-    if (id === 8) return (data.extra8 || {})[opt];
+    if (MAIN[id]) return (data[EXTRA[id]] || {})[opt];
     const extra = (data.extra || {})[id] || {};
     if (id === 6) return extra[opt === '噴灌' ? 'minutes' : 'tons'];
     return extra[opt] ?? (options(data,id).length === 1 ? extra.bags : undefined);
@@ -398,13 +399,13 @@ const WorkDataSafety = (() => {
   };
   const validateAssignment = (cell,zone) => {
     const cellIds = [1,2,3,4,5].filter(id => !!(cell.pending || {})[id]);
-    const zoneIds = [6,7,8].filter(id => !!(zone.pending || {})[id]);
+    const zoneIds = [6,7,8,9,10].filter(id => !!(zone.pending || {})[id]);
     if (!cellIds.length && !zoneIds.length) throw new Error('尚未輸入工作內容，本次指定不成立，也不會儲存。');
     for (const id of cellIds) if (!Number.isInteger(Number((cell.levels || {})[id])) || Number(cell.levels[id]) < 1 || Number(cell.levels[id]) > 5) throw new Error(`工作 ${id} 請選擇有效級別。`);
     for (const id of zoneIds) validateQuantities(options(zone,id),Object.fromEntries(options(zone,id).map(opt => [opt,quantity(zone,id,opt)])));
     return {cellIds,zoneIds};
   };
-  const hasContent = data => ['confirmHistory','assignmentHistory'].some(k => Array.isArray(data[k]) && data[k].length) || Object.values(data.levels || {}).some(positive) || [6,7,8].some(id => options(data,id).length) || !!data.linkedZoneEventId;
+  const hasContent = data => ['confirmHistory','assignmentHistory'].some(k => Array.isArray(data[k]) && data[k].length) || Object.values(data.levels || {}).some(positive) || [6,7,8,9,10].some(id => options(data,id).length) || !!data.linkedZoneEventId;
   const checkPreserved = (before,next) => {
     for (const field of ['confirmHistory','assignmentHistory']) {
       const a = before[field] || [], b = next[field] || [];
@@ -427,8 +428,8 @@ const WorkDataSafety = (() => {
       delete next.progress[id]; delete next.confirmedBy[id];
       next.timestamps[id] = {...((draft.timestamps || {})[id] || {}),eventId,changedAt:((draft.timestamps || {})[id] || {}).changedAt || stamp};
       delete next.timestamps[id].ackAt;
-      if ([6,7,8].includes(id)) next[id === 6 ? 'multi6' : id === 7 ? 'multi7' : 'multi8Main'] = copy(options(draft,id));
-      if (id === 8) next.extra8 = copy(draft.extra8 || {});
+      if ([6,7,8,9,10].includes(id)) next[id === 6 ? 'multi6' : id === 7 ? 'multi7' : MAIN[id]] = copy(options(draft,id));
+      if (MAIN[id]) next[EXTRA[id]] = copy(draft[EXTRA[id]] || {});
     }
     if (isCell && updateRecipients) {
       if (Object.entries(base.pending || {}).some(([id,v])=>v && !ids.includes(Number(id))) && stable(base.recipientIds || []) !== stable(draft.recipientIds || [])) throw new Error('其他工作仍待回報，新增指定不能改變原受文對象；請沿用原對象或先完成原工作。');
@@ -451,9 +452,9 @@ const WorkDataSafety = (() => {
     } else {
       const names = Array.isArray(patch.names) ? patch.names : [];
       const values = validateQuantities(names, patch.values || {});
-      if (itemId === 8) {
-        next.multi8Main = [...names];
-        next.extra8 = { ...values };
+      if (MAIN[itemId]) {
+        next[MAIN[itemId]] = [...names];
+        next[EXTRA[itemId]] = { ...values };
       } else {
         next.checks = { ...(next.checks || {}), [itemId]: names.length === 1 ? names[0] : (names.length === 0 ? null : (next.checks || {})[itemId]) };
         next[itemId === 6 ? 'multi6' : 'multi7'] = [...names];
@@ -542,7 +543,7 @@ window.WorkDataSafety = WorkDataSafety;
           for (const field of ['assignmentHistory','confirmHistory']) next[field] = WorkDataSafety.appendMissing(before[field] || [],incoming[field] || [],field);
           next.confirmedTotals = {...(before.confirmedTotals || {})};
           for (const h of next.confirmHistory.slice((before.confirmHistory || []).length)) {
-            if (h && [6,7,8].includes(Number(h.itemId)) && h.rowKey && WorkDataSafety.positive(h.qty)) next.confirmedTotals[h.rowKey] = Number(next.confirmedTotals[h.rowKey] || 0)+Number(h.qty);
+            if (h && [6,7,8,9,10].includes(Number(h.itemId)) && h.rowKey && WorkDataSafety.positive(h.qty)) next.confirmedTotals[h.rowKey] = Number(next.confirmedTotals[h.rowKey] || 0)+Number(h.qty);
           }
         }
         WorkDataSafety.checkPreserved(before || {},next);
@@ -717,10 +718,43 @@ const C = {
   tiffanyLight: "#B8ECE5",
   tiffanyText: "#2E8577",
 };
-const APP_VERSION = 'V5.1.C139';
+const APP_VERSION = 'V5.1.C140';
 const FONT_LINK = "https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,600;9..144,700&family=Inter:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap";
 
 const OTHER_MATERIALS = ["黃豆", "水果", "硝酸鉀", "磷酸一鉀", "硫酸鉀", "鈣鎂粉", "微量元素", "硝酸鈣"];
+// C140：工作9微生物、工作10葉面肥。清單可由設計者/管理者編輯、跨分區共用；單位固定「公升」。
+// ACTIVE＝可選用；ALL＝含已停用（舊回報與統計要保留，所以只停用、不刪除、不改名）。陣列一律原地修改，已引用的統計才會同步。
+const MULTI_MAIN = { 8: "multi8Main", 9: "multi9Main", 10: "multi10Main" };
+const MULTI_EXTRA = { 8: "extra8", 9: "extra9", 10: "extra10" };
+const MULTI_UNIT = { 8: "kg", 9: "公升", 10: "公升" };
+const MICRO_ACTIVE = [], MICRO_ALL = [], FOLIAR_ACTIVE = [], FOLIAR_ALL = [];
+const ZONE_LIST_KEYS = { 9: "zoneMicrobeList", 10: "zoneFoliarList" };
+const ZONE_LIST_ARRAYS = { 9: { active: MICRO_ACTIVE, all: MICRO_ALL }, 10: { active: FOLIAR_ACTIVE, all: FOLIAR_ALL } };
+const DYN_PALETTE = ["#6A4C93", "#1982C4", "#8AC926", "#FF595E", "#FFB400", "#2A9D8F", "#B5651D", "#D81E5B", "#3D5A80", "#7A9E34"];
+function applyZoneMaterialList(itemId, obj) {
+  const a = ZONE_LIST_ARRAYS[itemId];
+  const active = Array.isArray(obj && obj.active) ? obj.active.map(String) : [];
+  const archived = (Array.isArray(obj && obj.archived) ? obj.archived.map(String) : []).filter((n) => !active.includes(n));
+  a.active.length = 0; a.active.push(...active);
+  a.all.length = 0; a.all.push(...active, ...archived);
+  rebuildDynamicStats();
+}
+let _zmlLoaded = false, _zmlPromise = null;
+function ensureZoneMaterialLists(force) {
+  if (_zmlLoaded && !force) return Promise.resolve();
+  if (_zmlPromise && !force) return _zmlPromise;
+  _zmlPromise = (async () => {
+    try {
+      for (const id of [9, 10]) {
+        const res = await window.storage.get(ZONE_LIST_KEYS[id], true);
+        applyZoneMaterialList(id, res ? JSON.parse(res.value) : { active: [], archived: [] });
+      }
+      _zmlLoaded = true;
+    } catch (e) { console.warn("微生物/葉面肥清單讀取失敗", e); }
+    _zmlPromise = null;
+  })();
+  return _zmlPromise;
+}
 const WORK_ITEMS = [
   { id: 1, name: "打芽(側)", type: "level" },
   { id: 2, name: "打芽(地)", type: "level" },
@@ -730,6 +764,8 @@ const WORK_ITEMS = [
   { id: 6, name: "補水", type: "checkbox", options: ["溝灌", "噴灌"] },
   { id: 7, name: "施肥", type: "checkbox", options: ["米糠", "金旺"] },
   { id: 8, name: "其他資材", type: "checkbox", options: OTHER_MATERIALS },
+  { id: 9, name: "微生物", type: "checkbox", options: MICRO_ACTIVE },
+  { id: 10, name: "葉面肥", type: "checkbox", options: FOLIAR_ACTIVE },
 ];
 const ROLE_LABELS = { designer: "設計者", manager: "管理者", founder: "創辦人", user: "使用者", guest: "來賓" };
 const ROLE_ORDER = ["designer", "manager", "founder", "user", "guest"];
@@ -1492,7 +1528,7 @@ function MapLogin({ onEnter, onOpenReport, onOpenCalendar, onOpenFolders, onOpen
           const zdata = JSON.parse(zres.value);
           const hasRealPending = Object.entries(zdata.pending || {}).some(([id, v]) => {
             if (!v) return false;
-            if (id === "8") return (zdata.multi8Main || []).length > 0;
+            if (MULTI_MAIN[id]) return (zdata[MULTI_MAIN[id]] || []).length > 0;
             return !!_optionalChain([zdata, 'access', _6 => _6.checks, 'optionalAccess', _7 => _7[id]]);
           });
           if (hasRealPending) next[z.id] = true;
@@ -2332,6 +2368,50 @@ function DaySprayPicker({ day, year, month, drugList, fertilizerList, editable, 
   );
 }
 
+function ZoneMaterialListManager({ itemId, onClose, onChanged }) {
+  const title = itemId === 9 ? "微生物（菌種）" : "葉面肥（配方）";
+  const arrs = ZONE_LIST_ARRAYS[itemId];
+  const [active, setActive] = useState([...arrs.active]);
+  const [archived, setArchived] = useState(arrs.all.filter((n) => !arrs.active.includes(n)));
+  const [name, setName] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState("");
+  const taken = () => new Set([...OTHER_MATERIALS, "溝灌", "噴灌", "米糠", "金旺", ...MICRO_ALL, ...FOLIAR_ALL]);
+  const save = async (a, r) => {
+    setBusy(true); setErr("");
+    try {
+      await window.storage.set(ZONE_LIST_KEYS[itemId], JSON.stringify({ active: a, archived: r }), true);
+      applyZoneMaterialList(itemId, { active: a, archived: r });
+      setActive(a); setArchived(r); onChanged();
+    } catch (e) { setErr("儲存失敗，請稍後再試。"); }
+    setBusy(false);
+  };
+  const add = () => {
+    const n = name.trim();
+    if (!n) return;
+    if (taken().has(n)) { setErr(`「${n}」已存在（含已停用，或與其他資材同名），請換名稱；已停用的請按「啟用」。`); return; }
+    setName(""); save([...active, n], archived);
+  };
+  const row = (n, isActive) => React.createElement('div', { key: n, className: "flex items-center justify-between p-2.5 rounded-lg", style: { background: C.cream, opacity: isActive ? 1 : 0.7 } }
+    , React.createElement('span', { className: "text-sm", style: { fontFamily: "Inter", color: C.ink } }, n)
+    , React.createElement('button', { disabled: busy, onClick: () => isActive ? save(active.filter((x) => x !== n), [...archived, n]) : save([...active, n], archived.filter((x) => x !== n)), className: "text-xs px-2 py-1 rounded", style: { background: isActive ? `${C.alert}18` : C.leaf, color: isActive ? C.alert : "white", fontFamily: "Inter", fontWeight: 700 } }, isActive ? "停用" : "啟用"));
+  return React.createElement('div', { className: "fixed inset-0 z-50 flex items-end", style: { background: "rgba(43,33,25,0.5)" }, onClick: onClose }
+    , React.createElement('div', { className: "w-full rounded-t-2xl p-5", style: { background: C.paper, maxHeight: "85vh", overflowY: "auto" }, onClick: (e) => e.stopPropagation() }
+      , React.createElement('div', { className: "flex items-center justify-between mb-2" }
+        , React.createElement('span', { style: { fontFamily: "Inter", fontWeight: 700, fontSize: 16, color: C.ink } }, "管理" + title + "清單")
+        , React.createElement('button', { onClick: onClose }, React.createElement(X, { size: 18, color: C.inkSoft })))
+      , React.createElement('div', { className: "text-xs mb-3", style: { color: C.inkSoft, fontFamily: "Inter", lineHeight: 1.6 } }, "跨所有分區共用；單位固定為公升。為保留舊回報與統計，項目只能「停用」不能刪除或改名；要改名請新增新名稱並停用舊的。")
+      , React.createElement('div', { className: "flex flex-col gap-2 mb-4" }
+        , active.map((n) => row(n, true))
+        , active.length === 0 && React.createElement('div', { className: "text-xs", style: { color: C.inkSoft, fontFamily: "Inter" } }, "尚未新增任何項目"))
+      , React.createElement('div', { className: "flex gap-2 mb-2" }
+        , React.createElement('input', { value: name, onChange: (e) => setName(e.target.value), placeholder: itemId === 9 ? "新增菌種名稱" : "新增配方名稱", className: "flex-1 px-3 py-2 rounded-lg text-sm", style: { border: `1px solid ${C.line}`, fontFamily: "Inter" } })
+        , React.createElement('button', { disabled: busy || !name.trim(), onClick: add, className: "px-4 py-2 rounded-lg text-sm", style: { background: C.leaf, color: "white", fontFamily: "Inter", fontWeight: 700, opacity: (busy || !name.trim()) ? 0.4 : 1 } }, "新增"))
+      , err && React.createElement('div', { className: "text-xs mb-2", style: { color: C.alert, fontFamily: "Inter" } }, err)
+      , archived.length > 0 && React.createElement('div', { style: { borderTop: `1px solid ${C.line}`, paddingTop: 12 } }
+        , React.createElement('div', { className: "text-xs mb-2", style: { color: C.inkSoft, fontFamily: "Inter", fontWeight: 700 } }, "已停用（舊紀錄與統計仍保留）")
+        , React.createElement('div', { className: "flex flex-col gap-2" }, archived.map((n) => row(n, false))))));
+}
 function FertilizerManager({ fertilizerList, onClose, onChanged }) {
   const [list, setList] = useState(fertilizerList);
   const [code, setCode] = useState("");
@@ -6083,6 +6163,7 @@ const REPORT_ROWS = [
   { key: "金旺", label: "施肥－金旺", unit: "包" },
   ...OTHER_MATERIALS.map((s) => ({ key: s, label: `其他資材－${s}`, unit: "kg" })),
 ];
+const REPORT_BASE_LEN = REPORT_ROWS.length;
 
 // 共用：列印/存PDF + LINE/Email 快速分享列
 // 列印走瀏覽器原生列印功能（存PDF後，手機通常會有原生分享選單可接LINE/Email/訊息等）
@@ -6221,7 +6302,7 @@ function CellWorkTable({ zone, cellId, role, onClose, ym, workDate, loggedInId, 
   const [data, setData] = useState(blank);
   const zoneKey = `zonework:${zone.id}:${activeYm}`; // 6/7/8是整區共用，跟1-5(每格各自)分開存
   const blankZone = {
-    checks: {}, extra: {}, multi6: [], multi7: [], multi8Main: [], extra8: {}, pending: {}, timestamps: {},
+    checks: {}, extra: {}, multi6: [], multi7: [], multi8Main: [], extra8: {}, multi9Main: [], extra9: {}, multi10Main: [], extra10: {}, pending: {}, timestamps: {},
     progress: {}, confirmedBy: {}, confirmedTotals: {}, confirmHistory: [],
   };
   const [zoneData, setZoneData] = useState(blankZone);
@@ -6397,7 +6478,7 @@ function CellWorkTable({ zone, cellId, role, onClose, ym, workDate, loggedInId, 
     } else {
       const names = safety.options(src, it.id);
       const values = {};
-      (it.options || []).forEach((n) => { const v = safety.quantity(src, it.id, n); if (v !== undefined && v !== null) values[n] = v; });
+      [...(it.options || []), ...names].forEach((n) => { const v = safety.quantity(src, it.id, n); if (v !== undefined && v !== null) values[n] = v; });
       setReviseDraft({ names: [...names], values });
     }
     setReviseOpenId(it.id);
@@ -6540,23 +6621,26 @@ function CellWorkTable({ zone, cellId, role, onClose, ym, workDate, loggedInId, 
     persistZone({ ...zoneDataRef.current, extra: { ...zoneDataRef.current.extra, [itemId]: { ...zoneDataRef.current.extra[itemId], [field]: "" } } });
   };
   // 表格8：所有成分皆為扁平多選
-  const toggleMulti8Main = (opt) => {
+  const toggleMultiMain = (itemId, opt) => {
     if (!editable) return;
-    const base = zoneDataRef.current;
-    const current = Array.isArray(base.multi8Main) ? base.multi8Main : [];
+    const base = zoneDataRef.current; const mk = MULTI_MAIN[itemId];
+    const current = Array.isArray(base[mk]) ? base[mk] : [];
     const arr = current.includes(opt) ? current.filter((x) => x !== opt) : [...current, opt];
-    persistZone({ ...base, multi8Main: arr, pending: { ...base.pending, 8: arr.length > 0 }, timestamps: { ...base.timestamps, 8: { ...base.timestamps[8], changedAt: workStampForDate(workDate) } } });
+    persistZone({ ...base, [mk]: arr, pending: { ...base.pending, [itemId]: arr.length > 0 }, timestamps: { ...base.timestamps, [itemId]: { ...base.timestamps[itemId], changedAt: workStampForDate(workDate) } } });
   };
-  const setExtra8 = (opt, value) => {
+  const toggleMulti8Main = (opt) => toggleMultiMain(8, opt);
+  const setExtraN = (itemId, opt, value) => {
     if (!editable) return;
-    persistZoneDebounced({ ...zoneDataRef.current, extra8: { ...zoneDataRef.current.extra8, [opt]: value } });
+    const ek = MULTI_EXTRA[itemId];
+    persistZoneDebounced({ ...zoneDataRef.current, [ek]: { ...(zoneDataRef.current[ek] || {}), [opt]: value } });
   };
+  const setExtra8 = (opt, value) => setExtraN(8, opt, value);
   // 使用者確認回報 → 記錄「這位受文者」對這個項目回報的進度(1~5)，因為現場常常無法一次做完；
   // 呼應級別欄「數字越大越緊急」的邏輯，這裡改成「數字越小完成度越高」：1＝完成（解除待確認），2~5＝仍在處理中、數字越大代表越初期
   // 工項6/7/8確認完成(進度=1)時，把數量累加進 confirmedTotals（跨月持續累計、不會被下一輪新指令覆蓋掉），
   // 原指定內容與數量欄位保留在同一張表
   const captureItemIntoTotals = (baseData, itemId) => {
-    if (![6, 7, 8].includes(itemId)) return baseData;
+    if (![6, 7, 8, 9, 10].includes(itemId)) return baseData;
     const totals = { ...(baseData.confirmedTotals || {}) };
     let next = { ...baseData };
     if (itemId === 6 || itemId === 7) {
@@ -6566,9 +6650,9 @@ function CellWorkTable({ zone, cellId, role, onClose, ym, workDate, loggedInId, 
         if (!isNaN(v) && v > 0) totals[opt] = (totals[opt] || 0) + v;
       });
       // 回報後保留原指定表內容；confirmedTotals 只在回報時累加。
-    } else if (itemId === 8) {
-      (baseData.multi8Main || []).forEach((opt) => {
-        const v = parseFloat((baseData.extra8 || {})[opt]);
+    } else if ([8, 9, 10].includes(itemId)) {
+      (baseData[MULTI_MAIN[itemId]] || []).forEach((opt) => {
+        const v = parseFloat((baseData[MULTI_EXTRA[itemId]] || {})[opt]);
         if (!isNaN(v) && v > 0) totals[opt] = (totals[opt] || 0) + v;
       });
       // 回報後保留原指定表內容；confirmedTotals 只在回報時累加。
@@ -6595,10 +6679,10 @@ function CellWorkTable({ zone, cellId, role, onClose, ym, workDate, loggedInId, 
   // 快速確認：不用一一選人/選進度，直接把選中的項目一次標記為完成（進度1）
   // 1-5是每格各自的進度，6/7/8是整區共用的用量，兩邊分開持久化
   const quickConfirmItems = async (itemIds, personId, qtyOverrides = {}) => {
-    try { validateReport(itemIds,personId); for(const id of itemIds.filter(id=>[6,7,8].includes(id))) qtyOverrides[id]=safety.validateQuantities(safety.options(zoneDataRef.current,id),qtyOverrides[id]); } catch(error) { return showWorkError(error); }
+    try { validateReport(itemIds,personId); for(const id of itemIds.filter(id=>[6,7,8,9,10].includes(id))) qtyOverrides[id]=safety.validateQuantities(safety.options(zoneDataRef.current,id),qtyOverrides[id]); } catch(error) { return showWorkError(error); }
     if (!itemIds.length) return;
-    const levelIds = itemIds.filter((id) => ![6, 7, 8].includes(id));
-    const qtyIds = itemIds.filter((id) => [6, 7, 8].includes(id));
+    const levelIds = itemIds.filter((id) => ![6, 7, 8, 9, 10].includes(id));
+    const qtyIds = itemIds.filter((id) => [6, 7, 8, 9, 10].includes(id));
     const historyEntriesData = [];
     const historyEntriesZone = [];
 
@@ -6639,12 +6723,12 @@ function CellWorkTable({ zone, cellId, role, onClose, ym, workDate, loggedInId, 
         if (qtyOverrides[itemId] !== undefined) {
           // 快速確認時也要求輸入實際使用量，取代原訂數量，跟常規確認邏輯一致
           const totals = { ...(nextZone.confirmedTotals || {}) };
-          if (itemId === 8) {
-            Object.entries(qtyOverrides[8] || {}).forEach(([material, val]) => {
+          if ([8, 9, 10].includes(itemId)) {
+            Object.entries(qtyOverrides[itemId] || {}).forEach(([material, val]) => {
               const n = parseFloat(val);
               if (!isNaN(n) && n > 0) {
                 totals[material] = (totals[material] || 0) + n;
-                historyEntriesZone.push({ itemId: 8, itemName: itemNameOf(8), rowKey: material, qty: n, personId, personName: personNameOf(quickPeople, personId), at: eventStampFor(zoneData, itemId, workDate) });
+                historyEntriesZone.push({ itemId, itemName: itemNameOf(itemId), rowKey: material, qty: n, personId, personName: personNameOf(quickPeople, personId), at: eventStampFor(zoneData, itemId, workDate) });
               }
             });
             // 回報後保留原指定表內容，不清空 multi8Main / extra8。
@@ -6732,6 +6816,9 @@ function CellWorkTable({ zone, cellId, role, onClose, ym, workDate, loggedInId, 
     } catch (e18) { setConfirmerPeople([]); }
   };
   const [reportedQty, setReportedQty] = useState(""); // 6/7確認時使用者實際輸入的使用量
+  const [showListMgr, setShowListMgr] = useState(null);
+  const [, setListTick] = useState(0);
+  useEffect(() => { ensureZoneMaterialLists().then(() => setListTick((t) => t + 1)); }, []);
   const [reportedQty8, setReportedQty8] = useState({}); // 8：{資材名稱: 使用量}，可能同時選多種
 
   // 把每一次確認/回報動作記錄成一筆歷史紀錄，之後可在「歷史紀錄」畫面查閱（誰、何時、確認了什麼、多少量）
@@ -6747,10 +6834,11 @@ function CellWorkTable({ zone, cellId, role, onClose, ym, workDate, loggedInId, 
         const rk = entry && entry.rowKey;
         frozen.assignedOption = rk || null;
         frozen.assignedQty = rk && baseData.extra ? (baseData.extra[rk] ?? null) : null;
-      } else if (itemId === 8) {
+      } else if ([8, 9, 10].includes(itemId)) {
         const rk = entry && entry.rowKey;
         frozen.assignedOption = rk || null;
-        frozen.assignedQty = rk && baseData.extra8 ? (baseData.extra8[rk] ?? null) : null;
+        const ex = baseData[MULTI_EXTRA[itemId]];
+        frozen.assignedQty = rk && ex ? (ex[rk] ?? null) : null;
       }
       return frozen;
     });
@@ -6795,9 +6883,9 @@ function CellWorkTable({ zone, cellId, role, onClose, ym, workDate, loggedInId, 
   };
 
   // 8可能同時勾選多種資材，各自輸入用量、各自累加
-  const reportQty8Item = async (personId, qtyMap) => {
-    try { validateReport([8],personId); qtyMap=safety.validateQuantities(safety.options(zoneDataRef.current,8),qtyMap); } catch(error) { return showWorkError(error); }
-    const already = _optionalChain([zoneData, 'access', _84 => _84.confirmedBy, 'optionalAccess', _85 => _85[8]]) || [];
+  const reportQty8Item = async (personId, qtyMap, itemId = 8) => {
+    try { validateReport([itemId],personId); qtyMap=safety.validateQuantities(safety.options(zoneDataRef.current,itemId),qtyMap); } catch(error) { return showWorkError(error); }
+    const already = _optionalChain([zoneData, 'access', _84 => _84.confirmedBy, 'optionalAccess', _85 => _85[itemId]]) || [];
     const nextConfirmedBy = already.includes(personId) ? already : [...already, personId];
     const totals = { ...(zoneData.confirmedTotals || {}) };
     const historyEntries = [];
@@ -6805,7 +6893,7 @@ function CellWorkTable({ zone, cellId, role, onClose, ym, workDate, loggedInId, 
       const n = parseFloat(val);
       if (!isNaN(n) && n > 0) {
         totals[material] = (totals[material] || 0) + n;
-        historyEntries.push({ itemId: 8, itemName: itemNameOf(8), rowKey: material, qty: n, personId, personName: personNameOf(confirmerPeople, personId), at: eventStampFor(zoneData, 8, workDate) });
+        historyEntries.push({ itemId, itemName: itemNameOf(itemId), rowKey: material, qty: n, personId, personName: personNameOf(confirmerPeople, personId), at: eventStampFor(zoneData, itemId, workDate) });
       }
     });
     if (historyEntries.length === 0) return;
@@ -6813,10 +6901,10 @@ function CellWorkTable({ zone, cellId, role, onClose, ym, workDate, loggedInId, 
     let next = {
       ...zoneData,
       confirmedTotals: totals,
-      progress: { ...zoneData.progress, 8: 1 },
-      confirmedBy: { ...zoneData.confirmedBy, 8: nextConfirmedBy },
-      pending: { ...zoneData.pending, 8: false },
-      timestamps: { ...zoneData.timestamps, 8: { ...zoneData.timestamps[8], ackAt: eventStampFor(zoneData, 8, workDate) } },
+      progress: { ...zoneData.progress, [itemId]: 1 },
+      confirmedBy: { ...zoneData.confirmedBy, [itemId]: nextConfirmedBy },
+      pending: { ...zoneData.pending, [itemId]: false },
+      timestamps: { ...zoneData.timestamps, [itemId]: { ...zoneData.timestamps[itemId], ackAt: eventStampFor(zoneData, itemId, workDate) } },
     };
     next = appendHistory(next, historyEntries);
     const success=await persistZone(next,true);
@@ -6859,10 +6947,10 @@ function CellWorkTable({ zone, cellId, role, onClose, ym, workDate, loggedInId, 
           return next;
         });
       }
-      if (itemId === 8) {
+      if ([8, 9, 10].includes(itemId)) {
         setQuickQty8((q) => {
           const next = { ...q };
-          (zoneData.multi8Main || []).forEach((opt) => { if (next[opt] === undefined) next[opt] = _optionalChain([zoneData, 'access', _97 => _97.extra8, 'optionalAccess', _98 => _98[opt]]) || ""; });
+          (zoneData[MULTI_MAIN[itemId]] || []).forEach((opt) => { if (next[opt] === undefined) next[opt] = (zoneData[MULTI_EXTRA[itemId]] || {})[opt] || ""; });
           return next;
         });
       }
@@ -6875,6 +6963,7 @@ function CellWorkTable({ zone, cellId, role, onClose, ym, workDate, loggedInId, 
     if (quickSelected.includes(6)) qtyOverrides[6] = Object.fromEntries(selected67(6).map((opt) => [opt, quickQty8[`6:${opt}`] ?? qty67(6, opt)]));
     if (quickSelected.includes(7)) qtyOverrides[7] = Object.fromEntries(selected67(7).map((opt) => [opt, quickQty8[`7:${opt}`] ?? qty67(7, opt)]));
     if (quickSelected.includes(8)) qtyOverrides[8] = quickQty8;
+    [9, 10].forEach((id) => { if (quickSelected.includes(id)) qtyOverrides[id] = Object.fromEntries((zoneData[MULTI_MAIN[id]] || []).map((opt) => [opt, quickQty8[opt] ?? (zoneData[MULTI_EXTRA[id]] || {})[opt] ?? ""])); });
     const success=await quickConfirmItems(quickSelected, quickPersonId, qtyOverrides);
     if(!success) return;
     setQuickSelected([]);
@@ -6888,7 +6977,7 @@ function CellWorkTable({ zone, cellId, role, onClose, ym, workDate, loggedInId, 
     const src = itemId <= 5 ? data : zoneData;
     if (!_optionalChain([src, 'access', _99 => _99.pending, 'optionalAccess', _100 => _100[itemId]])) return false;
     if (itemId <= 5) return !!data.levels[itemId];
-    if (itemId === 8) return (zoneData.multi8Main || []).length > 0;
+    if (MULTI_MAIN[itemId]) return (zoneData[MULTI_MAIN[itemId]] || []).length > 0;
     if (itemId === 6 || itemId === 7) return selected67(itemId).length > 0;
     return false;
   };
@@ -6920,19 +7009,19 @@ function CellWorkTable({ zone, cellId, role, onClose, ym, workDate, loggedInId, 
     } catch(error) { showWorkError(error); }
   };
 
-  const kgInput = (opt, wide) => (
+  const kgInput = (opt, wide, itemId = 8) => (
     React.createElement('span', { className: "flex items-center gap-1"  ,}
       , React.createElement('input', {
-        type: "number", disabled: !editable, placeholder: "公斤",
-        value: _nullishCoalesce(_optionalChain([zoneData, 'access', _103 => _103.extra8, 'optionalAccess', _104 => _104[opt]]), () => ( "")),
-        onChange: (e) => setExtra8(opt, e.target.value),
+        type: "number", disabled: !editable, placeholder: itemId === 8 ? "公斤" : "公升",
+        value: ((zoneData[MULTI_EXTRA[itemId]] || {})[opt] ?? ""),
+        onChange: (e) => setExtraN(itemId, opt, e.target.value),
         onFocus: (e) => keepInputVisible(e.currentTarget),
         className: "text-xs px-1.5 py-1 rounded"   ,
         style: { width: wide ? 48 : 44, border: `1px solid ${C.line}`, fontFamily: "IBM Plex Mono" },}
       )
-      , React.createElement('span', { className: "text-xs", style: { color: C.inkSoft, fontFamily: "Inter" },}, "kg")
-      , editable && _optionalChain([zoneData, 'access', _105 => _105.extra8, 'optionalAccess', _106 => _106[opt]]) && (
-        React.createElement('button', { onClick: () => setExtra8(opt, ""), className: "flex items-center justify-center rounded-full flex-shrink-0"    , style: { width: 18, height: 18, background: `${C.alert}18` },}
+      , React.createElement('span', { className: "text-xs", style: { color: C.inkSoft, fontFamily: "Inter" },}, MULTI_UNIT[itemId])
+      , editable && (zoneData[MULTI_EXTRA[itemId]] || {})[opt] && (
+        React.createElement('button', { onClick: () => setExtraN(itemId, opt, ""), className: "flex items-center justify-center rounded-full flex-shrink-0"    , style: { width: 18, height: 18, background: `${C.alert}18` },}
           , React.createElement(X, { size: 11, color: C.alert,} )
         )
       )
@@ -7077,7 +7166,7 @@ function CellWorkTable({ zone, cellId, role, onClose, ym, workDate, loggedInId, 
                                 onChange: (e) => setReviseValue(opt, e.target.value),
                                 className: "w-20 px-2 py-1 rounded text-xs",
                                 style: { border: `1px solid ${C.inkSoft}60` },
-                                placeholder: it.id === 6 ? (opt === "噴灌" ? "分鐘" : "噸") : it.id === 8 ? "kg" : "包",
+                                placeholder: it.id === 6 ? (opt === "噴灌" ? "分鐘" : "噸") : it.id === 8 ? "kg" : (it.id === 9 || it.id === 10) ? "公升" : "包",
                               })
                           );
                         })
@@ -7181,6 +7270,20 @@ function CellWorkTable({ zone, cellId, role, onClose, ym, workDate, loggedInId, 
                       , React.createElement('span', { className: "text-xs flex-shrink-0" , style: { color: C.inkSoft, fontFamily: "Inter" },}, "kg")
                     )
                   ))
+                  , quickSelected.includes(9) && (zoneData.multi9Main || []).map((opt) => (
+                    React.createElement('div', { key: opt, className: "flex items-center gap-2"  ,}
+                      , React.createElement('span', { className: "text-xs flex-shrink-0" , style: { width: 60, fontFamily: "Inter", color: C.ink },}, "9.", opt)
+                      , React.createElement('input', { type: "number", "data-qty-input": "1", inputMode: "decimal", enterKeyHint: "next", onKeyDown: qtyInputEnter, value: _nullishCoalesce(quickQty8[opt], () => ( "")), onChange: (e) => setQuickQty8((q) => ({ ...q, [opt]: e.target.value })), className: "flex-1 px-2 py-1.5 rounded text-xs"    , style: { border: `1px solid ${C.line}`, fontFamily: "IBM Plex Mono" },} )
+                      , React.createElement('span', { className: "text-xs flex-shrink-0" , style: { color: C.inkSoft, fontFamily: "Inter" },}, "公升")
+                    )
+                  ))
+                  , quickSelected.includes(10) && (zoneData.multi10Main || []).map((opt) => (
+                    React.createElement('div', { key: opt, className: "flex items-center gap-2"  ,}
+                      , React.createElement('span', { className: "text-xs flex-shrink-0" , style: { width: 60, fontFamily: "Inter", color: C.ink },}, "10.", opt)
+                      , React.createElement('input', { type: "number", "data-qty-input": "1", inputMode: "decimal", enterKeyHint: "next", onKeyDown: qtyInputEnter, value: _nullishCoalesce(quickQty8[opt], () => ( "")), onChange: (e) => setQuickQty8((q) => ({ ...q, [opt]: e.target.value })), className: "flex-1 px-2 py-1.5 rounded text-xs"    , style: { border: `1px solid ${C.line}`, fontFamily: "IBM Plex Mono" },} )
+                      , React.createElement('span', { className: "text-xs flex-shrink-0" , style: { color: C.inkSoft, fontFamily: "Inter" },}, "公升")
+                    )
+                  ))
                 )
               )
 
@@ -7227,7 +7330,7 @@ function CellWorkTable({ zone, cellId, role, onClose, ym, workDate, loggedInId, 
             const inProgress = isPending && itemProgress > 1; // 已有人回報過、但還沒做完(進度>1) → 用另一色區分於「完全未處理」
             const confirmedList = _optionalChain([src, 'access', _126 => _126.confirmedBy, 'optionalAccess', _127 => _127[item.id]]) || [];
             const ts = _optionalChain([src, 'access', _128 => _128.timestamps, 'optionalAccess', _129 => _129[item.id]]);
-            const hasValue = item.id === 8 ? zoneData.multi8Main.length > 0 : ([6,7].includes(item.id) ? selected67(item.id).length > 0 : data.levels[item.id]);
+            const hasValue = MULTI_MAIN[item.id] ? (zoneData[MULTI_MAIN[item.id]] || []).length > 0 : ([6,7].includes(item.id) ? selected67(item.id).length > 0 : data.levels[item.id]);
             return (
               React.createElement('div', {
                 key: item.id,
@@ -7290,13 +7393,16 @@ function CellWorkTable({ zone, cellId, role, onClose, ym, workDate, loggedInId, 
                       })
                     )
                   )
-                  , item.id === 8 && (
+                  , MULTI_MAIN[item.id] && (
                     React.createElement('div', { className: "flex flex-col gap-1.5 w-full"   ,}
+                      , [9, 10].includes(item.id) && canEditRole && React.createElement('button', { onClick: () => setShowListMgr(item.id), className: "text-xs px-2 py-1 rounded w-fit", style: { background: C.cream, color: C.tableColor, border: `1px solid ${C.line}`, fontFamily: "Inter", fontWeight: 700 } }, "管理" + item.name + "清單")
+                      , [9, 10].includes(item.id) && (item.options || []).length === 0 && React.createElement('span', { className: "text-xs", style: { color: C.inkSoft, fontFamily: "Inter" } }, "尚無項目" + (canEditRole ? "，請先按上方「管理」新增" : "，請請設計者／管理者新增"))
+                      , showListMgr === item.id && React.createElement(ZoneMaterialListManager, { itemId: item.id, onClose: () => setShowListMgr(null), onChanged: () => setListTick((t) => t + 1) })
                       , React.createElement('div', { className: "flex items-center gap-1 flex-wrap"   ,}
                         , item.options.map((opt) => {
-                          const selected = zoneData.multi8Main.includes(opt);
+                          const selected = (zoneData[MULTI_MAIN[item.id]] || []).includes(opt);
                           return (
-                            React.createElement('button', { key: opt, disabled: !editable, onClick: () => { toggleMulti8Main(opt); scrollWorkBottom(); },
+                            React.createElement('button', { key: opt, disabled: !editable, onClick: () => { toggleMultiMain(item.id, opt); scrollWorkBottom(); },
                               className: "flex items-center gap-1 px-1.5 py-1 rounded text-xs"      ,
                               style: { background: selected ? C.tableColor : C.cream, color: selected ? "white" : C.inkSoft, border: `1px solid ${selected ? "transparent" : C.line}`, fontFamily: "Inter", fontWeight: 600, cursor: editable ? "pointer" : "default" },}
                               , opt
@@ -7304,8 +7410,8 @@ function CellWorkTable({ zone, cellId, role, onClose, ym, workDate, loggedInId, 
                           );
                         })
                       )
-                      , zoneData.multi8Main.map((opt) => (
-                        React.createElement('div', { key: opt, className: "flex items-center gap-1.5 text-xs"   , style: { fontFamily: "Inter", color: C.inkSoft },}, opt, " " , kgInput(opt))
+                      , (zoneData[MULTI_MAIN[item.id]] || []).map((opt) => (
+                        React.createElement('div', { key: opt, className: "flex items-center gap-1.5 text-xs"   , style: { fontFamily: "Inter", color: C.inkSoft },}, opt, " " , kgInput(opt, false, item.id))
                       ))
                     )
                   )
@@ -7319,7 +7425,7 @@ function CellWorkTable({ zone, cellId, role, onClose, ym, workDate, loggedInId, 
                   )
                   , isPending && isUser && confirmMode === "regular" && (
                     React.createElement('button', { onClick: () => openConfirmPanel(item.id), className: "flex items-center gap-1 px-1.5 py-1 rounded text-xs w-fit"       , style: { background: inProgress ? "#D4A017" : C.alert, color: "white", fontFamily: "Inter", fontWeight: 700 },}
-                      , React.createElement(Check, { size: 11,} ), " " , inProgress ? `進度${itemProgress}` : [6, 7, 8].includes(item.id) ? "回報" : "確認"
+                      , React.createElement(Check, { size: 11,} ), " " , inProgress ? `進度${itemProgress}` : [6, 7, 8, 9, 10].includes(item.id) ? "回報" : "確認"
                     )
                   )
                   , isPending && !isUser && (
@@ -7451,7 +7557,7 @@ function CellWorkTable({ zone, cellId, role, onClose, ym, workDate, loggedInId, 
           , React.createElement('div', { className: "w-full rounded-t-2xl p-5"  , style: { background: C.paper }, onClick: (e) => e.stopPropagation(),}
             , React.createElement('div', { className: "flex items-center justify-between mb-3"   ,}
               , React.createElement('span', { style: { fontFamily: "Inter", fontWeight: 700, fontSize: 16, color: C.ink },}
-                , [6, 7, 8].includes(confirmItemId) ? "回報使用量" : "確認進度"
+                , [6, 7, 8, 9, 10].includes(confirmItemId) ? "回報使用量" : "確認進度"
               )
               , React.createElement('button', {
                 onClick: () => setConfirmItemId(null),
@@ -7479,32 +7585,32 @@ function CellWorkTable({ zone, cellId, role, onClose, ym, workDate, loggedInId, 
               )
             )
 
-            , confirmItemId === 8 ? (
+            , MULTI_MAIN[confirmItemId] ? (
               React.createElement(React.Fragment, null
                 , React.createElement('div', { className: "text-xs mb-1.5" , style: { color: C.inkSoft, fontFamily: "Inter" },}, "2. 實際使用量（是使用量不是完成度，回報即累加確認）" )
                 , React.createElement('div', { className: "flex flex-col gap-2 mb-3"   ,}
-                  , (zoneData.multi8Main || []).map((opt) => (
+                  , (zoneData[MULTI_MAIN[confirmItemId]] || []).map((opt) => (
                     React.createElement('div', { key: opt, className: "flex items-center gap-2"  ,}
                       , React.createElement('span', { className: "text-sm flex-shrink-0" , style: { width: 64, fontFamily: "Inter", color: C.ink },}, opt)
                       , React.createElement('input', {
                         type: "number", "data-qty-input": "1", inputMode: "decimal", enterKeyHint: "next", onKeyDown: qtyInputEnter, 
                         value: _nullishCoalesce(reportedQty8[opt], () => ( "")),
                         onChange: (e) => setReportedQty8((cur) => ({ ...cur, [opt]: e.target.value })),
-                        placeholder: `原訂 ${_optionalChain([zoneData, 'access', _154 => _154.extra8, 'optionalAccess', _155 => _155[opt]]) || "-"}kg`,
+                        placeholder: `原訂 ${(zoneData[MULTI_EXTRA[confirmItemId]] || {})[opt] || "-"}${MULTI_UNIT[confirmItemId]}`,
                         className: "flex-1 px-3 py-2 rounded-lg text-sm"    ,
                         style: { border: `1px solid ${C.line}`, fontFamily: "IBM Plex Mono" },}
                       )
-                      , React.createElement('span', { className: "text-xs flex-shrink-0" , style: { color: C.inkSoft, fontFamily: "Inter" },}, "kg")
+                      , React.createElement('span', { className: "text-xs flex-shrink-0" , style: { color: C.inkSoft, fontFamily: "Inter" },}, MULTI_UNIT[confirmItemId])
                     )
                   ))
-                  , (!zoneData.multi8Main || zoneData.multi8Main.length === 0) && (
+                  , !(zoneData[MULTI_MAIN[confirmItemId]] || []).length && (
                     React.createElement('span', { className: "text-xs", style: { color: C.inkSoft, fontFamily: "Inter" },}, "此格尚未選擇資材種類")
                   )
                 )
                 , React.createElement('button', {
                   disabled: !confirmerPick,
                   "data-qty-submit": "1",
-                  onClick: () => reportQty8Item(confirmerPick, reportedQty8),
+                  onClick: () => reportQty8Item(confirmerPick, reportedQty8, confirmItemId),
                   className: "w-full py-3 rounded-xl text-sm"   ,
                   style: { background: C.tableColor, color: "white", fontFamily: "Inter", fontWeight: 700, opacity: confirmerPick ? 1 : 0.4 },}
 , "回報確認（累加入表一、表三）"
@@ -9198,11 +9304,22 @@ const ZONEWORK_ITEMS = [
   { key: "金旺", unit: "包" },
   ...OTHER_MATERIALS.map((key) => ({ key, unit: "kg" })),
 ];
+const ZONEWORK_BASE_LEN = ZONEWORK_ITEMS.length;
 const ZONEWORK_ITEM_COLORS = {
   溝灌: "#2E5FA3", 噴灌: "#4E7C6B",
   米糠: "#E0785F", 金旺: "#5B2A45",
   黃豆: "#2E5FA3", 水果: "#E0785F", 硝酸鉀: "#4E7C6B", 磷酸一鉀: "#5B2A45", 硫酸鉀: "#C9A227", 鈣鎂粉: "#8B5FBF", 微量元素: "#2B2119", 硝酸鈣: "#247B97",
 };
+function rebuildDynamicStats() {
+  if (typeof REPORT_BASE_LEN === "undefined" || typeof ZONEWORK_BASE_LEN === "undefined") return;
+  REPORT_ROWS.length = REPORT_BASE_LEN; ZONEWORK_ITEMS.length = ZONEWORK_BASE_LEN;
+  let ci = 0;
+  [[MICRO_ALL, "微生物"], [FOLIAR_ALL, "葉面肥"]].forEach(([arr, label]) => arr.forEach((k) => {
+    REPORT_ROWS.push({ key: k, label: `${label}－${k}`, unit: "公升" });
+    ZONEWORK_ITEMS.push({ key: k, unit: "公升" });
+    ZONEWORK_ITEM_COLORS[k] = DYN_PALETTE[ci++ % DYN_PALETTE.length];
+  }));
+}
 async function fetchZoneworkItemRange(zoneName, itemKey, startDate, endDate) {
   const months = [];
   let d = new Date(startDate + "T00:00:00");
@@ -9868,6 +9985,8 @@ const T14_CATS = [
   { key: "噴灌", label: "噴灌", unit: "分", items: ["噴灌"], colors: ["#E39B3D"] },
   { key: "固態", label: "固態", unit: "包", items: ["米糠", "金旺"], colors: ["#8B5A2B", "#C9954F"] },
   { key: "液態", label: "液態", unit: "kg", items: OTHER_MATERIALS, colors: ["#4E9A5B", "#7CB342", "#2E7D6B", "#9CCC65", "#558B2F", "#26A69A", "#AED581", "#247B97"] },
+  { key: "微生物", label: "微生物", unit: "公升", items: MICRO_ALL, colors: DYN_PALETTE },
+  { key: "葉面肥", label: "葉面肥", unit: "公升", items: FOLIAR_ALL, colors: DYN_PALETTE },
 ];
 const T14_ALL = "全場";
 
@@ -10504,6 +10623,8 @@ function MonthlyReport({ year, month, onBack }) {
   const MR_GROUPS = [
     { name: "施肥合計", unit: "包", keys: REPORT_ROWS.filter((r) => r.unit === "包").map((r) => r.key) },
     { name: "其他資材合計", unit: "kg", keys: REPORT_ROWS.filter((r) => r.unit === "kg").map((r) => r.key) },
+    { name: "微生物合計", unit: "公升", keys: [...MICRO_ALL] },
+    { name: "葉面肥合計", unit: "公升", keys: [...FOLIAR_ALL] },
   ];
   const groupTotal = (g, zid) => r2(g.keys.reduce((s, k) => s + (Number(rows && rows[k] && rows[k][zid]) || 0), 0));
   const zoneTotal = (zid) => r2(REPORT_ROWS.reduce((s, r) => s + (_optionalChain([rows, 'optionalAccess', _189 => _189[r.key], 'optionalAccess', _190 => _190[zid]]) || 0), 0));
@@ -11757,7 +11878,7 @@ function ZoneMaterialsReport({ year, month, onBack }) {
             (() => {
               const groups = []; const idx = {};
               activeEntries.forEach((en) => { const k = en.eventId || "__legacy"; if (idx[k] == null) { idx[k] = groups.length; groups.push({ key: k, items: [] }); } groups[idx[k]].items.push(en); });
-              const ITEM_NAME = { 6: "補水", 7: "施肥", 8: "其他資材" };
+              const ITEM_NAME = { 6: "補水", 7: "施肥", 8: "其他資材", 9: "微生物", 10: "葉面肥" };
               return groups.map((g) => {
                 const ev = g.key !== "__legacy" ? eventMap[g.key] : null;
                 const title = g.key === "__legacy" ? "舊制回報（當時未記錄指定事件）"
@@ -12792,9 +12913,10 @@ function ZoneWorkFolders({ onBack, role, loggedInId, initialZoneId = null, initi
         return `${opt === "金旺" ? "金旺特" : opt}${qty !== "" ? ` ${qty}${unit}` : ""}`;
       }).join("、");
     }
-    if (item.id === 8) {
-      if (!(data.multi8Main || []).length) return "-";
-      return data.multi8Main.map((opt) => `${opt}${data.extra8 && data.extra8[opt] ? data.extra8[opt] + "kg" : ""}`).join("、");
+    if (MULTI_MAIN[item.id]) {
+      const mm = data[MULTI_MAIN[item.id]] || [], ee = data[MULTI_EXTRA[item.id]] || {};
+      if (!mm.length) return "-";
+      return mm.map((opt) => `${opt}${ee[opt] ? ee[opt] + MULTI_UNIT[item.id] : ""}`).join("、");
     }
     return "-";
   };
@@ -12803,9 +12925,9 @@ function ZoneWorkFolders({ onBack, role, loggedInId, initialZoneId = null, initi
   const formatHistoryEntry = (h) => {
     if (!h) return "";
     const name = h.itemName || itemNameOf(h.itemId);
-    if ([6, 7, 8].includes(Number(h.itemId))) {
+    if ([6, 7, 8, 9, 10].includes(Number(h.itemId))) {
       const row = h.rowKey ? String(h.rowKey).replace(/^金旺$/, "金旺特") : "";
-      const qty = (h.qty !== undefined && h.qty !== null && h.qty !== "") ? ` ${h.qty}${Number(h.itemId) === 8 ? "kg" : (Number(h.itemId) === 6 && row === "噴灌" ? "分" : Number(h.itemId) === 6 ? "噸" : "包")}` : "";
+      const qty = (h.qty !== undefined && h.qty !== null && h.qty !== "") ? ` ${h.qty}${Number(h.itemId) === 8 ? "kg" : [9, 10].includes(Number(h.itemId)) ? "公升" : (Number(h.itemId) === 6 && row === "噴灌" ? "分" : Number(h.itemId) === 6 ? "噸" : "包")}` : "";
       return `${name}${row ? `・${row}` : ""}${qty}`;
     }
     const level = h.level ? `・等級${h.level}` : "";
@@ -12929,7 +13051,7 @@ function ZoneWorkFolders({ onBack, role, loggedInId, initialZoneId = null, initi
           const isRealPendingKey = (id, v) => {
             if (!v) return false;
             if (["1", "2", "3", "4", "5"].includes(id)) return !!_optionalChain([data, 'access', _270 => _270.levels, 'optionalAccess', _271 => _271[id]]);
-            if (id === "8") return (zw.multi8Main || []).length > 0;
+            if (MULTI_MAIN[id]) return (zw[MULTI_MAIN[id]] || []).length > 0;
             return !!_optionalChain([zw, 'access', _272 => _272.checks, 'optionalAccess', _273 => _273[id]]); // 6、7
           };
           const allPending = { ...(data.pending || {}), ...(zw.pending || {}) };
@@ -13071,7 +13193,7 @@ function ZoneWorkFolders({ onBack, role, loggedInId, initialZoneId = null, initi
           const zdata = window.WorkDataSafety.parse(zres.value);
           const hasRealPending = Object.entries(zdata.pending || {}).some(([id, v]) => {
             if (!v) return false;
-            if (id === "8") return (zdata.multi8Main || []).length > 0;
+            if (MULTI_MAIN[id]) return (zdata[MULTI_MAIN[id]] || []).length > 0;
             return !!_optionalChain([zdata, 'access', _274 => _274.checks, 'optionalAccess', _275 => _275[id]]);
           });
           if (hasRealPending) {
@@ -13406,7 +13528,7 @@ function FloorPlan({ zone, onBack, role, onCycleRole, loggedInId, onGoReport, on
         const names = [];
         Object.entries(zdata.pending || {}).forEach(([id, v]) => {
           if (!v) return;
-          const hasReal = id === "8" ? (zdata.multi8Main || []).length > 0 : !!_optionalChain([zdata, 'access', _289 => _289.checks, 'optionalAccess', _290 => _290[id]]);
+          const hasReal = MULTI_MAIN[id] ? (zdata[MULTI_MAIN[id]] || []).length > 0 : !!_optionalChain([zdata, 'access', _289 => _289.checks, 'optionalAccess', _290 => _290[id]]);
           if (hasReal) names.push(`${id}.${_optionalChain([WORK_ITEMS, 'access', _291 => _291.find, 'call', _292 => _292((it) => it.id === Number(id)), 'optionalAccess', _293 => _293.name]) || id}`);
         });
         setZoneWidePending(names);
@@ -14138,6 +14260,13 @@ function openCalendarPortal(loggedInId, role) {
 
 function AppMain({ initialRole, initialId, onLogoutToSplash }) {
   useLoadFontsOnce();
+  // C140：登入後載入微生物/葉面肥清單（統計頁不必先開工作表就能看到；失敗不影響其他功能）
+  const [, setZmlTick] = useState(0);
+  useEffect(() => {
+    let alive = true;
+    (async () => { try { await window.firebaseReady; await ensureZoneMaterialLists(); if (alive) setZmlTick((t) => t + 1); } catch (e) {} })();
+    return () => { alive = false; };
+  }, []);
   const [zone, setZone] = useState(null);
   const [enteringZone, setEnteringZone] = useState(null);
   const [entryFading, setEntryFading] = useState(false);
